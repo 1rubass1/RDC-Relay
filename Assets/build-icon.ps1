@@ -9,150 +9,312 @@ $icoPath = Join-Path $AssetsDir 'DesktopCommander.ico'
 $sourceDir = Join-Path $AssetsDir 'IconSource'
 $masterPath = Join-Path $sourceDir 'DesktopCommander-master.png'
 $workDir = Join-Path $env:TEMP 'RDC_icon_build'
+
 New-Item -ItemType Directory -Force -Path $sourceDir, $workDir | Out-Null
 
-function Get-RoundedPath {
-    param(
-        [Drawing.RectangleF]$Rect,
-        [float]$Radius
-    )
+$Purple = [Drawing.Color]::FromArgb(255, 123, 95, 162)
+$Orange = [Drawing.Color]::FromArgb(255, 191, 118, 67)
+$Chip = [Drawing.Color]::FromArgb(255, 11, 11, 12)
+$Face = [Drawing.Color]::FromArgb(255, 5, 4, 5)
+$Edge = [Drawing.Color]::FromArgb(255, 219, 219, 221)
+
+function New-RoundedPath {
+    param([Drawing.RectangleF]$Rect, [float]$Radius)
 
     $path = New-Object Drawing.Drawing2D.GraphicsPath
-    $d = [Math]::Max(0.1, $Radius * 2.0)
-    $path.AddArc($Rect.Left, $Rect.Top, $d, $d, 180, 90)
-    $path.AddArc($Rect.Right - $d, $Rect.Top, $d, $d, 270, 90)
-    $path.AddArc($Rect.Right - $d, $Rect.Bottom - $d, $d, $d, 0, 90)
-    $path.AddArc($Rect.Left, $Rect.Bottom - $d, $d, $d, 90, 90)
+    $diameter = [Math]::Max(0.1, $Radius * 2.0)
+    $path.AddArc($Rect.Left, $Rect.Top, $diameter, $diameter, 180, 90)
+    $path.AddArc($Rect.Right - $diameter, $Rect.Top, $diameter, $diameter, 270, 90)
+    $path.AddArc($Rect.Right - $diameter, $Rect.Bottom - $diameter, $diameter, $diameter, 0, 90)
+    $path.AddArc($Rect.Left, $Rect.Bottom - $diameter, $diameter, $diameter, 90, 90)
     $path.CloseFigure()
     return $path
 }
 
-function Extract-LargestPngFromIco {
-    param(
-        [string]$InputIco,
-        [string]$OutputPng
-    )
+function New-DOuterPath {
+    param([float]$Left, [float]$CenterX, [float]$CenterY, [float]$Radius)
 
-    $bytes = [IO.File]::ReadAllBytes($InputIco)
-    $count = [BitConverter]::ToUInt16($bytes, 4)
-    $bestArea = -1
-    $bestLength = 0
-    $bestOffset = 0
-
-    for ($i = 0; $i -lt $count; $i++) {
-        $entry = 6 + (16 * $i)
-        $w = [int]$bytes[$entry]
-        $h = [int]$bytes[$entry + 1]
-        if ($w -eq 0) { $w = 256 }
-        if ($h -eq 0) { $h = 256 }
-
-        $length = [BitConverter]::ToUInt32($bytes, $entry + 8)
-        $offset = [BitConverter]::ToUInt32($bytes, $entry + 12)
-        $isPng =
-            $bytes[$offset] -eq 137 -and
-            $bytes[$offset + 1] -eq 80 -and
-            $bytes[$offset + 2] -eq 78 -and
-            $bytes[$offset + 3] -eq 71
-
-        $area = $w * $h
-        if ($isPng -and $area -gt $bestArea) {
-            $bestArea = $area
-            $bestLength = $length
-            $bestOffset = $offset
-        }
-    }
-
-    if ($bestArea -lt 0) {
-        throw 'No PNG frame found in source ICO.'
-    }
-
-    $payload = New-Object byte[] $bestLength
-    [Array]::Copy($bytes, [int]$bestOffset, $payload, 0, [int]$bestLength)
-    [IO.File]::WriteAllBytes($OutputPng, $payload)
+    $top = $CenterY - $Radius
+    $bottom = $CenterY + $Radius
+    $path = New-Object Drawing.Drawing2D.GraphicsPath
+    $path.StartFigure()
+    $path.AddLine($Left, $top, $CenterX, $top)
+    $path.AddArc($CenterX - $Radius, $CenterY - $Radius, 2.0 * $Radius, 2.0 * $Radius, -90, 180)
+    $path.AddLine($CenterX, $bottom, $Left, $bottom)
+    $path.CloseFigure()
+    return $path
 }
 
-function New-AdjustedMaster {
+function New-DRegion {
     param(
-        [string]$SourcePng,
+        [float]$Left,
+        [float]$OuterCenterX,
+        [float]$CenterY,
+        [float]$OuterRadius,
+        [float]$InnerLeft,
+        [float]$InnerRadius
+    )
+
+    $outer = New-DOuterPath -Left $Left -CenterX $OuterCenterX -CenterY $CenterY -Radius $OuterRadius
+    $inner = New-Object Drawing.Drawing2D.GraphicsPath
+
+    try {
+        $innerTop = $CenterY - $InnerRadius
+        $innerBottom = $CenterY + $InnerRadius
+        $inner.StartFigure()
+        $inner.AddLine($InnerLeft, $innerTop, $OuterCenterX, $innerTop)
+        $inner.AddArc($OuterCenterX - $InnerRadius, $CenterY - $InnerRadius, 2.0 * $InnerRadius, 2.0 * $InnerRadius, -90, 180)
+        $inner.AddLine($OuterCenterX, $innerBottom, $InnerLeft, $innerBottom)
+        $inner.CloseFigure()
+
+        $region = New-Object Drawing.Region($outer)
+        $region.Exclude($inner)
+        return $region
+    }
+    finally {
+        $outer.Dispose()
+        $inner.Dispose()
+    }
+}
+
+function New-CRegion {
+    param(
+        [float]$CenterX,
+        [float]$CenterY,
+        [float]$OuterRadius,
+        [float]$InnerRadius,
+        [float]$OpeningHalfAngle
+    )
+
+    $outer = New-Object Drawing.Drawing2D.GraphicsPath
+    $inner = New-Object Drawing.Drawing2D.GraphicsPath
+    $wedge = New-Object Drawing.Drawing2D.GraphicsPath
+
+    try {
+        $outer.AddEllipse($CenterX - $OuterRadius, $CenterY - $OuterRadius, 2.0 * $OuterRadius, 2.0 * $OuterRadius)
+        $inner.AddEllipse($CenterX - $InnerRadius, $CenterY - $InnerRadius, 2.0 * $InnerRadius, 2.0 * $InnerRadius)
+
+        $far = $OuterRadius * 3.0
+        $a1 = -$OpeningHalfAngle * [Math]::PI / 180.0
+        $a2 = $OpeningHalfAngle * [Math]::PI / 180.0
+
+        $points = [Drawing.PointF[]]@(
+            [Drawing.PointF]::new([single]$CenterX, [single]$CenterY),
+            [Drawing.PointF]::new([single]($CenterX + $far * [Math]::Cos($a1)), [single]($CenterY + $far * [Math]::Sin($a1))),
+            [Drawing.PointF]::new([single]($CenterX + $far * [Math]::Cos($a2)), [single]($CenterY + $far * [Math]::Sin($a2)))
+        )
+        $wedge.AddPolygon($points)
+
+        $region = New-Object Drawing.Region($outer)
+        $region.Exclude($inner)
+        $region.Exclude($wedge)
+        return $region
+    }
+    finally {
+        $outer.Dispose()
+        $inner.Dispose()
+        $wedge.Dispose()
+    }
+}
+
+function Draw-Chip {
+    param(
+        [Drawing.Graphics]$Graphics,
+        [float]$Scale,
+        [ValidateSet('full','medium','tiny')]
+        [string]$Variant
+    )
+
+    if ($Variant -eq 'tiny') {
+        $bodyRect = [Drawing.RectangleF]::new([single](14 * $Scale), [single](14 * $Scale), [single](228 * $Scale), [single](228 * $Scale))
+        $bodyRadius = 30 * $Scale
+        $innerRect = [Drawing.RectangleF]::new([single](20 * $Scale), [single](20 * $Scale), [single](216 * $Scale), [single](216 * $Scale))
+        $innerRadius = 24 * $Scale
+        $borderWidth = 4.0 * $Scale
+    }
+    else {
+        $pinCount = if ($Variant -eq 'medium') { 5 } else { 6 }
+        $pinWidth = if ($Variant -eq 'medium') { 14.0 } else { 12.0 }
+        $pinHeight = 25.0
+        $centers = if ($pinCount -eq 6) { @(68, 92, 116, 140, 164, 188) } else { @(64, 96, 128, 160, 192) }
+
+        $pinBrush = New-Object Drawing.SolidBrush $Chip
+        try {
+            foreach ($cx in $centers) {
+                $topRect = [Drawing.RectangleF]::new([single](($cx - $pinWidth / 2.0) * $Scale), [single](3 * $Scale), [single]($pinWidth * $Scale), [single]($pinHeight * $Scale))
+                $bottomRect = [Drawing.RectangleF]::new([single](($cx - $pinWidth / 2.0) * $Scale), [single](228 * $Scale), [single]($pinWidth * $Scale), [single]($pinHeight * $Scale))
+                $topPath = New-RoundedPath -Rect $topRect -Radius (2.5 * $Scale)
+                $bottomPath = New-RoundedPath -Rect $bottomRect -Radius (2.5 * $Scale)
+
+                try {
+                    $Graphics.FillPath($pinBrush, $topPath)
+                    $Graphics.FillPath($pinBrush, $bottomPath)
+                }
+                finally {
+                    $topPath.Dispose()
+                    $bottomPath.Dispose()
+                }
+            }
+        }
+        finally {
+            $pinBrush.Dispose()
+        }
+
+        $bodyRect = [Drawing.RectangleF]::new([single](20 * $Scale), [single](24 * $Scale), [single](216 * $Scale), [single](208 * $Scale))
+        $bodyRadius = 28 * $Scale
+        $innerRect = [Drawing.RectangleF]::new([single](26 * $Scale), [single](30 * $Scale), [single](204 * $Scale), [single](196 * $Scale))
+        $innerRadius = 22 * $Scale
+        $borderWidth = if ($Variant -eq 'medium') { 3.2 * $Scale } else { 2.4 * $Scale }
+    }
+
+    $bodyPath = New-RoundedPath -Rect $bodyRect -Radius $bodyRadius
+    $innerPath = New-RoundedPath -Rect $innerRect -Radius $innerRadius
+    $bodyBrush = New-Object Drawing.SolidBrush $Chip
+    $faceBrush = New-Object Drawing.SolidBrush $Face
+    $borderPen = New-Object Drawing.Pen $Edge, $borderWidth
+
+    try {
+        $Graphics.FillPath($bodyBrush, $bodyPath)
+        $Graphics.FillPath($faceBrush, $innerPath)
+        $Graphics.DrawPath($borderPen, $innerPath)
+    }
+    finally {
+        $bodyPath.Dispose()
+        $innerPath.Dispose()
+        $bodyBrush.Dispose()
+        $faceBrush.Dispose()
+        $borderPen.Dispose()
+    }
+}
+
+function Draw-Monogram {
+    param(
+        [Drawing.Graphics]$Graphics,
+        [float]$Scale,
+        [ValidateSet('full','medium','tiny')]
+        [string]$Variant
+    )
+
+    if ($Variant -eq 'tiny') {
+        $dLeft = 33.0
+        $dCenterX = 68.0
+        $dOuterRadius = 72.0
+        $dInnerLeft = 62.0
+        $dInnerRadius = 37.0
+        $cCenterX = 159.0
+        $cOuterRadius = 67.0
+        $cInnerRadius = 37.0
+        $cOpeningHalfAngle = 45.0
+        $gapWidth = 7.0
+    }
+    elseif ($Variant -eq 'medium') {
+        $dLeft = 34.0
+        $dCenterX = 69.0
+        $dOuterRadius = 71.0
+        $dInnerLeft = 62.0
+        $dInnerRadius = 36.5
+        $cCenterX = 159.0
+        $cOuterRadius = 65.0
+        $cInnerRadius = 36.0
+        $cOpeningHalfAngle = 43.5
+        $gapWidth = 6.0
+    }
+    else {
+        $dLeft = 35.0
+        $dCenterX = 69.0
+        $dOuterRadius = 70.0
+        $dInnerLeft = 62.0
+        $dInnerRadius = 36.0
+        $cCenterX = 158.0
+        $cOuterRadius = 64.0
+        $cInnerRadius = 36.0
+        $cOpeningHalfAngle = 42.0
+        $gapWidth = 5.0
+    }
+
+    $centerY = 128.0
+    $dLeft *= $Scale
+    $dCenterX *= $Scale
+    $centerY *= $Scale
+    $dOuterRadius *= $Scale
+    $dInnerLeft *= $Scale
+    $dInnerRadius *= $Scale
+    $cCenterX *= $Scale
+    $cOuterRadius *= $Scale
+    $cInnerRadius *= $Scale
+    $gapWidth *= $Scale
+
+    $cRegion = New-CRegion -CenterX $cCenterX -CenterY $centerY -OuterRadius $cOuterRadius -InnerRadius $cInnerRadius -OpeningHalfAngle $cOpeningHalfAngle
+    $orangeBrush = New-Object Drawing.SolidBrush $Orange
+    try {
+        $Graphics.FillRegion($orangeBrush, $cRegion)
+    }
+    finally {
+        $cRegion.Dispose()
+        $orangeBrush.Dispose()
+    }
+
+    $dOuter = New-DOuterPath -Left $dLeft -CenterX $dCenterX -CenterY $centerY -Radius $dOuterRadius
+    $maskBrush = New-Object Drawing.SolidBrush $Face
+    $gapPen = New-Object Drawing.Pen $Face, $gapWidth
+    try {
+        $gapPen.LineJoin = [Drawing.Drawing2D.LineJoin]::Round
+        $Graphics.FillPath($maskBrush, $dOuter)
+        $Graphics.DrawPath($gapPen, $dOuter)
+    }
+    finally {
+        $dOuter.Dispose()
+        $maskBrush.Dispose()
+        $gapPen.Dispose()
+    }
+
+    $dRegion = New-DRegion -Left $dLeft -OuterCenterX $dCenterX -CenterY $centerY -OuterRadius $dOuterRadius -InnerLeft $dInnerLeft -InnerRadius $dInnerRadius
+    $purpleBrush = New-Object Drawing.SolidBrush $Purple
+    try {
+        $Graphics.FillRegion($purpleBrush, $dRegion)
+    }
+    finally {
+        $dRegion.Dispose()
+        $purpleBrush.Dispose()
+    }
+}
+
+function Render-VectorIcon {
+    param(
+        [ValidateSet('full','medium','tiny')]
+        [string]$Variant,
+        [int]$CanvasSize,
         [string]$OutputPng
     )
 
-    $src = [Drawing.Bitmap]::FromFile($SourcePng)
+    $bmp = [Drawing.Bitmap]::new($CanvasSize, $CanvasSize, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
     try {
-        if ($src.Width -ne 256 -or $src.Height -ne 256) {
-            throw "Expected a 256x256 master, got $($src.Width)x$($src.Height)."
-        }
-
-        $dst = New-Object Drawing.Bitmap 256, 256, ([Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $g = [Drawing.Graphics]::FromImage($bmp)
         try {
-            $g = [Drawing.Graphics]::FromImage($dst)
-            try {
-                $g.CompositingMode = [Drawing.Drawing2D.CompositingMode]::SourceCopy
-                $g.DrawImageUnscaled($src, 0, 0)
-            }
-            finally {
-                $g.Dispose()
-            }
-
-            $orangePixels = New-Object System.Collections.Generic.List[object]
-
-            for ($y = 45; $y -le 200; $y++) {
-                $background = $src.GetPixel(220, $y)
-
-                for ($x = 118; $x -le 223; $x++) {
-                    $c = $src.GetPixel($x, $y)
-                    if ($c.A -eq 0) { continue }
-
-                    $hue = $c.GetHue()
-                    $sat = $c.GetSaturation()
-
-                    $isOrange =
-                        $hue -ge 10.0 -and
-                        $hue -le 42.0 -and
-                        $sat -ge 0.22 -and
-                        $c.R -gt $c.G -and
-                        $c.G -gt $c.B
-
-                    if ($isOrange) {
-                        $orangePixels.Add([pscustomobject]@{
-                            X = $x
-                            Y = $y
-                            Color = $c
-                        })
-                        $dst.SetPixel($x, $y, $background)
-                    }
-                }
-            }
-
-            $shift = 8
-            foreach ($px in $orangePixels) {
-                $nx = $px.X + $shift
-                if ($nx -lt 256) {
-                    $dst.SetPixel($nx, $px.Y, $px.Color)
-                }
-            }
-
-            $dst.Save($OutputPng, [Drawing.Imaging.ImageFormat]::Png)
+            $g.Clear([Drawing.Color]::Transparent)
+            $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+            $g.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+            $g.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
+            $scale = $CanvasSize / 256.0
+            Draw-Chip -Graphics $g -Scale $scale -Variant $Variant
+            Draw-Monogram -Graphics $g -Scale $scale -Variant $Variant
         }
         finally {
-            $dst.Dispose()
+            $g.Dispose()
         }
+        $bmp.Save($OutputPng, [Drawing.Imaging.ImageFormat]::Png)
     }
     finally {
-        $src.Dispose()
+        $bmp.Dispose()
     }
 }
 
 function Resize-Png {
-    param(
-        [string]$InputPng,
-        [int]$Size,
-        [string]$OutputPng
-    )
+    param([string]$InputPng, [int]$Size, [string]$OutputPng)
 
     $src = [Drawing.Bitmap]::FromFile($InputPng)
     try {
-        $dst = New-Object Drawing.Bitmap $Size, $Size, ([Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $dst = [Drawing.Bitmap]::new($Size, $Size, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
         try {
             $g = [Drawing.Graphics]::FromImage($dst)
             try {
@@ -161,13 +323,11 @@ function Resize-Png {
                 $g.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
                 $g.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
                 $g.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-                $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::HighQuality
                 $g.DrawImage($src, (New-Object Drawing.Rectangle 0, 0, $Size, $Size))
             }
             finally {
                 $g.Dispose()
             }
-
             $dst.Save($OutputPng, [Drawing.Imaging.ImageFormat]::Png)
         }
         finally {
@@ -179,136 +339,8 @@ function Resize-Png {
     }
 }
 
-function New-TinyIcon {
-    param(
-        [int]$Size,
-        [string]$OutputPng
-    )
-
-    $scale = 4
-    $w = $Size * $scale
-    $bmp = New-Object Drawing.Bitmap $w, $w, ([Drawing.Imaging.PixelFormat]::Format32bppArgb)
-
-    try {
-        $g = [Drawing.Graphics]::FromImage($bmp)
-        try {
-            $g.Clear([Drawing.Color]::Transparent)
-            $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
-            $g.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-
-            $body = New-Object Drawing.RectangleF(
-                (0.8 * $scale),
-                (0.8 * $scale),
-                (($Size - 1.6) * $scale),
-                (($Size - 1.6) * $scale)
-            )
-            $radius = 3.0 * $scale
-            $bodyPath = Get-RoundedPath -Rect $body -Radius $radius
-            try {
-                $bodyBrush = New-Object Drawing.SolidBrush ([Drawing.Color]::FromArgb(255, 5, 4, 5))
-                $bodyPen = New-Object Drawing.Pen ([Drawing.Color]::FromArgb(255, 219, 219, 221)), (0.9 * $scale)
-                try {
-                    $g.FillPath($bodyBrush, $bodyPath)
-                    $g.DrawPath($bodyPen, $bodyPath)
-                }
-                finally {
-                    $bodyBrush.Dispose()
-                    $bodyPen.Dispose()
-                }
-            }
-            finally {
-                $bodyPath.Dispose()
-            }
-
-            $purple = [Drawing.Color]::FromArgb(255, 123, 95, 162)
-            $orange = [Drawing.Color]::FromArgb(255, 191, 118, 67)
-            $black = [Drawing.Color]::FromArgb(255, 5, 4, 5)
-
-            $dOuter = New-Object Drawing.Drawing2D.GraphicsPath
-            try {
-                $dOuter.StartFigure()
-                $dOuter.AddLine(0.19*$w, 0.22*$w, 0.33*$w, 0.22*$w)
-                $dOuter.AddBezier(0.33*$w, 0.22*$w, 0.50*$w, 0.22*$w, 0.56*$w, 0.33*$w, 0.56*$w, 0.50*$w)
-                $dOuter.AddBezier(0.56*$w, 0.50*$w, 0.56*$w, 0.67*$w, 0.50*$w, 0.78*$w, 0.33*$w, 0.78*$w)
-                $dOuter.AddLine(0.33*$w, 0.78*$w, 0.19*$w, 0.78*$w)
-                $dOuter.CloseFigure()
-
-                $dBrush = New-Object Drawing.SolidBrush $purple
-                try { $g.FillPath($dBrush, $dOuter) }
-                finally { $dBrush.Dispose() }
-            }
-            finally {
-                $dOuter.Dispose()
-            }
-
-            $dInner = New-Object Drawing.Drawing2D.GraphicsPath
-            try {
-                $dInner.StartFigure()
-                $dInner.AddLine(0.31*$w, 0.35*$w, 0.35*$w, 0.35*$w)
-                $dInner.AddBezier(0.35*$w, 0.35*$w, 0.44*$w, 0.35*$w, 0.46*$w, 0.42*$w, 0.46*$w, 0.50*$w)
-                $dInner.AddBezier(0.46*$w, 0.50*$w, 0.46*$w, 0.58*$w, 0.44*$w, 0.65*$w, 0.35*$w, 0.65*$w)
-                $dInner.AddLine(0.35*$w, 0.65*$w, 0.31*$w, 0.65*$w)
-                $dInner.CloseFigure()
-
-                $holeBrush = New-Object Drawing.SolidBrush $black
-                try { $g.FillPath($holeBrush, $dInner) }
-                finally { $holeBrush.Dispose() }
-            }
-            finally {
-                $dInner.Dispose()
-            }
-
-            $cRect = New-Object Drawing.RectangleF(
-                (0.53 * $w),
-                (0.24 * $w),
-                (0.31 * $w),
-                (0.52 * $w)
-            )
-            $cPen = New-Object Drawing.Pen $orange, (0.13 * $w)
-            try {
-                $cPen.StartCap = [Drawing.Drawing2D.LineCap]::Flat
-                $cPen.EndCap = [Drawing.Drawing2D.LineCap]::Flat
-                $g.DrawArc($cPen, $cRect, 43, 274)
-            }
-            finally {
-                $cPen.Dispose()
-            }
-        }
-        finally {
-            $g.Dispose()
-        }
-
-        $dst = New-Object Drawing.Bitmap $Size, $Size, ([Drawing.Imaging.PixelFormat]::Format32bppArgb)
-        try {
-            $g2 = [Drawing.Graphics]::FromImage($dst)
-            try {
-                $g2.Clear([Drawing.Color]::Transparent)
-                $g2.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
-                $g2.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-                $g2.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-                $g2.DrawImage($bmp, (New-Object Drawing.Rectangle 0, 0, $Size, $Size))
-            }
-            finally {
-                $g2.Dispose()
-            }
-
-            $dst.Save($OutputPng, [Drawing.Imaging.ImageFormat]::Png)
-        }
-        finally {
-            $dst.Dispose()
-        }
-    }
-    finally {
-        $bmp.Dispose()
-    }
-}
-
 function Write-IcoFromPngs {
-    param(
-        [string[]]$PngFiles,
-        [int[]]$Sizes,
-        [string]$OutputIco
-    )
+    param([string[]]$PngFiles, [int[]]$Sizes, [string]$OutputIco)
 
     if ($PngFiles.Count -ne $Sizes.Count) {
         throw 'PNG file count must match size count.'
@@ -321,17 +353,15 @@ function Write-IcoFromPngs {
 
     $stream = New-Object IO.MemoryStream
     $writer = New-Object IO.BinaryWriter $stream
-
     try {
         $writer.Write([UInt16]0)
         $writer.Write([UInt16]1)
         $writer.Write([UInt16]$PngFiles.Count)
-
         $offset = 6 + (16 * $PngFiles.Count)
+
         for ($i = 0; $i -lt $PngFiles.Count; $i++) {
             $size = $Sizes[$i]
             $dim = if ($size -eq 256) { 0 } else { $size }
-
             $writer.Write([Byte]$dim)
             $writer.Write([Byte]$dim)
             $writer.Write([Byte]0)
@@ -340,7 +370,6 @@ function Write-IcoFromPngs {
             $writer.Write([UInt16]32)
             $writer.Write([UInt32]$payloads[$i].Length)
             $writer.Write([UInt32]$offset)
-
             $offset += $payloads[$i].Length
         }
 
@@ -357,30 +386,41 @@ function Write-IcoFromPngs {
     }
 }
 
-if (-not (Test-Path $masterPath)) {
-    throw "Missing icon master: $masterPath. Restore Assets\\IconSource from Git before rebuilding the ICO."
-}
+Render-VectorIcon -Variant full -CanvasSize 1024 -OutputPng $masterPath
 
 $sizes = @(16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
 $pngs = @()
 
 foreach ($size in $sizes) {
-    $png = Join-Path $workDir ("DesktopCommander_{0}.png" -f $size)
-
     if ($size -le 24) {
-        New-TinyIcon -Size $size -OutputPng $png
+        $variant = 'tiny'
+    }
+    elseif ($size -le 40) {
+        $variant = 'medium'
     }
     else {
-        Resize-Png -InputPng $masterPath -Size $size -OutputPng $png
+        $variant = 'full'
     }
 
+    $rendered = Join-Path $workDir ("DesktopCommander_{0}_{1}_render.png" -f $size, $variant)
+    $png = Join-Path $workDir ("DesktopCommander_{0}.png" -f $size)
+    Render-VectorIcon -Variant $variant -CanvasSize 1024 -OutputPng $rendered
+    Resize-Png -InputPng $rendered -Size $size -OutputPng $png
     $pngs += $png
 }
 
 Write-IcoFromPngs -PngFiles $pngs -Sizes $sizes -OutputIco $icoPath
 
+Write-Output 'Geometry:'
+Write-Output '  D outer: exact semicircle + straight stem'
+Write-Output '  D counter: exact semicircle + straight stem'
+Write-Output '  C: concentric outer/inner circles with a radial wedge removed'
+Write-Output '  Full monogram bounds: X=35..222, Y=58..198, center=(128.5,128)'
+Write-Output '  Chip body center: (128,128)'
+Write-Output ''
 Write-Output "Master: $masterPath"
 Write-Output "ICO:    $icoPath"
+
 foreach ($i in 0..($sizes.Count - 1)) {
     Write-Output ("{0,3}px: {1}" -f $sizes[$i], $pngs[$i])
 }
