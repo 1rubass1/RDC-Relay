@@ -36,7 +36,8 @@ try {
     }
 
     $manifestResponse = Invoke-WebRequest -Uri $ManifestUrl -UseBasicParsing -TimeoutSec 5
-    $manifest = $manifestResponse.Content | ConvertFrom-Json
+    $manifestText = ([string]$manifestResponse.Content).TrimStart([char]0xFEFF)
+    $manifest = $manifestText | ConvertFrom-Json
     if (-not $manifest.version -or -not $manifest.files) {
         throw 'Invalid update manifest.'
     }

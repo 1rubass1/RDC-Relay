@@ -1,9 +1,9 @@
-﻿{
+{
     "version":  "1.5.4",
     "files":  [
                   {
                       "name":  "remote-window.ps1",
-                      "sha256":  "46153F26F5C2D41B8FEFCAA7D24838D2BC92A0C9C4260CC906C13E1FE91C9918"
+                      "sha256":  "A3543E5B5A5FFAD1BFCE7C7A5D2F0732E4860C742C993D60A683CA50F25ADEDA"
                   },
                   {
                       "name":  "divider-caustic.ps",
@@ -19,11 +19,11 @@
                   },
                   {
                       "name":  "version.txt",
-                      "sha256":  "879A67A197446479E783C8E22A58681FED324F09EAC1CE808F6A5A4C5E1894AD"
+                      "sha256":  "31F877ECC7CF26AD1905ACC11A16FBEC448CA8D1A0CE4A1FB72A84F3AD4A7E11"
                   },
                   {
                       "name":  "update.ps1",
-                      "sha256":  "233AFCF676A21C757E9C781ADB4DF8180F7EAE8E338D4946B9F874160CD36CF0"
+                      "sha256":  "A2EFB4302438C7C5D96277D038A3C1497FB87BE99BE21BCC2797D89028EC60EF"
                   }
               ]
 }
