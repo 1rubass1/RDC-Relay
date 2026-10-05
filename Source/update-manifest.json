@@ -1,0 +1,29 @@
+﻿{
+    "version":  "1.5.4",
+    "files":  [
+                  {
+                      "name":  "remote-window.ps1",
+                      "sha256":  "46153F26F5C2D41B8FEFCAA7D24838D2BC92A0C9C4260CC906C13E1FE91C9918"
+                  },
+                  {
+                      "name":  "divider-caustic.ps",
+                      "sha256":  "CBB538767EDB7E3FDC596CFED4577EB0C16605A0943EC1FFF309295C0F5C7A8B"
+                  },
+                  {
+                      "name":  "divider-particles.ps",
+                      "sha256":  "A4FC32EBCB141283CF2CA9A2E78A049C412F36519730BEA13A4488DC9C2BAECE"
+                  },
+                  {
+                      "name":  "DesktopCommander.ico",
+                      "sha256":  "05CD5C1E5742C3868A515D1729B1DEE685B93662F33D7D70A0139679DDF16684"
+                  },
+                  {
+                      "name":  "version.txt",
+                      "sha256":  "879A67A197446479E783C8E22A58681FED324F09EAC1CE808F6A5A4C5E1894AD"
+                  },
+                  {
+                      "name":  "update.ps1",
+                      "sha256":  "233AFCF676A21C757E9C781ADB4DF8180F7EAE8E338D4946B9F874160CD36CF0"
+                  }
+              ]
+}

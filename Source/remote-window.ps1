@@ -1,10 +1,34 @@
-﻿param([switch]$SelfTest)
+﻿param([switch]$SelfTest,[switch]$SkipUpdate)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$appVersion = '1.5.3'
+$appVersion = '1.5.4'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'DesktopCommander.ico'
 $npxPath = 'C:\Program Files\nodejs\npx.cmd'
+
+# Self-update bootstrap. The updater runs before the window mutex and before
+# the remote process is touched, so a successful update can safely restart
+# only the UI script while leaving any existing remote session alone.
+if (-not $SelfTest -and -not $SkipUpdate) {
+    $updaterPath = Join-Path $root 'update.ps1'
+    if (Test-Path -LiteralPath $updaterPath) {
+        try {
+            $updateArgs = @(
+                '-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $updaterPath + '"'),
+                '-InstallRoot',('"' + $root + '"'),'-CurrentVersion',$appVersion
+            )
+            $updateProc = Start-Process -FilePath 'powershell.exe' -ArgumentList $updateArgs -WindowStyle Hidden -Wait -PassThru
+            if ($updateProc.ExitCode -eq 42) {
+                Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+                    '-NoProfile','-STA','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
+                    '-File',('"' + (Join-Path $root 'remote-window.ps1') + '"'),'-SkipUpdate'
+                ) -WindowStyle Hidden
+                exit 0
+            }
+        } catch {}
+    }
+}
+
 $windowMutex = $null
 $activateEvent = $null
 if (-not $SelfTest) {
@@ -862,6 +886,385 @@ public class RdcOverlayScrollBar : Control {
     }
 }
 '@ -ReferencedAssemblies @('System.Drawing','System.Windows.Forms')
+
+Add-Type -AssemblyName PresentationCore,PresentationFramework,WindowsBase,WindowsFormsIntegration,System.Xaml
+Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Forms;
+using System.Windows.Forms.Integration;
+using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Effects;
+using System.Windows.Shapes;
+using System.Windows.Controls.Primitives;
+
+public sealed class RdcDividerGlowEffect : ShaderEffect {
+    public static readonly DependencyProperty InputProperty =
+        RegisterPixelShaderSamplerProperty("Input", typeof(RdcDividerGlowEffect), 0);
+    public static readonly DependencyProperty TimeProperty =
+        DependencyProperty.Register("Time", typeof(double), typeof(RdcDividerGlowEffect),
+            new UIPropertyMetadata(0.0, PixelShaderConstantCallback(0)));
+    public static readonly DependencyProperty ViewportWidthProperty =
+        DependencyProperty.Register("ViewportWidth", typeof(double), typeof(RdcDividerGlowEffect),
+            new UIPropertyMetadata(1000.0, PixelShaderConstantCallback(1)));
+    public static readonly DependencyProperty IntensityProperty =
+        DependencyProperty.Register("Intensity", typeof(double), typeof(RdcDividerGlowEffect),
+            new UIPropertyMetadata(1.0, PixelShaderConstantCallback(2)));
+    public static readonly DependencyProperty ActivityProperty =
+        DependencyProperty.Register("Activity", typeof(double), typeof(RdcDividerGlowEffect),
+            new UIPropertyMetadata(0.0, PixelShaderConstantCallback(3)));
+
+    public Brush Input { get { return (Brush)GetValue(InputProperty); } set { SetValue(InputProperty,value); } }
+    public double Time { get { return (double)GetValue(TimeProperty); } set { SetValue(TimeProperty,value); } }
+    public double ViewportWidth { get { return (double)GetValue(ViewportWidthProperty); } set { SetValue(ViewportWidthProperty,value); } }
+    public double Intensity { get { return (double)GetValue(IntensityProperty); } set { SetValue(IntensityProperty,value); } }
+    public double Activity { get { return (double)GetValue(ActivityProperty); } set { SetValue(ActivityProperty,value); } }
+
+    public RdcDividerGlowEffect(string shaderPath) {
+        PixelShader ps = new PixelShader();
+        ps.UriSource = new Uri(shaderPath,UriKind.Absolute);
+        PixelShader = ps;
+        UpdateShaderValue(InputProperty);
+        UpdateShaderValue(TimeProperty);
+        UpdateShaderValue(ViewportWidthProperty);
+        UpdateShaderValue(IntensityProperty);
+        UpdateShaderValue(ActivityProperty);
+    }
+}
+
+public sealed class RdcGpuDividerHost : ElementHost {
+    private readonly Stopwatch watch;
+    private readonly System.Windows.Forms.Timer animationTimer;
+    private readonly RdcDividerGlowEffect causticEffect;
+    private readonly RdcDividerGlowEffect popupCausticEffect;
+    private readonly RdcDividerGlowEffect particleEffect;
+    private readonly RdcDividerGlowEffect particleEffectB;
+    private readonly Popup particlePopup;
+    private readonly Rectangle particleSurface;
+    private readonly System.Windows.Controls.Grid root;
+    private double activity;
+    private double targetActivity;
+    private double lastFrameSeconds;
+    private IntPtr particlePopupHwnd = IntPtr.Zero;
+    private int lastPopupX = Int32.MinValue;
+    private int lastPopupY = Int32.MinValue;
+    private int lastPopupW = -1;
+    private int lastPopupH = -1;
+    private System.Windows.Forms.Form ownerForm;
+
+    const int GWL_EXSTYLE = -20;
+    const int GWLP_HWNDPARENT = -8;
+    const int WS_EX_TOPMOST = 0x00000008;
+    const int WS_EX_TRANSPARENT = 0x00000020;
+    const int WS_EX_NOACTIVATE = 0x08000000;
+    const int WM_NCHITTEST = 0x0084;
+    const int HTTRANSPARENT = -1;
+
+    const uint SWP_NOSIZE = 0x0001;
+    const uint SWP_NOMOVE = 0x0002;
+    const uint SWP_NOZORDER = 0x0004;
+    const uint SWP_NOACTIVATE = 0x0010;
+    const uint SWP_SHOWWINDOW = 0x0040;
+    static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hWnd,int nIndex);
+    [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr hWnd,int nIndex,int dwNewLong);
+    [DllImport("user32.dll",EntryPoint="SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr hWnd,int nIndex,IntPtr dwNewLong);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hWnd,IntPtr hWndInsertAfter,int X,int Y,int cx,int cy,uint flags);
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left,Top,Right,Bottom; }
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd,out RECT rect);
+
+    protected override void WndProc(ref Message m) {
+        if (m.Msg == WM_NCHITTEST) {
+            m.Result = new IntPtr(HTTRANSPARENT);
+            return;
+        }
+        base.WndProc(ref m);
+    }
+
+    private IntPtr PopupWndProc(IntPtr hwnd,int msg,IntPtr wParam,IntPtr lParam,ref bool handled) {
+        if (msg == WM_NCHITTEST) {
+            handled = true;
+            return new IntPtr(HTTRANSPARENT);
+        }
+        return IntPtr.Zero;
+    }
+
+    private void NormalizePopupZOrder() {
+        if (particlePopupHwnd == IntPtr.Zero) return;
+        int exStyle = GetWindowLong(particlePopupHwnd,GWL_EXSTYLE);
+        if ((exStyle & WS_EX_TOPMOST) != 0)
+            SetWindowLong(particlePopupHwnd,GWL_EXSTYLE,exStyle & ~WS_EX_TOPMOST);
+        SetWindowPos(particlePopupHwnd,HWND_NOTOPMOST,0,0,0,0,
+            SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+    }
+
+    private void PositionPopup() {
+        if (!particlePopup.IsOpen || particlePopupHwnd == IntPtr.Zero || !IsHandleCreated) return;
+        RECT rect;
+        if (!GetWindowRect(Handle,out rect)) return;
+        int w = Math.Max(1,rect.Right-rect.Left);
+        int h = 33;
+        int x = rect.Left;
+        int y = rect.Top - 13;
+        if (x==lastPopupX && y==lastPopupY && w==lastPopupW && h==lastPopupH) return;
+        lastPopupX=x; lastPopupY=y; lastPopupW=w; lastPopupH=h;
+        SetWindowPos(particlePopupHwnd,IntPtr.Zero,x,y,w,h,
+            SWP_NOZORDER|SWP_NOACTIVATE|SWP_SHOWWINDOW);
+    }
+
+    private void EnsurePopupOpen() {
+        if (particlePopup.IsOpen) return;
+        particlePopup.Width = Math.Max(1.0,root.ActualWidth);
+        particlePopup.IsOpen = true;
+    }
+
+    private void ClosePopup() {
+        if (!particlePopup.IsOpen) return;
+        particlePopup.IsOpen = false;
+        particlePopupHwnd = IntPtr.Zero;
+        lastPopupX=Int32.MinValue; lastPopupY=Int32.MinValue;
+        lastPopupW=-1; lastPopupH=-1;
+    }
+
+    private void OwnerGeometryChanged(object sender,EventArgs e) {
+        lastPopupX=Int32.MinValue; lastPopupY=Int32.MinValue;
+        PositionPopup();
+    }
+
+    private void OwnerActivated(object sender,EventArgs e) {
+        NormalizePopupZOrder();
+        PositionPopup();
+    }
+
+    private void OwnerDeactivated(object sender,EventArgs e) {
+        NormalizePopupZOrder();
+    }
+
+    private void Animate(object sender,EventArgs e) {
+        double now = watch.Elapsed.TotalSeconds;
+        double dt = Math.Max(0.0,Math.Min(0.12,now-lastFrameSeconds));
+        lastFrameSeconds = now;
+
+        double rate = targetActivity > activity ? 5.6 : 3.3;
+        double blend = 1.0 - Math.Exp(-rate*dt);
+        activity += (targetActivity-activity)*blend;
+        if (activity < 0.001 && targetActivity <= 0.0) activity=0.0;
+        if (activity > 0.999 && targetActivity >= 1.0) activity=1.0;
+
+        causticEffect.Time = now;
+
+        if (targetActivity > 0.0 || activity > 0.002) {
+            EnsurePopupOpen();
+            popupCausticEffect.Time = now;
+            particleEffect.Time = now;
+            particleEffectB.Time = now + 11.37;
+            particleEffect.Activity = activity;
+            particleEffectB.Activity = activity;
+            PositionPopup();
+        } else {
+            ClosePopup();
+        }
+    }
+
+    public RdcGpuDividerHost(string causticShaderPath,string particleShaderPath) {
+        BackColor = System.Drawing.Color.FromArgb(18,20,23);
+        TabStop = false;
+
+        causticEffect = new RdcDividerGlowEffect(causticShaderPath);
+        causticEffect.Intensity=1.0;
+
+        popupCausticEffect = new RdcDividerGlowEffect(causticShaderPath);
+        popupCausticEffect.Intensity=1.0;
+
+        particleEffect = new RdcDividerGlowEffect(particleShaderPath);
+        particleEffect.Intensity=0.58;
+
+        particleEffectB = new RdcDividerGlowEffect(particleShaderPath);
+        particleEffectB.Intensity=0.581;
+
+        root = new System.Windows.Controls.Grid();
+        root.Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(18,20,23));
+        root.IsHitTestVisible=false;
+        root.SnapsToDevicePixels=true;
+        root.UseLayoutRounding=true;
+
+        Rectangle causticSurface = new Rectangle();
+        causticSurface.Fill=Brushes.White;
+        causticSurface.Stretch=Stretch.Fill;
+        causticSurface.Effect=causticEffect;
+        causticSurface.IsHitTestVisible=false;
+        root.Children.Add(causticSurface);
+
+        Rectangle topRail = new Rectangle();
+        topRail.Height=1.0;
+        topRail.VerticalAlignment=VerticalAlignment.Top;
+        topRail.Fill=new SolidColorBrush(System.Windows.Media.Color.FromRgb(123,95,162));
+        topRail.IsHitTestVisible=false;
+        root.Children.Add(topRail);
+
+        Rectangle bottomRail = new Rectangle();
+        bottomRail.Height=1.0;
+        bottomRail.VerticalAlignment=VerticalAlignment.Bottom;
+        bottomRail.Fill=new SolidColorBrush(System.Windows.Media.Color.FromRgb(123,95,162));
+        bottomRail.IsHitTestVisible=false;
+        root.Children.Add(bottomRail);
+
+        System.Windows.Controls.Grid particleSource = new System.Windows.Controls.Grid();
+        particleSource.Background=Brushes.Transparent;
+        particleSource.IsHitTestVisible=false;
+
+        System.Windows.Controls.Grid popupBand = new System.Windows.Controls.Grid();
+        popupBand.Height=7.0;
+        popupBand.VerticalAlignment=VerticalAlignment.Center;
+        popupBand.Background=Brushes.Transparent;
+        popupBand.IsHitTestVisible=false;
+
+        particleSurface = new Rectangle();
+        particleSurface.Fill=Brushes.White;
+        particleSurface.Stretch=Stretch.Fill;
+        particleSurface.Effect=popupCausticEffect;
+        particleSurface.IsHitTestVisible=false;
+        popupBand.Children.Add(particleSurface);
+        particleSource.Children.Add(popupBand);
+
+        System.Windows.Controls.Grid popupRails = new System.Windows.Controls.Grid();
+        popupRails.Height=7.0;
+        popupRails.VerticalAlignment=VerticalAlignment.Center;
+        popupRails.Background=Brushes.Transparent;
+        popupRails.IsHitTestVisible=false;
+
+        Rectangle popupTopRail = new Rectangle();
+        popupTopRail.Height=1.0;
+        popupTopRail.VerticalAlignment=VerticalAlignment.Top;
+        popupTopRail.Fill=new SolidColorBrush(System.Windows.Media.Color.FromRgb(123,95,162));
+        popupRails.Children.Add(popupTopRail);
+
+        Rectangle popupBottomRail = new Rectangle();
+        popupBottomRail.Height=1.0;
+        popupBottomRail.VerticalAlignment=VerticalAlignment.Bottom;
+        popupBottomRail.Fill=new SolidColorBrush(System.Windows.Media.Color.FromRgb(123,95,162));
+        popupRails.Children.Add(popupBottomRail);
+
+        particleSource.Children.Add(popupRails);
+        particleSource.Effect=particleEffect;
+
+        System.Windows.Controls.Grid particleLayer = new System.Windows.Controls.Grid();
+        particleLayer.Background=Brushes.Transparent;
+        particleLayer.IsHitTestVisible=false;
+        particleLayer.Children.Add(particleSource);
+        particleLayer.Effect=particleEffectB;
+
+        particlePopup = new Popup();
+        particlePopup.AllowsTransparency=true;
+        particlePopup.StaysOpen=true;
+        particlePopup.PopupAnimation=PopupAnimation.None;
+        particlePopup.PlacementTarget=null;
+        particlePopup.Placement=PlacementMode.AbsolutePoint;
+        particlePopup.Height=33.0;
+        particlePopup.Child=particleLayer;
+        particlePopup.IsHitTestVisible=false;
+        particlePopup.Focusable=false;
+
+        particlePopup.Opened += delegate(object sender,EventArgs e) {
+            HwndSource source = PresentationSource.FromVisual(particleSurface) as HwndSource;
+            if (source != null) {
+                particlePopupHwnd=source.Handle;
+                source.AddHook(PopupWndProc);
+                int exStyle=GetWindowLong(particlePopupHwnd,GWL_EXSTYLE);
+                exStyle=(exStyle|WS_EX_TRANSPARENT|WS_EX_NOACTIVATE)&~WS_EX_TOPMOST;
+                SetWindowLong(particlePopupHwnd,GWL_EXSTYLE,exStyle);
+                if (ownerForm!=null && ownerForm.Handle!=IntPtr.Zero)
+                    SetWindowLongPtr(particlePopupHwnd,GWLP_HWNDPARENT,ownerForm.Handle);
+                NormalizePopupZOrder();
+                lastPopupX=Int32.MinValue; lastPopupY=Int32.MinValue;
+                PositionPopup();
+            }
+        };
+        particlePopup.Closed += delegate(object sender,EventArgs e) {
+            particlePopupHwnd=IntPtr.Zero;
+        };
+
+        root.Loaded += delegate(object sender,RoutedEventArgs e) {
+            ownerForm=FindForm();
+            if (ownerForm!=null) {
+                ownerForm.LocationChanged+=OwnerGeometryChanged;
+                ownerForm.SizeChanged+=OwnerGeometryChanged;
+                ownerForm.VisibleChanged+=OwnerGeometryChanged;
+                ownerForm.Activated+=OwnerActivated;
+                ownerForm.Deactivate+=OwnerDeactivated;
+            }
+        };
+
+        root.SizeChanged += delegate(object sender,SizeChangedEventArgs e) {
+            double w=Math.Max(1.0,root.ActualWidth);
+            popupCausticEffect.ViewportWidth=w;
+            particleEffect.ViewportWidth=w;
+            particleEffectB.ViewportWidth=w;
+            if (particlePopup.IsOpen) particlePopup.Width=w;
+        };
+
+        Child=root;
+        activity=0.0;
+        targetActivity=0.0;
+        lastFrameSeconds=0.0;
+
+        watch=Stopwatch.StartNew();
+        animationTimer=new System.Windows.Forms.Timer();
+        animationTimer.Interval=33;
+        animationTimer.Tick+=Animate;
+        animationTimer.Start();
+    }
+
+    public int RenderTier { get { return RenderCapability.Tier; } }
+    public double ActivityLevel { get { return activity; } }
+    public bool ActivityRequested { get { return targetActivity > 0.5; } }
+
+    public void SetActivity(bool active) {
+        targetActivity=active ? 1.0 : 0.0;
+        if (active) EnsurePopupOpen();
+    }
+
+    protected override void OnResize(EventArgs e) {
+        base.OnResize(e);
+        double w=Math.Max(1.0,ClientSize.Width);
+        causticEffect.ViewportWidth=w;
+        popupCausticEffect.ViewportWidth=w;
+        particleEffect.ViewportWidth=w;
+        particleEffectB.ViewportWidth=w;
+        if (particlePopup.IsOpen) particlePopup.Width=w;
+    }
+
+    protected override void Dispose(bool disposing) {
+        if (disposing) {
+            animationTimer.Stop();
+            animationTimer.Tick-=Animate;
+            if (ownerForm!=null) {
+                ownerForm.LocationChanged-=OwnerGeometryChanged;
+                ownerForm.SizeChanged-=OwnerGeometryChanged;
+                ownerForm.VisibleChanged-=OwnerGeometryChanged;
+                ownerForm.Activated-=OwnerActivated;
+                ownerForm.Deactivate-=OwnerDeactivated;
+                ownerForm=null;
+            }
+            ClosePopup();
+            if (watch!=null) watch.Stop();
+        }
+        base.Dispose(disposing);
+    }
+}
+'@ -ReferencedAssemblies @(
+    'System','System.Core','System.Drawing','System.Windows.Forms',
+    'WindowsBase','PresentationCore','PresentationFramework','WindowsFormsIntegration','System.Xaml'
+)
+$causticShaderPath = Join-Path $root 'divider-caustic.ps'
+$particleShaderPath = Join-Path $root 'divider-particles.ps'
+if (-not (Test-Path $causticShaderPath)) { throw 'GPU caustic shader bytecode not found: ' + $causticShaderPath }
+if (-not (Test-Path $particleShaderPath)) { throw 'GPU particle shader bytecode not found: ' + $particleShaderPath }
+
 [Windows.Forms.Application]::EnableVisualStyles()
 $form = New-Object Windows.Forms.Form
 $form.Text = 'Remote Desktop Commander'
@@ -1141,6 +1544,16 @@ $headerDivider.Add_Paint({
     }
 })
 
+# GPU is a visual child only. The original divider Panel remains the input
+# surface, so its cursor/capture/drag implementation stays exactly as in Git.
+$gpuDivider = New-Object RdcGpuDividerHost -ArgumentList @($causticShaderPath,$particleShaderPath)
+$gpuDivider.Dock = 'Fill'
+$gpuDivider.Margin = New-Object Windows.Forms.Padding(0)
+$gpuDivider.TabStop = $false
+$gpuDivider.Enabled = $false
+$headerDivider.Controls.Add($gpuDivider)
+$gpuDivider.BringToFront()
+
 $headerLog.Add_ScrollActivity({ $headerVScroll.Invalidate() })
 $headerLog.Add_MouseWheel({
     try { [void]$headerLog.BeginInvoke([Windows.Forms.MethodInvoker]{ $headerVScroll.Invalidate() }) } catch {}
@@ -1330,6 +1743,12 @@ $script:currentEventTruncated = $false
 $script:remoteLineBuffer = ''
 $script:seenFirstRemoteEvent = $false
 $script:tailNeedsMarker = $false
+$script:activeToolCalls = 0
+$script:lastToolCompletedAt = $null
+$script:lastToolMarkerAt = $null
+$script:activityHoldUntil = $null
+$script:activityGapEwmaSeconds = 3.0
+$script:activityHoldSeconds = 5.0
 $uiStartupMaxChars = 30000
 $uiEventMaxChars = 8000
 $uiLogInitialTailBytes = 524288
@@ -1412,7 +1831,42 @@ function Limit-UiEvent([string]$text) {
     $headLen = [Math]::Max(0,$uiEventMaxChars - $note.Length)
     return $clean.Substring(0,$headLen) + $note
 }
+function Set-DividerWorkState([bool]$working) {
+    if ($gpuDivider -and -not $gpuDivider.IsDisposed) {
+        $gpuDivider.SetActivity($working)
+    }
+}
+function Refresh-DividerActivitySession {
+    $now = Get-Date
+
+    if ($script:activeToolCalls -gt 0 -and $script:lastToolMarkerAt) {
+        if (($now - $script:lastToolMarkerAt).TotalSeconds -gt 20) {
+            $script:activeToolCalls = 0
+            $script:activityHoldUntil = $null
+        }
+    }
+
+    if ($script:activeToolCalls -gt 0) {
+        Set-DividerWorkState $true
+        return
+    }
+
+    if ($script:activityHoldUntil -and $now -lt $script:activityHoldUntil) {
+        Set-DividerWorkState $true
+        return
+    }
+
+    $script:activityHoldUntil = $null
+    Set-DividerWorkState $false
+}
 function Reset-CompactLogSession {
+    $script:activeToolCalls = 0
+    $script:lastToolCompletedAt = $null
+    $script:lastToolMarkerAt = $null
+    $script:activityHoldUntil = $null
+    $script:activityGapEwmaSeconds = 3.0
+    $script:activityHoldSeconds = 5.0
+    Set-DividerWorkState $false
     $script:smartFollow = $true
     $script:freezeViewport = $false
     $script:lastRenderedHeader = $null
@@ -1655,6 +2109,37 @@ function Process-RemoteLine([string]$line) {
     $isReceived = ($receivedPos -ge 0 -and $receivedPos -le 4)
     $isCompleted = ($toolPos -ge 0 -and $toolPos -le 4 -and $line.IndexOf(' completed:',[StringComparison]::Ordinal) -gt $toolPos)
     $isMarker = $isReceived -or $isCompleted
+
+    if ($isReceived) {
+        $now = Get-Date
+        if ($script:activeToolCalls -le 0 -and $script:lastToolCompletedAt) {
+            $gapSeconds = ($now - $script:lastToolCompletedAt).TotalSeconds
+            if ($gapSeconds -ge 0.05 -and $gapSeconds -le 12.0) {
+                $script:activityGapEwmaSeconds =
+                    (0.75 * [double]$script:activityGapEwmaSeconds) +
+                    (0.25 * $gapSeconds)
+                $script:activityHoldSeconds = [Math]::Min(
+                    15.0,
+                    [Math]::Max(5.0,0.9 + 1.35 * [double]$script:activityGapEwmaSeconds)
+                )
+            }
+        }
+        $script:activeToolCalls = [Math]::Max(0,[int]$script:activeToolCalls) + 1
+        $script:lastToolMarkerAt = $now
+        $script:activityHoldUntil = $null
+        Set-DividerWorkState $true
+    } elseif ($isCompleted) {
+        $now = Get-Date
+        $script:activeToolCalls = [Math]::Max(0,([int]$script:activeToolCalls - 1))
+        $script:lastToolMarkerAt = $now
+        if ($script:activeToolCalls -gt 0) {
+            Set-DividerWorkState $true
+        } else {
+            $script:lastToolCompletedAt = $now
+            $script:activityHoldUntil = $now.AddSeconds([double]$script:activityHoldSeconds)
+            Set-DividerWorkState $true
+        }
+    }
 
     if ($isMarker) {
         if ($script:tailNeedsMarker) { $script:tailNeedsMarker = $false }
@@ -2090,6 +2575,7 @@ function Refresh-Window {
     }
 
     Read-LiveLog
+    Refresh-DividerActivitySession
 
     if ($script:proc) {
         $script:proc.Refresh()
@@ -2303,6 +2789,17 @@ if ($SelfTest) {
     $headerLog.Select($p,$mailProbe.Length)
     if($headerLog.SelectionColor.ToArgb() -ne $headerValue.ToArgb()){throw 'Email highlight color mismatch'}
     if($accountInfo.ForeColor.ToArgb() -ne ([Drawing.Color]::Silver).ToArgb()){throw 'Bottom account color mismatch'}
+
+    if ($gpuDivider.GetType().Name -ne 'RdcGpuDividerHost') { throw 'GPU divider visual layer missing' }
+    Reset-CompactLogSession
+    Process-RemoteLine 'Received tool call shader_test: begin'
+    if ($script:activeToolCalls -ne 1 -or -not $gpuDivider.ActivityRequested) { throw 'GPU activity did not start on Received tool call' }
+    Process-RemoteLine 'Tool call shader_test completed:'
+    if ($script:activeToolCalls -ne 0 -or -not $gpuDivider.ActivityRequested) { throw 'GPU activity hold did not remain active after completion' }
+    $script:activityHoldUntil = (Get-Date).AddMilliseconds(-1)
+    Refresh-DividerActivitySession
+    if ($gpuDivider.ActivityRequested) { throw 'GPU activity did not stop after hold expiry' }
+
     Write-Output 'GUI SELF TEST PASSED'
     $form.Dispose()
     if ($windowMutex) { $windowMutex.ReleaseMutex(); $windowMutex.Dispose() }
