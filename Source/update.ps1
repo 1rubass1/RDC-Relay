@@ -1,8 +1,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$InstallRoot,
     [Parameter(Mandatory=$true)][string]$CurrentVersion,
-    [string]$ManifestUrl = 'https://raw.githubusercontent.com/1rubass1/Remote-Desktop-Commander/main/Source/update-manifest.json',
-    [string]$BaseUrl = 'https://raw.githubusercontent.com/1rubass1/Remote-Desktop-Commander/main/Source',
+    [string]$Repository = '1rubass1/Remote-Desktop-Commander',
+    [string]$Branch = 'main',
     [switch]$Force
 )
 
@@ -35,7 +35,24 @@ try {
         } catch {}
     }
 
-    $manifestResponse = Invoke-WebRequest -Uri $ManifestUrl -UseBasicParsing -TimeoutSec 5
+    # Resolve main to an immutable commit SHA first. This avoids a race where
+    # raw.githubusercontent.com CDN serves manifest and payloads from different
+    # moments of a moving branch.
+    $apiHeaders = @{
+        'User-Agent' = 'RemoteDesktopCommanderUpdater'
+        'Accept' = 'application/vnd.github+json'
+    }
+    $refUrl = 'https://api.github.com/repos/' + $Repository + '/commits/' + [Uri]::EscapeDataString($Branch)
+    $refResponse = Invoke-WebRequest -Uri $refUrl -Headers $apiHeaders -UseBasicParsing -TimeoutSec 5
+    $refInfo = $refResponse.Content | ConvertFrom-Json
+    $commitSha = [string]$refInfo.sha
+    if ($commitSha -notmatch '^[0-9a-fA-F]{40}$') {
+        throw 'GitHub did not return a valid commit SHA.'
+    }
+
+    $baseUrl = 'https://raw.githubusercontent.com/' + $Repository + '/' + $commitSha + '/Source'
+    $manifestUrl = $baseUrl + '/update-manifest.json'
+    $manifestResponse = Invoke-WebRequest -Uri $manifestUrl -UseBasicParsing -TimeoutSec 5
     $manifestText = ([string]$manifestResponse.Content).TrimStart([char]0xFEFF)
     $manifest = $manifestText | ConvertFrom-Json
     if (-not $manifest.version -or -not $manifest.files) {
@@ -61,7 +78,7 @@ try {
         }
 
         $staged = Join-Path $tempRoot $name
-        $url = $BaseUrl.TrimEnd('/') + '/' + [Uri]::EscapeDataString($name)
+        $url = $baseUrl.TrimEnd('/') + '/' + [Uri]::EscapeDataString($name)
         Invoke-WebRequest -Uri $url -OutFile $staged -UseBasicParsing -TimeoutSec 12
 
         $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $staged).Hash.ToUpperInvariant()
