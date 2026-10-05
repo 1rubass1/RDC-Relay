@@ -30,17 +30,15 @@ if (-not $SelfTest -and -not $SkipUpdate) {
 }
 
 $windowMutex = $null
-$activateEvent = $null
 if (-not $SelfTest) {
     $sha = [Security.Cryptography.SHA256]::Create()
     $key = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($PSScriptRoot.ToLowerInvariant()))).Replace('-','')
     $sha.Dispose()
-    $activateEvent = New-Object Threading.EventWaitHandle($false,[Threading.EventResetMode]::AutoReset,('Local\RemoteDesktopCommanderActivate-'+$key))
     $windowMutex = New-Object Threading.Mutex($false,('Local\RemoteDesktopCommanderWindow-'+$key))
     try { $ownsWindow = $windowMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $ownsWindow = $true }
     if (-not $ownsWindow) {
-        [void]$activateEvent.Set()
-        $activateEvent.Dispose()
+        # A second launcher must never steal focus from the user's current app.
+        # It simply exits while the already-running RDC window keeps working.
         $windowMutex.Dispose()
         exit 0
     }
@@ -944,6 +942,7 @@ public sealed class RdcGpuDividerHost : ElementHost {
     private readonly RdcDividerGlowEffect particleEffectB;
     private readonly Popup particlePopup;
     private readonly Rectangle particleSurface;
+    private readonly System.Windows.Controls.Grid particleLayer;
     private readonly System.Windows.Controls.Grid root;
     private double activity;
     private double targetActivity;
@@ -1058,7 +1057,8 @@ public sealed class RdcGpuDividerHost : ElementHost {
         causticEffect.Time = now;
 
         if (targetActivity > 0.0 || activity > 0.002) {
-            EnsurePopupOpen();
+            if (!particlePopup.IsOpen) EnsurePopupOpen();
+            particleLayer.Opacity = Math.Min(1.0,Math.Max(0.0,activity*1.15));
             popupCausticEffect.Time = now;
             particleEffect.Time = now;
             particleEffectB.Time = now + 11.37;
@@ -1066,7 +1066,10 @@ public sealed class RdcGpuDividerHost : ElementHost {
             particleEffectB.Activity = activity;
             PositionPopup();
         } else {
-            ClosePopup();
+            // Keep the layered popup HWND alive. Reopening a WPF Popup on every
+            // remote task can transiently activate its owner before NOACTIVATE
+            // is applied. At idle we only hide its content and stop updating it.
+            particleLayer.Opacity = 0.0;
         }
     }
 
@@ -1152,9 +1155,10 @@ public sealed class RdcGpuDividerHost : ElementHost {
         particleSource.Children.Add(popupRails);
         particleSource.Effect=particleEffect;
 
-        System.Windows.Controls.Grid particleLayer = new System.Windows.Controls.Grid();
+        particleLayer = new System.Windows.Controls.Grid();
         particleLayer.Background=Brushes.Transparent;
         particleLayer.IsHitTestVisible=false;
+        particleLayer.Opacity=0.0;
         particleLayer.Children.Add(particleSource);
         particleLayer.Effect=particleEffectB;
 
@@ -1197,6 +1201,11 @@ public sealed class RdcGpuDividerHost : ElementHost {
                 ownerForm.Activated+=OwnerActivated;
                 ownerForm.Deactivate+=OwnerDeactivated;
             }
+
+            // Create the popup once during normal UI startup, then keep the
+            // HWND alive for the lifetime of the window. Activity only changes
+            // opacity/shader constants and therefore cannot steal foreground.
+            EnsurePopupOpen();
         };
 
         root.SizeChanged += delegate(object sender,SizeChangedEventArgs e) {
@@ -1225,7 +1234,6 @@ public sealed class RdcGpuDividerHost : ElementHost {
 
     public void SetActivity(bool active) {
         targetActivity=active ? 1.0 : 0.0;
-        if (active) EnsurePopupOpen();
     }
 
     protected override void OnResize(EventArgs e) {
@@ -2564,12 +2572,6 @@ $openLogItem.Add_Click({
 function Refresh-Window {
     Apply-SystemFrameTheme
 
-    if ($activateEvent -and $activateEvent.WaitOne(0)) {
-        if ($form.WindowState -eq 'Minimized') { $form.WindowState = 'Normal' }
-        $form.Show()
-        [void]$form.Activate()
-    }
-
     if ($script:uiInteracting -or $vScroll.IsDragging -or $hScroll.IsDragging) {
         return
     }
@@ -2803,7 +2805,6 @@ if ($SelfTest) {
     Write-Output 'GUI SELF TEST PASSED'
     $form.Dispose()
     if ($windowMutex) { $windowMutex.ReleaseMutex(); $windowMutex.Dispose() }
-    if ($activateEvent) { $activateEvent.Dispose() }
     exit 0
 }
 Hide-LegacyRemoteTerminal
@@ -2818,5 +2819,4 @@ finally {
         try { $windowMutex.ReleaseMutex() } catch {}
         $windowMutex.Dispose()
     }
-    if ($activateEvent) { $activateEvent.Dispose() }
 }
