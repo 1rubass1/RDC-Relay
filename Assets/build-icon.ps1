@@ -17,6 +17,7 @@ $Orange = [Drawing.Color]::FromArgb(255, 191, 118, 67)
 $Chip = [Drawing.Color]::FromArgb(255, 11, 11, 12)
 $Face = [Drawing.Color]::FromArgb(255, 5, 4, 5)
 $Edge = [Drawing.Color]::FromArgb(255, 219, 219, 221)
+$Background = [Drawing.Color]::FromArgb(255, 219, 219, 221)
 
 function New-RoundedPath {
     param([Drawing.RectangleF]$Rect, [float]$Radius)
@@ -201,8 +202,8 @@ function Draw-Monogram {
         $dOuterRadius = 72.0
         $dInnerLeft = 62.0
         $dInnerRadius = 37.0
-        $cCenterX = 159.0
-        $cOuterRadius = 67.0
+        $cCenterX = 172.0
+        $cOuterRadius = 72.0
         $cInnerRadius = 37.0
         $cOpeningHalfAngle = 45.0
         $gapWidth = 7.0
@@ -213,9 +214,9 @@ function Draw-Monogram {
         $dOuterRadius = 71.0
         $dInnerLeft = 62.0
         $dInnerRadius = 36.5
-        $cCenterX = 159.0
-        $cOuterRadius = 65.0
-        $cInnerRadius = 36.0
+        $cCenterX = 170.5
+        $cOuterRadius = 71.0
+        $cInnerRadius = 36.5
         $cOpeningHalfAngle = 43.5
         $gapWidth = 6.0
     }
@@ -225,8 +226,8 @@ function Draw-Monogram {
         $dOuterRadius = 70.0
         $dInnerLeft = 62.0
         $dInnerRadius = 36.0
-        $cCenterX = 158.0
-        $cOuterRadius = 64.0
+        $cCenterX = 169.0
+        $cOuterRadius = 70.0
         $cInnerRadius = 36.0
         $cOpeningHalfAngle = 42.0
         $gapWidth = 5.0
@@ -291,7 +292,7 @@ function Render-VectorIcon {
     try {
         $g = [Drawing.Graphics]::FromImage($bmp)
         try {
-            $g.Clear([Drawing.Color]::Transparent)
+            $g.Clear($Background)
             $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
             $g.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
             $g.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
@@ -318,7 +319,7 @@ function Resize-Png {
         try {
             $g = [Drawing.Graphics]::FromImage($dst)
             try {
-                $g.Clear([Drawing.Color]::Transparent)
+                $g.Clear($Background)
                 $g.CompositingMode = [Drawing.Drawing2D.CompositingMode]::SourceOver
                 $g.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
                 $g.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
@@ -415,7 +416,7 @@ Write-Output 'Geometry:'
 Write-Output '  D outer: exact semicircle + straight stem'
 Write-Output '  D counter: exact semicircle + straight stem'
 Write-Output '  C: concentric outer/inner circles with a radial wedge removed'
-Write-Output '  Full monogram bounds: X=35..222, Y=58..198, center=(128.5,128)'
+Write-Output '  Full visible geometry target: X~35..221, Y=58..198, center~(128,128)'
 Write-Output '  Chip body center: (128,128)'
 Write-Output ''
 Write-Output "Master: $masterPath"
