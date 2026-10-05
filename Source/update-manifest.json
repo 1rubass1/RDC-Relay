@@ -3,7 +3,7 @@
     "files":  [
                   {
                       "name":  "remote-window.ps1",
-                      "sha256":  "484D2510A73D4CF537AC2216F2D9BB73E366021915D1B38160DF328A9BA566B8"
+                      "sha256":  "4C1F88C85827820067FA88E26FFC5DF32EC92D40E859AD25A5706226662596CB"
                   },
                   {
                       "name":  "divider-caustic.ps",
@@ -19,11 +19,11 @@
                   },
                   {
                       "name":  "version.txt",
-                      "sha256":  "31F877ECC7CF26AD1905ACC11A16FBEC448CA8D1A0CE4A1FB72A84F3AD4A7E11"
+                      "sha256":  "879A67A197446479E783C8E22A58681FED324F09EAC1CE808F6A5A4C5E1894AD"
                   },
                   {
                       "name":  "update.ps1",
-                      "sha256":  "A2EFB4302438C7C5D96277D038A3C1497FB87BE99BE21BCC2797D89028EC60EF"
+                      "sha256":  "EEF215516144320FCCF68168B56F4694FFBEA8A338E6E72E083A05E20432B460"
                   }
               ]
 }
