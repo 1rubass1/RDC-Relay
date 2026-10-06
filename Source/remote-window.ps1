@@ -1,14 +1,14 @@
 ﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$appVersion = '1.5.7'
+$appVersion = '1.5.8'
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'DesktopCommander.ico'
 
 # Branding migration cleanup. Keep the legacy install directory/mutex for
 # compatibility, but remove obsolete launchers once the new payload exists.
-if (-not $SelfTest -and (Test-Path -LiteralPath (Join-Path $root 'RDC Relay.cmd'))) {
+if (-not $SelfTest -and -not $Preview -and (Test-Path -LiteralPath (Join-Path $root 'RDC Relay.cmd'))) {
     foreach ($legacyLauncher in @('Remote Desktop Commander.cmd','CommanderRelay.cmd')) {
         try {
             $legacyPath = Join-Path $root $legacyLauncher
@@ -18,10 +18,12 @@ if (-not $SelfTest -and (Test-Path -LiteralPath (Join-Path $root 'RDC Relay.cmd'
         } catch {}
     }
 
-    foreach ($shortcutRoot in @(
+    $shortcutRoots = @(
         [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory),
         [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
-    )) {
+    )
+
+    foreach ($shortcutRoot in $shortcutRoots) {
         if ([string]::IsNullOrWhiteSpace($shortcutRoot)) { continue }
 
         $newShortcut = Join-Path $shortcutRoot 'RDC Relay.lnk'
@@ -41,6 +43,55 @@ if (-not $SelfTest -and (Test-Path -LiteralPath (Join-Path $root 'RDC Relay.cmd'
             } catch {}
         }
     }
+
+    # Keep existing shortcuts synchronized across updater-only releases. Do not
+    # recreate shortcuts the user intentionally removed.
+    try {
+        if (Test-Path -LiteralPath $iconPath) {
+            $iconHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $iconPath).Hash.Substring(0,8)
+            $shortcutIcon = Join-Path $root ('RDCRelay-v' + $appVersion + '-' + $iconHash + '.ico')
+            if (-not (Test-Path -LiteralPath $shortcutIcon)) {
+                Copy-Item -LiteralPath $iconPath -Destination $shortcutIcon -Force
+            }
+
+            $shell = New-Object -ComObject WScript.Shell
+            try {
+                foreach ($shortcutRoot in $shortcutRoots) {
+                    if ([string]::IsNullOrWhiteSpace($shortcutRoot)) { continue }
+
+                    $shortcutPath = Join-Path $shortcutRoot 'RDC Relay.lnk'
+                    if (-not (Test-Path -LiteralPath $shortcutPath)) { continue }
+
+                    $shortcut = $shell.CreateShortcut($shortcutPath)
+                    try {
+                        $expectedTarget = Join-Path $env:WINDIR 'System32WindowsPowerShell1.0powershell.exe'
+                        $expectedArgs = '-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "' +
+                            (Join-Path $root 'remote-window.ps1') + '"'
+                        $expectedIcon = $shortcutIcon + ',0'
+                        $changed =
+                            $shortcut.TargetPath -ne $expectedTarget -or
+                            $shortcut.Arguments -ne $expectedArgs -or
+                            $shortcut.WorkingDirectory -ne $root -or
+                            $shortcut.IconLocation -ne $expectedIcon -or
+                            $shortcut.Description -ne 'RDC Relay'
+
+                        if ($changed) {
+                            $shortcut.TargetPath = $expectedTarget
+                            $shortcut.Arguments = $expectedArgs
+                            $shortcut.WorkingDirectory = $root
+                            $shortcut.IconLocation = $expectedIcon
+                            $shortcut.Description = 'RDC Relay'
+                            $shortcut.Save()
+                        }
+                    } finally {
+                        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
+                    }
+                }
+            } finally {
+                [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
+            }
+        }
+    } catch {}
 }
 
 function Resolve-NpxPath {
@@ -1881,6 +1932,7 @@ public sealed class RdcDividerGlowEffect : ShaderEffect {
 public sealed class RdcGpuDividerHost : ElementHost {
     private readonly Stopwatch watch;
     private readonly System.Windows.Forms.Timer animationTimer;
+    private readonly System.Windows.Forms.Timer visibilityTimer;
     private readonly RdcDividerGlowEffect causticEffect;
     private readonly RdcDividerGlowEffect popupCausticEffect;
     private readonly RdcDividerGlowEffect particleEffect;
@@ -1892,7 +1944,9 @@ public sealed class RdcGpuDividerHost : ElementHost {
     private double activity;
     private double targetActivity;
     private double lastFrameSeconds;
+    private double animationTime;
     private bool interactiveMove;
+    private bool renderPaused;
     private IntPtr particlePopupHwnd = IntPtr.Zero;
     private int lastPopupX = Int32.MinValue;
     private int lastPopupY = Int32.MinValue;
@@ -1907,6 +1961,8 @@ public sealed class RdcGpuDividerHost : ElementHost {
     const int WS_EX_NOACTIVATE = 0x08000000;
     const int WM_NCHITTEST = 0x0084;
     const int HTTRANSPARENT = -1;
+    const uint GW_HWNDPREV = 3;
+    const int DWMWA_CLOAKED = 14;
 
     const uint SWP_NOSIZE = 0x0001;
     const uint SWP_NOMOVE = 0x0002;
@@ -1919,8 +1975,12 @@ public sealed class RdcGpuDividerHost : ElementHost {
     [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr hWnd,int nIndex,int dwNewLong);
     [DllImport("user32.dll",EntryPoint="SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr hWnd,int nIndex,IntPtr dwNewLong);
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hWnd,IntPtr hWndInsertAfter,int X,int Y,int cx,int cy,uint flags);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hWnd,uint uCmd);
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left,Top,Right,Bottom; }
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd,out RECT rect);
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd,int attr,out int value,int size);
 
     protected override void WndProc(ref Message m) {
         if (m.Msg == WM_NCHITTEST) {
@@ -1936,6 +1996,146 @@ public sealed class RdcGpuDividerHost : ElementHost {
             return new IntPtr(HTTRANSPARENT);
         }
         return IntPtr.Zero;
+    }
+
+    private static bool IsCloaked(IntPtr hwnd) {
+        try {
+            int value;
+            return DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_CLOAKED,
+                out value,
+                sizeof(int)) == 0 && value != 0;
+        } catch {
+            return false;
+        }
+    }
+
+    private bool IsFullyOccluded(IntPtr hwnd) {
+        if (hwnd == IntPtr.Zero || !IsWindowVisible(hwnd) || IsIconic(hwnd))
+            return true;
+
+        RECT rr;
+        if (!GetWindowRect(hwnd,out rr))
+            return false;
+
+        System.Drawing.Rectangle target =
+            System.Drawing.Rectangle.FromLTRB(
+                rr.Left,
+                rr.Top,
+                rr.Right,
+                rr.Bottom);
+
+        if (target.Width <= 0 || target.Height <= 0)
+            return true;
+
+        using (System.Drawing.Region remaining =
+            new System.Drawing.Region(target))
+        using (System.Drawing.Drawing2D.Matrix matrix =
+            new System.Drawing.Drawing2D.Matrix()) {
+
+            IntPtr above = GetWindow(hwnd,GW_HWNDPREV);
+            int guard = 0;
+
+            while (above != IntPtr.Zero && guard++ < 512) {
+                if (above != particlePopupHwnd &&
+                    IsWindowVisible(above) &&
+                    !IsIconic(above) &&
+                    !IsCloaked(above)) {
+
+                    RECT ar;
+                    if (GetWindowRect(above,out ar)) {
+                        System.Drawing.Rectangle cover =
+                            System.Drawing.Rectangle.Intersect(
+                                target,
+                                System.Drawing.Rectangle.FromLTRB(
+                                    ar.Left,
+                                    ar.Top,
+                                    ar.Right,
+                                    ar.Bottom));
+
+                        if (cover.Width > 0 && cover.Height > 0) {
+                            remaining.Exclude(cover);
+                            if (remaining.GetRegionScans(matrix).Length == 0)
+                                return true;
+                        }
+                    }
+                }
+
+                above = GetWindow(above,GW_HWNDPREV);
+            }
+
+            return remaining.GetRegionScans(matrix).Length == 0;
+        }
+    }
+
+    private bool ShouldPauseRendering() {
+        if (ownerForm == null ||
+            ownerForm.IsDisposed ||
+            ownerForm.Handle == IntPtr.Zero)
+            return false;
+
+        if (!ownerForm.Visible ||
+            ownerForm.WindowState == FormWindowState.Minimized)
+            return true;
+
+        return IsFullyOccluded(ownerForm.Handle);
+    }
+
+    private void ApplyCurrentFrame() {
+        causticEffect.Time = animationTime;
+        popupCausticEffect.Time = animationTime;
+        particleEffect.Time = animationTime;
+        particleEffectB.Time = animationTime + 11.37;
+        particleEffect.Activity = activity;
+        particleEffectB.Activity = activity;
+
+        if (renderPaused || interactiveMove) {
+            particleLayer.Opacity = 0.0;
+            return;
+        }
+
+        particleLayer.Opacity =
+            (targetActivity > 0.0 || activity > 0.002)
+            ? Math.Min(1.0,Math.Max(0.0,activity*1.15))
+            : 0.0;
+    }
+
+    private void SetRenderingPaused(bool paused) {
+        if (renderPaused == paused)
+            return;
+
+        renderPaused = paused;
+
+        if (paused) {
+            animationTimer.Stop();
+            particleLayer.Opacity = 0.0;
+            return;
+        }
+
+        // Do not replay a stale fade after the window was hidden for a while.
+        // Resume the frozen animation phase, but snap activity to the current
+        // requested state.
+        activity = targetActivity;
+        lastFrameSeconds = watch.Elapsed.TotalSeconds;
+
+        if (!interactiveMove) {
+            EnsurePopupOpen();
+            PositionPopup();
+        }
+
+        ApplyCurrentFrame();
+
+        if (!animationTimer.Enabled)
+            animationTimer.Start();
+    }
+
+    private void UpdateRenderingVisibility() {
+        SetRenderingPaused(ShouldPauseRendering());
+    }
+
+    private void VisibilityTimer_Tick(object sender,EventArgs e) {
+        UpdateRenderingVisibility();
     }
 
     private void NormalizePopupZOrder() {
@@ -1977,22 +2177,46 @@ public sealed class RdcGpuDividerHost : ElementHost {
 
     private void OwnerGeometryChanged(object sender,EventArgs e) {
         lastPopupX=Int32.MinValue; lastPopupY=Int32.MinValue;
+
+        if (ownerForm != null &&
+            ownerForm.WindowState == FormWindowState.Minimized) {
+            UpdateRenderingVisibility();
+            return;
+        }
+
         PositionPopup();
+    }
+
+    private void OwnerVisibilityChanged(object sender,EventArgs e) {
+        UpdateRenderingVisibility();
+        if (!renderPaused)
+            PositionPopup();
     }
 
     private void OwnerActivated(object sender,EventArgs e) {
         NormalizePopupZOrder();
-        PositionPopup();
+        UpdateRenderingVisibility();
+        if (!renderPaused)
+            PositionPopup();
     }
 
     private void OwnerDeactivated(object sender,EventArgs e) {
         NormalizePopupZOrder();
+        // Z-order can still be settling during Deactivate. The 1 Hz visibility
+        // probe will detect full occlusion without treating mere focus loss as
+        // a reason to stop rendering.
     }
 
     private void Animate(object sender,EventArgs e) {
-        double now = watch.Elapsed.TotalSeconds;
-        double dt = Math.Max(0.0,Math.Min(0.12,now-lastFrameSeconds));
-        lastFrameSeconds = now;
+        if (renderPaused)
+            return;
+
+        double realNow = watch.Elapsed.TotalSeconds;
+        double dt = Math.Max(
+            0.0,
+            Math.Min(0.12,realNow-lastFrameSeconds));
+        lastFrameSeconds = realNow;
+        animationTime += dt;
 
         double rate = targetActivity > activity ? 5.6 : 3.3;
         double blend = 1.0 - Math.Exp(-rate*dt);
@@ -2000,7 +2224,7 @@ public sealed class RdcGpuDividerHost : ElementHost {
         if (activity < 0.001 && targetActivity <= 0.0) activity=0.0;
         if (activity > 0.999 && targetActivity >= 1.0) activity=1.0;
 
-        causticEffect.Time = now;
+        ApplyCurrentFrame();
 
         if (interactiveMove) {
             // A transparent layered WPF Popup does not track WinForms layout
@@ -2010,18 +2234,9 @@ public sealed class RdcGpuDividerHost : ElementHost {
         }
 
         if (targetActivity > 0.0 || activity > 0.002) {
-            if (!particlePopup.IsOpen) EnsurePopupOpen();
-            particleLayer.Opacity = Math.Min(1.0,Math.Max(0.0,activity*1.15));
-            popupCausticEffect.Time = now;
-            particleEffect.Time = now;
-            particleEffectB.Time = now + 11.37;
-            particleEffect.Activity = activity;
-            particleEffectB.Activity = activity;
+            if (!particlePopup.IsOpen)
+                EnsurePopupOpen();
             PositionPopup();
-        } else {
-            // Keep the layered popup HWND alive between remote tasks. Reopening
-            // it for every task can transiently activate its owner.
-            particleLayer.Opacity = 0.0;
         }
     }
 
@@ -2149,7 +2364,8 @@ public sealed class RdcGpuDividerHost : ElementHost {
             if (ownerForm!=null) {
                 ownerForm.LocationChanged+=OwnerGeometryChanged;
                 ownerForm.SizeChanged+=OwnerGeometryChanged;
-                ownerForm.VisibleChanged+=OwnerGeometryChanged;
+                ownerForm.Resize+=OwnerVisibilityChanged;
+                ownerForm.VisibleChanged+=OwnerVisibilityChanged;
                 ownerForm.Activated+=OwnerActivated;
                 ownerForm.Deactivate+=OwnerDeactivated;
             }
@@ -2158,6 +2374,8 @@ public sealed class RdcGpuDividerHost : ElementHost {
             // HWND alive for the lifetime of the window. Activity only changes
             // opacity/shader constants and therefore cannot steal foreground.
             EnsurePopupOpen();
+            visibilityTimer.Start();
+            UpdateRenderingVisibility();
         };
 
         root.SizeChanged += delegate(object sender,SizeChangedEventArgs e) {
@@ -2172,18 +2390,26 @@ public sealed class RdcGpuDividerHost : ElementHost {
         activity=0.0;
         targetActivity=0.0;
         lastFrameSeconds=0.0;
+        animationTime=0.0;
         interactiveMove=false;
+        renderPaused=false;
 
         watch=Stopwatch.StartNew();
+
         animationTimer=new System.Windows.Forms.Timer();
         animationTimer.Interval=33;
         animationTimer.Tick+=Animate;
         animationTimer.Start();
+
+        visibilityTimer=new System.Windows.Forms.Timer();
+        visibilityTimer.Interval=1000;
+        visibilityTimer.Tick+=VisibilityTimer_Tick;
     }
 
     public int RenderTier { get { return RenderCapability.Tier; } }
     public double ActivityLevel { get { return activity; } }
     public bool ActivityRequested { get { return targetActivity > 0.5; } }
+    public bool RenderingPaused { get { return renderPaused; } }
 
     public void SetActivity(bool active) {
         targetActivity=active ? 1.0 : 0.0;
@@ -2197,13 +2423,12 @@ public sealed class RdcGpuDividerHost : ElementHost {
             // Destroy the overflow HWND once at drag start. The inline 7 px
             // divider remains visible and moves with normal WinForms layout.
             ClosePopup();
-        } else {
+        } else if (!renderPaused) {
             EnsurePopupOpen();
             PositionPopup();
-            particleLayer.Opacity =
-                (targetActivity > 0.0 || activity > 0.002)
-                ? Math.Min(1.0,Math.Max(0.0,activity*1.15))
-                : 0.0;
+            ApplyCurrentFrame();
+        } else {
+            particleLayer.Opacity=0.0;
         }
     }
 
@@ -2221,10 +2446,13 @@ public sealed class RdcGpuDividerHost : ElementHost {
         if (disposing) {
             animationTimer.Stop();
             animationTimer.Tick-=Animate;
+            visibilityTimer.Stop();
+            visibilityTimer.Tick-=VisibilityTimer_Tick;
             if (ownerForm!=null) {
                 ownerForm.LocationChanged-=OwnerGeometryChanged;
                 ownerForm.SizeChanged-=OwnerGeometryChanged;
-                ownerForm.VisibleChanged-=OwnerGeometryChanged;
+                ownerForm.Resize-=OwnerVisibilityChanged;
+                ownerForm.VisibleChanged-=OwnerVisibilityChanged;
                 ownerForm.Activated-=OwnerActivated;
                 ownerForm.Deactivate-=OwnerDeactivated;
                 ownerForm=null;

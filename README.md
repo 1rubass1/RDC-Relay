@@ -90,6 +90,8 @@ reach GitHub.
   points at this installation's own `remote-session.log`.
 - The GPU divider effect is decorative. If shader initialization fails, the
   normal static divider remains functional.
+- Decorative GPU animation pauses while the window is hidden, minimized or
+  fully covered by other top-level windows; status and log polling continue.
 - During pane resizing the overflow GPU popup is suspended to avoid layered
   window trails and layout updates are coalesced to display-frame cadence.
 

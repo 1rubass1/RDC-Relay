@@ -199,7 +199,7 @@ internal static class SetupProgram
 
         string versioned = Path.Combine(
             installRoot,
-            "DesktopCommander-v" + version + "-" + hash + ".ico");
+            "RDCRelay-v" + version + "-" + hash + ".ico");
         File.Copy(source, versioned, true);
         return versioned;
     }

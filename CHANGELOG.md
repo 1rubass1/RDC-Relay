@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.8 (2026-10-06)
+
+- Pause the decorative GPU divider animation when the window is hidden, minimized or fully occluded by other top-level windows, while leaving status/log polling active.
+- Resume from the frozen animation phase and snap activity to the current requested state so stale fades are not replayed after returning from the background.
+- Refresh existing `RDC Relay` shortcuts on normal startup so updater-only releases keep target, arguments and the versioned icon path current without recreating shortcuts the user removed.
+- Rename newly generated versioned shortcut icons to `RDCRelay-v<version>-<hash>.ico` for clearer branding and reliable shell icon-cache invalidation.
+
 ## 1.5.7 (2026-10-06)
 
 - Renamed the application and repository branding from `Remote Desktop Commander` to `RDC Relay` to avoid conflict with the upstream Desktop Commander project.
