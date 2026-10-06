@@ -8,7 +8,7 @@
 - Tightened startup banner line spacing by one physical pixel to remove dark seams between ASCII-art rows.
 - Rebuilt the activity log viewport as a double-buffered panel with one atomic manual layout for the text area, vertical scrollbar, horizontal scrollbar and resize corner.
 - Disabled RichEdit native scrollbars entirely and moved horizontal range calculation into the custom controls.
-- Changed divider dragging to deferred resize: only a lightweight divider guide follows the pointer, while the RichEdit panes and scrollbars keep fixed geometry until one atomic resize on release.
+- Changed divider dragging to bitmap-backed live preview: text panes and custom scrollbars visually follow the pointer, while the real RichEdit controls keep fixed geometry until one atomic resize on release.
 - Coalesce expensive RichEdit thumb tracking to display-frame cadence while keeping the custom thumb visually responsive.
 - Unified scrollbar/corner backgrounds to eliminate edge gaps during fast scrolling and pane resizing.
 - Changed divider activity timing to an adaptive 10-30 second normal hold and a 60 second timeout for interrupted tool calls.

@@ -385,8 +385,15 @@ public class RdcBufferedPanel : Panel {
     }
 }
 
-public class RdcDividerDragGuide : Control {
-    public RdcDividerDragGuide() {
+public class RdcDividerDragPreview : Control {
+    private Bitmap headerImage;
+    private Bitmap logImage;
+    private Bitmap vScrollImage;
+    private Bitmap hScrollImage;
+    private Bitmap cornerImage;
+    private int dividerY;
+
+    public RdcDividerDragPreview() {
         SetStyle(ControlStyles.UserPaint |
                  ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.OptimizedDoubleBuffer |
@@ -397,16 +404,120 @@ public class RdcDividerDragGuide : Control {
         Enabled = false;
     }
 
+    private static Bitmap CaptureControl(Control control) {
+        if (control == null || control.Width <= 0 || control.Height <= 0)
+            return null;
+
+        Bitmap bmp = new Bitmap(control.Width,control.Height);
+        using (Graphics g = Graphics.FromImage(bmp)) {
+            Point screen = control.PointToScreen(Point.Empty);
+            g.CopyFromScreen(screen,Point.Empty,control.Size,CopyPixelOperation.SourceCopy);
+        }
+        return bmp;
+    }
+
+    private void DisposeImages() {
+        if (headerImage != null) { headerImage.Dispose(); headerImage = null; }
+        if (logImage != null) { logImage.Dispose(); logImage = null; }
+        if (vScrollImage != null) { vScrollImage.Dispose(); vScrollImage = null; }
+        if (hScrollImage != null) { hScrollImage.Dispose(); hScrollImage = null; }
+        if (cornerImage != null) { cornerImage.Dispose(); cornerImage = null; }
+    }
+
+    public void BeginPreview(
+        Control headerText,
+        Control log,
+        Control vScroll,
+        Control hScroll,
+        Control corner,
+        int initialDividerY) {
+
+        DisposeImages();
+        headerImage = CaptureControl(headerText);
+        logImage = CaptureControl(log);
+        vScrollImage = CaptureControl(vScroll);
+        hScrollImage = CaptureControl(hScroll);
+        cornerImage = CaptureControl(corner);
+        dividerY = initialDividerY;
+        Invalidate();
+    }
+
+    public void UpdateDivider(int value) {
+        dividerY = Math.Max(0,Math.Min(Math.Max(0,Height-7),value));
+        Invalidate();
+        Update();
+    }
+
+    public void EndPreview() {
+        DisposeImages();
+        Invalidate();
+    }
+
+    protected override void Dispose(bool disposing) {
+        if (disposing) DisposeImages();
+        base.Dispose(disposing);
+    }
+
     protected override void OnPaint(PaintEventArgs e) {
         e.Graphics.Clear(BackColor);
-        int bottom = Math.Max(0,Height-1);
-        using (Pen purple = new Pen(Color.FromArgb(123,95,162),1f)) {
-            e.Graphics.DrawLine(purple,0,0,Width,0);
-            e.Graphics.DrawLine(purple,0,bottom,Width,bottom);
+
+        int splitY = Math.Max(0,Math.Min(Math.Max(0,Height-7),dividerY));
+        int lowerTop = Math.Min(Height,splitY+7);
+        int scrollSize = 17;
+        int lowerContentHeight = Math.Max(0,Height-lowerTop-scrollSize);
+        int contentWidth = Math.Max(0,Width-scrollSize);
+
+        if (headerImage != null && splitY > 0) {
+            Region oldClip = e.Graphics.Clip.Clone();
+            try {
+                e.Graphics.SetClip(new Rectangle(0,0,Width,splitY));
+                e.Graphics.DrawImageUnscaled(headerImage,0,0);
+            } finally {
+                e.Graphics.Clip = oldClip;
+                oldClip.Dispose();
+            }
         }
-        if (Height >= 5) {
-            using (Pen orange = new Pen(Color.FromArgb(191,118,67),1f))
-                e.Graphics.DrawLine(orange,0,Height/2,Width,Height/2);
+
+        using (Pen purple = new Pen(Color.FromArgb(123,95,162),1f))
+        using (Pen orange = new Pen(Color.FromArgb(191,118,67),1f)) {
+            e.Graphics.DrawLine(purple,0,splitY,Width,splitY);
+            e.Graphics.DrawLine(orange,0,Math.Min(Height-1,splitY+3),Width,Math.Min(Height-1,splitY+3));
+            e.Graphics.DrawLine(purple,0,Math.Min(Height-1,splitY+6),Width,Math.Min(Height-1,splitY+6));
+        }
+
+        if (logImage != null && lowerContentHeight > 0 && contentWidth > 0) {
+            Rectangle dest = new Rectangle(0,lowerTop,contentWidth,lowerContentHeight);
+            Region oldClip = e.Graphics.Clip.Clone();
+            try {
+                e.Graphics.SetClip(dest);
+                e.Graphics.DrawImageUnscaled(logImage,0,lowerTop);
+            } finally {
+                e.Graphics.Clip = oldClip;
+                oldClip.Dispose();
+            }
+        }
+
+        if (vScrollImage != null && lowerContentHeight > 0) {
+            e.Graphics.DrawImage(
+                vScrollImage,
+                new Rectangle(contentWidth,lowerTop,scrollSize,lowerContentHeight),
+                new Rectangle(0,0,vScrollImage.Width,vScrollImage.Height),
+                GraphicsUnit.Pixel);
+        }
+
+        if (hScrollImage != null && contentWidth > 0) {
+            e.Graphics.DrawImage(
+                hScrollImage,
+                new Rectangle(0,Math.Max(0,Height-scrollSize),contentWidth,scrollSize),
+                new Rectangle(0,0,hScrollImage.Width,hScrollImage.Height),
+                GraphicsUnit.Pixel);
+        }
+
+        if (cornerImage != null) {
+            e.Graphics.DrawImageUnscaled(
+                cornerImage,
+                Math.Max(0,Width-scrollSize),
+                Math.Max(0,Height-scrollSize));
         }
     }
 }
@@ -1917,16 +2028,10 @@ if ($gpuDividerAvailable) {
     }
 }
 
-# During splitter drag, move only this lightweight guide. The real RichEdit
-# panes keep their geometry until MouseUp, then resize atomically once.
-$dividerDragGuide = New-Object RdcDividerDragGuide
-$dividerDragGuide.Visible = $false
-$dividerDragGuide.Height = 7
-$dividerOriginMask = New-Object Windows.Forms.Panel
-$dividerOriginMask.Visible = $false
-$dividerOriginMask.Enabled = $false
-$dividerOriginMask.Height = 7
-$dividerOriginMask.BackColor = [Drawing.Color]::FromArgb(18,20,23)
+# During splitter drag, show a lightweight bitmap preview of both panes.
+# Real RichEdit controls keep stable geometry until MouseUp.
+$dividerDragPreview = New-Object RdcDividerDragPreview
+$dividerDragPreview.Visible = $false
 
 $headerLog.Add_ScrollActivity({ $headerVScroll.Invalidate() })
 $headerLog.Add_MouseWheel({
@@ -2061,11 +2166,19 @@ function Set-ActivityPaneHeight([double]$requestedHeight) {
         $headerVScroll.Invalidate()
     }
 }
-function Position-DividerDragGuide([double]$paneHeight) {
+function Get-DividerPreviewY([double]$paneHeight) {
     $clamped = Get-ClampedActivityPaneHeight $paneHeight
+    return $contentHost.ClientSize.Height - [int][Math]::Round($clamped) - 7
+}
+function Position-DividerDragPreview([double]$paneHeight) {
     $origin = $form.PointToClient($contentHost.PointToScreen((New-Object Drawing.Point(0,0))))
-    $topY = $origin.Y + $contentHost.ClientSize.Height - [int][Math]::Round($clamped) - 7
-    $dividerDragGuide.SetBounds($origin.X,$topY,$contentHost.ClientSize.Width,7)
+    $dividerDragPreview.SetBounds(
+        $origin.X,
+        $origin.Y,
+        $contentHost.ClientSize.Width,
+        $contentHost.ClientSize.Height
+    )
+    $dividerDragPreview.UpdateDivider((Get-DividerPreviewY $paneHeight))
 }
 $logHost.Add_Resize({ Layout-LogScrollbars })
 $contentHost.Add_Resize({
@@ -2103,8 +2216,8 @@ function Complete-DividerDrag {
     if (-not $script:dividerDragging) { return }
 
     $script:dividerDragging = $false
-    $dividerDragGuide.Visible = $false
-    $dividerOriginMask.Visible = $false
+    $dividerDragPreview.Visible = $false
+    $dividerDragPreview.EndPreview()
     $script:uiInteracting = $false
 
     Start-LogResizeInteraction
@@ -2130,16 +2243,22 @@ $headerDivider.Add_MouseDown({
         $script:uiInteracting = $true
 
         try { $gpuDivider.SetInteractiveMove($true) } catch {}
-        Position-DividerDragGuide $script:dividerPendingHeight
-        $dividerOriginMask.Bounds = $dividerDragGuide.Bounds
 
-        # Keep mouse capture on the real divider, but cover its original pixels
-        # so only the lightweight moving guide is visible during the gesture.
+        Position-DividerDragPreview $script:dividerPendingHeight
+        $dividerDragPreview.BeginPreview(
+            $headerTextHost,
+            $log,
+            $vScroll,
+            $hScroll,
+            $scrollCorner,
+            (Get-DividerPreviewY $script:dividerPendingHeight)
+        )
+
+        # Keep mouse capture on the real divider. The preview is disabled, so
+        # it is purely visual and never participates in input/capture.
         $headerDivider.Capture = $true
-        $dividerOriginMask.Visible = $true
-        $dividerOriginMask.BringToFront()
-        $dividerDragGuide.Visible = $true
-        $dividerDragGuide.BringToFront()
+        $dividerDragPreview.Visible = $true
+        $dividerDragPreview.BringToFront()
     }
 })
 $headerDivider.Add_MouseMove({
@@ -2149,10 +2268,9 @@ $headerDivider.Add_MouseMove({
         $script:dividerPendingHeight =
             Get-ClampedActivityPaneHeight ($script:dividerStartPaneHeight - $delta)
 
-        # Only the lightweight guide follows the pointer. RichEdit and both
+        # Only the bitmap preview follows the pointer. RichEdit and both
         # custom scrollbars keep stable geometry until the drag is committed.
-        Position-DividerDragGuide $script:dividerPendingHeight
-        $dividerDragGuide.Update()
+        Position-DividerDragPreview $script:dividerPendingHeight
     }
 })
 $headerDivider.Add_MouseUp({
@@ -2184,12 +2302,10 @@ $contentHost.Controls.Add($logHost,0,1)
 $form.Controls.Add($contentHost)
 $form.Controls.Add($bottom)
 $form.Controls.Add($top)
-$form.Controls.Add($dividerOriginMask)
-$form.Controls.Add($dividerDragGuide)
+$form.Controls.Add($dividerDragPreview)
 $form.PerformLayout()
 Set-ActivityPaneHeight (Get-EffectivePaneMinHeight)
-$dividerOriginMask.BringToFront()
-$dividerDragGuide.BringToFront()
+$dividerDragPreview.BringToFront()
 $script:proc = $null
 $script:reader = $null
 $script:bannerStyled = $false
@@ -3181,7 +3297,7 @@ if ($SelfTest) {
     if ($headerLog.GetType().Name -ne 'RdcLogBox') { throw 'Header log control missing' }
     if ($headerVScroll.GetType().Name -ne 'RdcOverlayScrollBar' -or -not $headerVScroll.Vertical -or $headerVScroll.Target -ne $headerLog) { throw 'Header vertical scrollbar missing' }
     if ($headerDivider.Cursor -ne [Windows.Forms.Cursors]::SizeNS -or [Math]::Abs($headerHost.RowStyles[1].Height - 7) -gt 0.1) { throw 'Draggable header divider missing' }
-    if ($dividerDragGuide.GetType().Name -ne 'RdcDividerDragGuide') { throw 'Deferred divider drag guide missing' }
+    if ($dividerDragPreview.GetType().Name -ne 'RdcDividerDragPreview') { throw 'Deferred divider drag preview missing' }
     $testFormWidth = $form.Width
     $testFormHeight = $form.Height
     $testPaneHeight = $contentHost.RowStyles[1].Height
