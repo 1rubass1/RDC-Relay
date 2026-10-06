@@ -145,9 +145,9 @@ public class RdcCircleButton : Control {
         Color fill = pressed ? Color.FromArgb(61,44,87)
                    : hovered ? Color.FromArgb(91,67,126)
                    : Color.FromArgb(74,55,103);
-        Color edge = pressed ? Color.FromArgb(50,36,72)
-                   : hovered ? Color.FromArgb(123,95,162)
-                   : Color.FromArgb(99,77,132);
+        Color edge = pressed ? Color.FromArgb(139,81,45)
+                   : hovered ? Color.FromArgb(207,132,75)
+                   : Color.FromArgb(191,118,67);
         RectangleF r = new RectangleF(1.5f,1.5f,Width-3f,Height-3f);
         using (SolidBrush b = new SolidBrush(fill)) e.Graphics.FillEllipse(b,r);
         using (Pen p = new Pen(edge,1f)) e.Graphics.DrawEllipse(p,r);
@@ -382,6 +382,32 @@ public class RdcBufferedPanel : Panel {
                  ControlStyles.OptimizedDoubleBuffer |
                  ControlStyles.ResizeRedraw, true);
         DoubleBuffered = true;
+    }
+}
+
+public class RdcDividerDragGuide : Control {
+    public RdcDividerDragGuide() {
+        SetStyle(ControlStyles.UserPaint |
+                 ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.OptimizedDoubleBuffer |
+                 ControlStyles.ResizeRedraw |
+                 ControlStyles.Opaque, true);
+        BackColor = Color.FromArgb(18,20,23);
+        TabStop = false;
+        Enabled = false;
+    }
+
+    protected override void OnPaint(PaintEventArgs e) {
+        e.Graphics.Clear(BackColor);
+        int bottom = Math.Max(0,Height-1);
+        using (Pen purple = new Pen(Color.FromArgb(123,95,162),1f)) {
+            e.Graphics.DrawLine(purple,0,0,Width,0);
+            e.Graphics.DrawLine(purple,0,bottom,Width,bottom);
+        }
+        if (Height >= 5) {
+            using (Pen orange = new Pen(Color.FromArgb(191,118,67),1f))
+                e.Graphics.DrawLine(orange,0,Height/2,Width,Height/2);
+        }
     }
 }
 
@@ -1891,6 +1917,17 @@ if ($gpuDividerAvailable) {
     }
 }
 
+# During splitter drag, move only this lightweight guide. The real RichEdit
+# panes keep their geometry until MouseUp, then resize atomically once.
+$dividerDragGuide = New-Object RdcDividerDragGuide
+$dividerDragGuide.Visible = $false
+$dividerDragGuide.Height = 7
+$dividerOriginMask = New-Object Windows.Forms.Panel
+$dividerOriginMask.Visible = $false
+$dividerOriginMask.Enabled = $false
+$dividerOriginMask.Height = 7
+$dividerOriginMask.BackColor = [Drawing.Color]::FromArgb(18,20,23)
+
 $headerLog.Add_ScrollActivity({ $headerVScroll.Invalidate() })
 $headerLog.Add_MouseWheel({
     try { [void]$headerLog.BeginInvoke([Windows.Forms.MethodInvoker]{ $headerVScroll.Invalidate() }) } catch {}
@@ -2007,10 +2044,13 @@ function Get-EffectivePaneMinHeight {
     $half = [Math]::Max(48,[int][Math]::Floor($available / 2))
     return [Math]::Min($paneMinHeightPreferred,$half)
 }
-function Set-ActivityPaneHeight([double]$requestedHeight) {
+function Get-ClampedActivityPaneHeight([double]$requestedHeight) {
     $paneMinHeight = Get-EffectivePaneMinHeight
     $maxHeight = [Math]::Max($paneMinHeight,($contentHost.ClientSize.Height - $paneMinHeight))
-    $nextHeight = [Math]::Max($paneMinHeight,[Math]::Min($maxHeight,$requestedHeight))
+    return [Math]::Max($paneMinHeight,[Math]::Min($maxHeight,$requestedHeight))
+}
+function Set-ActivityPaneHeight([double]$requestedHeight) {
+    $nextHeight = Get-ClampedActivityPaneHeight $requestedHeight
     if ([Math]::Abs($contentHost.RowStyles[1].Height - $nextHeight) -gt 0.1) {
         $contentHost.SuspendLayout()
         try {
@@ -2020,6 +2060,12 @@ function Set-ActivityPaneHeight([double]$requestedHeight) {
         }
         $headerVScroll.Invalidate()
     }
+}
+function Position-DividerDragGuide([double]$paneHeight) {
+    $clamped = Get-ClampedActivityPaneHeight $paneHeight
+    $origin = $form.PointToClient($contentHost.PointToScreen((New-Object Drawing.Point(0,0))))
+    $topY = $origin.Y + $contentHost.ClientSize.Height - [int][Math]::Round($clamped) - 7
+    $dividerDragGuide.SetBounds($origin.X,$topY,$contentHost.ClientSize.Width,7)
 }
 $logHost.Add_Resize({ Layout-LogScrollbars })
 $contentHost.Add_Resize({
@@ -2052,7 +2098,28 @@ $script:dividerDragging = $false
 $script:dividerStartScreenY = 0
 $script:dividerStartPaneHeight = 0.0
 $script:dividerPendingHeight = 0.0
-$script:dividerDragWatch = New-Object Diagnostics.Stopwatch
+
+function Complete-DividerDrag {
+    if (-not $script:dividerDragging) { return }
+
+    $script:dividerDragging = $false
+    $dividerDragGuide.Visible = $false
+    $dividerOriginMask.Visible = $false
+    $script:uiInteracting = $false
+
+    Start-LogResizeInteraction
+    try {
+        Set-ActivityPaneHeight $script:dividerPendingHeight
+        Layout-LogScrollbars
+    } finally {
+        Stop-LogResizeInteraction
+    }
+
+    try { $gpuDivider.SetInteractiveMove($false) } catch {}
+    $contentHost.Invalidate($true)
+    $contentHost.Update()
+}
+
 $headerDivider.Add_MouseDown({
     param($sender,$e)
     if ($e.Button -eq [Windows.Forms.MouseButtons]::Left) {
@@ -2060,55 +2127,48 @@ $headerDivider.Add_MouseDown({
         $script:dividerStartScreenY = [Windows.Forms.Control]::MousePosition.Y
         $script:dividerStartPaneHeight = [double]$contentHost.RowStyles[1].Height
         $script:dividerPendingHeight = $script:dividerStartPaneHeight
-        $script:dividerDragWatch.Restart()
         $script:uiInteracting = $true
-        Start-LogResizeInteraction
+
         try { $gpuDivider.SetInteractiveMove($true) } catch {}
+        Position-DividerDragGuide $script:dividerPendingHeight
+        $dividerOriginMask.Bounds = $dividerDragGuide.Bounds
+
+        # Keep mouse capture on the real divider, but cover its original pixels
+        # so only the lightweight moving guide is visible during the gesture.
         $headerDivider.Capture = $true
+        $dividerOriginMask.Visible = $true
+        $dividerOriginMask.BringToFront()
+        $dividerDragGuide.Visible = $true
+        $dividerDragGuide.BringToFront()
     }
 })
 $headerDivider.Add_MouseMove({
     if ($script:dividerDragging) {
         $nowY = [Windows.Forms.Control]::MousePosition.Y
         $delta = $nowY - $script:dividerStartScreenY
-        $script:dividerPendingHeight = $script:dividerStartPaneHeight - $delta
+        $script:dividerPendingHeight =
+            Get-ClampedActivityPaneHeight ($script:dividerStartPaneHeight - $delta)
 
-        # Coalesce high-frequency mouse messages to roughly one layout per
-        # display frame. RichEdit + WPF layout on every raw mouse event causes
-        # visible jitter even when the pointer itself moves smoothly.
-        if ($script:dividerDragWatch.ElapsedMilliseconds -ge 16) {
-            Set-ActivityPaneHeight $script:dividerPendingHeight
-            $script:dividerDragWatch.Restart()
-        }
+        # Only the lightweight guide follows the pointer. RichEdit and both
+        # custom scrollbars keep stable geometry until the drag is committed.
+        Position-DividerDragGuide $script:dividerPendingHeight
+        $dividerDragGuide.Update()
     }
 })
 $headerDivider.Add_MouseUp({
     if ($script:dividerDragging) {
         $nowY = [Windows.Forms.Control]::MousePosition.Y
         $delta = $nowY - $script:dividerStartScreenY
-        $script:dividerPendingHeight = $script:dividerStartPaneHeight - $delta
-        Set-ActivityPaneHeight $script:dividerPendingHeight
-        $script:dividerDragWatch.Stop()
-        $script:dividerDragging = $false
+        $script:dividerPendingHeight =
+            Get-ClampedActivityPaneHeight ($script:dividerStartPaneHeight - $delta)
+
         $headerDivider.Capture = $false
-        $script:uiInteracting = $false
-        try { $gpuDivider.SetInteractiveMove($false) } catch {}
-        Layout-LogScrollbars
-        Stop-LogResizeInteraction
-        $contentHost.Invalidate($true)
-        $contentHost.Update()
+        Complete-DividerDrag
     }
 })
 $headerDivider.Add_MouseCaptureChanged({
     if (-not $headerDivider.Capture -and $script:dividerDragging) {
-        Set-ActivityPaneHeight $script:dividerPendingHeight
-        $script:dividerDragWatch.Stop()
-        $script:dividerDragging = $false
-        $script:uiInteracting = $false
-        try { $gpuDivider.SetInteractiveMove($false) } catch {}
-        Layout-LogScrollbars
-        Stop-LogResizeInteraction
-        $contentHost.Invalidate($true)
+        Complete-DividerDrag
     }
 })
 
@@ -2124,8 +2184,12 @@ $contentHost.Controls.Add($logHost,0,1)
 $form.Controls.Add($contentHost)
 $form.Controls.Add($bottom)
 $form.Controls.Add($top)
+$form.Controls.Add($dividerOriginMask)
+$form.Controls.Add($dividerDragGuide)
 $form.PerformLayout()
 Set-ActivityPaneHeight (Get-EffectivePaneMinHeight)
+$dividerOriginMask.BringToFront()
+$dividerDragGuide.BringToFront()
 $script:proc = $null
 $script:reader = $null
 $script:bannerStyled = $false
@@ -2153,9 +2217,12 @@ $script:tailNeedsMarker = $false
 $script:activeToolCalls = 0
 $script:lastToolCompletedAt = $null
 $script:lastToolMarkerAt = $null
+$activityMinHoldSeconds = 10.0
+$activityMaxHoldSeconds = 30.0
+$activityInterruptedTimeoutSeconds = 60.0
 $script:activityHoldUntil = $null
 $script:activityGapEwmaSeconds = 3.0
-$script:activityHoldSeconds = 5.0
+$script:activityHoldSeconds = $activityMinHoldSeconds
 $uiStartupMaxChars = 30000
 $uiEventMaxChars = 8000
 $uiLogInitialTailBytes = 524288
@@ -2257,7 +2324,9 @@ function Refresh-DividerActivitySession {
     $now = Get-Date
 
     if ($script:activeToolCalls -gt 0 -and $script:lastToolMarkerAt) {
-        if (($now - $script:lastToolMarkerAt).TotalSeconds -gt 20) {
+        if (($now - $script:lastToolMarkerAt).TotalSeconds -gt $activityInterruptedTimeoutSeconds) {
+            # Missing completion marker: keep the strip alive for up to 60 s,
+            # then treat the tool call as interrupted and return to idle.
             $script:activeToolCalls = 0
             $script:activityHoldUntil = $null
         }
@@ -2282,7 +2351,7 @@ function Reset-CompactLogSession {
     $script:lastToolMarkerAt = $null
     $script:activityHoldUntil = $null
     $script:activityGapEwmaSeconds = 3.0
-    $script:activityHoldSeconds = 5.0
+    $script:activityHoldSeconds = $activityMinHoldSeconds
     Set-DividerWorkState $false
     $script:smartFollow = $true
     $script:freezeViewport = $false
@@ -2531,13 +2600,16 @@ function Process-RemoteLine([string]$line) {
         $now = Get-Date
         if ($script:activeToolCalls -le 0 -and $script:lastToolCompletedAt) {
             $gapSeconds = ($now - $script:lastToolCompletedAt).TotalSeconds
-            if ($gapSeconds -ge 0.05 -and $gapSeconds -le 12.0) {
+            if ($gapSeconds -ge 0.05 -and $gapSeconds -le 24.0) {
                 $script:activityGapEwmaSeconds =
                     (0.75 * [double]$script:activityGapEwmaSeconds) +
                     (0.25 * $gapSeconds)
                 $script:activityHoldSeconds = [Math]::Min(
-                    15.0,
-                    [Math]::Max(5.0,0.9 + 1.35 * [double]$script:activityGapEwmaSeconds)
+                    $activityMaxHoldSeconds,
+                    [Math]::Max(
+                        $activityMinHoldSeconds,
+                        1.8 + 2.7 * [double]$script:activityGapEwmaSeconds
+                    )
                 )
             }
         }
@@ -3109,6 +3181,7 @@ if ($SelfTest) {
     if ($headerLog.GetType().Name -ne 'RdcLogBox') { throw 'Header log control missing' }
     if ($headerVScroll.GetType().Name -ne 'RdcOverlayScrollBar' -or -not $headerVScroll.Vertical -or $headerVScroll.Target -ne $headerLog) { throw 'Header vertical scrollbar missing' }
     if ($headerDivider.Cursor -ne [Windows.Forms.Cursors]::SizeNS -or [Math]::Abs($headerHost.RowStyles[1].Height - 7) -gt 0.1) { throw 'Draggable header divider missing' }
+    if ($dividerDragGuide.GetType().Name -ne 'RdcDividerDragGuide') { throw 'Deferred divider drag guide missing' }
     $testFormWidth = $form.Width
     $testFormHeight = $form.Height
     $testPaneHeight = $contentHost.RowStyles[1].Height
@@ -3240,6 +3313,33 @@ if ($SelfTest) {
     $headerLog.Select($p,$mailProbe.Length)
     if($headerLog.SelectionColor.ToArgb() -ne $headerValue.ToArgb()){throw 'Email highlight color mismatch'}
     if($accountInfo.ForeColor.ToArgb() -ne ([Drawing.Color]::Silver).ToArgb()){throw 'Bottom account color mismatch'}
+
+    if ($activityMinHoldSeconds -ne 10.0 -or
+        $activityMaxHoldSeconds -ne 30.0 -or
+        $activityInterruptedTimeoutSeconds -ne 60.0) {
+        throw 'Divider activity timing constants mismatch'
+    }
+
+    Reset-CompactLogSession
+    if ($script:activityHoldSeconds -ne 10.0) { throw 'Divider minimum hold must start at 10 seconds' }
+    Process-RemoteLine 'Received tool call timeout_probe: begin'
+    $script:lastToolMarkerAt = (Get-Date).AddSeconds(-59)
+    Refresh-DividerActivitySession
+    if ($script:activeToolCalls -ne 1) { throw 'Interrupted tool call expired before 60 seconds' }
+    $script:lastToolMarkerAt = (Get-Date).AddSeconds(-61)
+    Refresh-DividerActivitySession
+    if ($script:activeToolCalls -ne 0) { throw 'Interrupted tool call did not expire after 60 seconds' }
+
+    Reset-CompactLogSession
+    $script:activityGapEwmaSeconds = 24.0
+    $script:lastToolCompletedAt = (Get-Date).AddSeconds(-5)
+    Process-RemoteLine 'Received tool call max_hold_probe: begin'
+    if ([Math]::Abs($script:activityHoldSeconds - 30.0) -gt 0.01) { throw 'Divider adaptive hold did not clamp at 30 seconds' }
+    Process-RemoteLine 'Tool call max_hold_probe completed:'
+    if (-not $script:activityHoldUntil -or
+        ($script:activityHoldUntil - (Get-Date)).TotalSeconds -lt 29.0) {
+        throw 'Divider completion hold did not use 30-second maximum'
+    }
 
     Reset-CompactLogSession
     if ($gpuDivider) {
