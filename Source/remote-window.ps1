@@ -1,7 +1,7 @@
 ﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$appVersion = '1.5.5'
+$appVersion = '1.5.6'
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'DesktopCommander.ico'
@@ -209,9 +209,22 @@ public class RdcAccentCheckBox : CheckBox {
     }
 }
 
+public enum RdcButtonGlyph {
+    None,
+    Stop,
+    Play,
+    Close
+}
+
 public class RdcRoundedButton : Control {
     private bool hovered;
     private bool pressed;
+    private RdcButtonGlyph glyph = RdcButtonGlyph.None;
+
+    public RdcButtonGlyph Glyph {
+        get { return glyph; }
+        set { glyph = value; Invalidate(); }
+    }
 
     public RdcRoundedButton() {
         SetStyle(ControlStyles.UserPaint |
@@ -226,14 +239,21 @@ public class RdcRoundedButton : Control {
         TabStop = false;
     }
 
+    protected override void OnEnabledChanged(EventArgs e) {
+        Invalidate();
+        base.OnEnabledChanged(e);
+    }
+
     protected override void OnMouseEnter(EventArgs e) {
-        hovered = true; Invalidate(); base.OnMouseEnter(e);
+        if (Enabled) hovered = true;
+        Invalidate();
+        base.OnMouseEnter(e);
     }
     protected override void OnMouseLeave(EventArgs e) {
         hovered = false; pressed = false; Invalidate(); base.OnMouseLeave(e);
     }
     protected override void OnMouseDown(MouseEventArgs e) {
-        if (e.Button == MouseButtons.Left) { pressed = true; Invalidate(); }
+        if (Enabled && e.Button == MouseButtons.Left) { pressed = true; Invalidate(); }
         base.OnMouseDown(e);
     }
     protected override void OnMouseUp(MouseEventArgs e) {
@@ -249,15 +269,45 @@ public class RdcRoundedButton : Control {
         p.CloseFigure();
         return p;
     }
+
+    private void DrawGlyph(Graphics g, Rectangle r, Color color) {
+        int cx = r.Left + r.Width / 2;
+        int cy = r.Top + r.Height / 2;
+        using (SolidBrush b = new SolidBrush(color))
+        using (Pen p = new Pen(color,1.8f)) {
+            p.StartCap = LineCap.Round;
+            p.EndCap = LineCap.Round;
+            if (glyph == RdcButtonGlyph.Stop) {
+                g.FillRectangle(b,new Rectangle(cx-4,cy-4,9,9));
+            } else if (glyph == RdcButtonGlyph.Play) {
+                Point[] tri = {
+                    new Point(cx-4,cy-5),
+                    new Point(cx+5,cy),
+                    new Point(cx-4,cy+5)
+                };
+                g.FillPolygon(b,tri);
+            } else if (glyph == RdcButtonGlyph.Close) {
+                g.DrawLine(p,cx-4,cy-4,cx+4,cy+4);
+                g.DrawLine(p,cx+4,cy-4,cx-4,cy+4);
+            }
+        }
+    }
+
     protected override void OnPaint(PaintEventArgs e) {
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        Color fill = pressed ? Color.FromArgb(42,46,51)
-                   : hovered ? Color.FromArgb(61,66,72)
+
+        bool activeHover = Enabled && hovered;
+        bool activePress = Enabled && pressed;
+        Color fill = activePress ? Color.FromArgb(42,46,51)
+                   : activeHover ? Color.FromArgb(61,66,72)
                    : Color.FromArgb(49,53,59);
-        Color edge = pressed ? Color.FromArgb(139,81,45)
-                   : hovered ? Color.FromArgb(207,132,75)
-                   : Color.FromArgb(191,118,67);
+        Color edge = activePress ? Color.FromArgb(139,81,45)
+                   : activeHover ? Color.FromArgb(207,132,75)
+                   : Enabled ? Color.FromArgb(191,118,67)
+                   : Color.FromArgb(95,82,72);
+        Color content = Enabled ? ForeColor : Color.FromArgb(132,135,139);
+
         RectangleF r = new RectangleF(1f,1f,Width-2f,Height-2f);
         using (GraphicsPath p = Rounded(r,6f))
         using (SolidBrush b = new SolidBrush(fill))
@@ -265,10 +315,40 @@ public class RdcRoundedButton : Control {
             e.Graphics.FillPath(b,p);
             e.Graphics.DrawPath(pen,p);
         }
+
+        TextFormatFlags flags =
+            TextFormatFlags.VerticalCenter |
+            TextFormatFlags.SingleLine |
+            TextFormatFlags.NoPadding;
+        Size textSize = TextRenderer.MeasureText(
+            e.Graphics,Text,Font,new Size(Int32.MaxValue,Height),flags);
+
+        if (glyph == RdcButtonGlyph.None) {
+            TextRenderer.DrawText(
+                e.Graphics,Text,Font,ClientRectangle,content,
+                flags | TextFormatFlags.HorizontalCenter);
+            return;
+        }
+
+        int iconSize = 12;
+        int gap = 7;
+        int groupWidth = iconSize + gap + textSize.Width;
+        int left = Math.Max(5,(Width-groupWidth)/2);
+        Rectangle iconRect = new Rectangle(
+            left,
+            (Height-iconSize)/2,
+            iconSize,
+            iconSize);
+        DrawGlyph(e.Graphics,iconRect,content);
+
+        Rectangle textRect = new Rectangle(
+            iconRect.Right + gap,
+            0,
+            Math.Max(1,Width-(iconRect.Right+gap)-5),
+            Height);
         TextRenderer.DrawText(
-            e.Graphics, Text, Font, ClientRectangle, ForeColor,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
-            TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+            e.Graphics,Text,Font,textRect,content,
+            flags | TextFormatFlags.Left);
     }
 }
 
@@ -311,6 +391,45 @@ public class RdcLogBox : RichTextBox {
 
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")]
+    private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PARAFORMAT2 {
+        public uint cbSize;
+        public uint dwMask;
+        public ushort wNumbering;
+        public ushort wReserved;
+        public int dxStartIndent;
+        public int dxRightIndent;
+        public int dxOffset;
+        public ushort wAlignment;
+        public short cTabCount;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst=32)]
+        public int[] rgxTabs;
+        public int dySpaceBefore;
+        public int dySpaceAfter;
+        public int dyLineSpacing;
+        public short sStyle;
+        public byte bLineSpacingRule;
+        public byte bOutlineLevel;
+        public ushort wShadingWeight;
+        public ushort wShadingStyle;
+        public ushort wNumberingStart;
+        public ushort wNumberingStyle;
+        public ushort wNumberingTab;
+        public ushort wBorderSpace;
+        public ushort wBorderWidth;
+        public ushort wBorders;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(
+        IntPtr hWnd, uint msg, IntPtr wParam, ref PARAFORMAT2 lParam);
+
+    private const uint EM_SETPARAFORMAT = 0x0447;
+    private const uint PFM_LINESPACING = 0x00000100;
+    private const int SB_BOTH = 3;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct VIEWPOINT { public int X; public int Y; }
@@ -327,6 +446,59 @@ public class RdcLogBox : RichTextBox {
     public RdcLogBox() {
         ZoomFactor = 1.0f;
         HideSelection = true;
+    }
+
+    private void HideNativeScrollBarsCore() {
+        if (IsHandleCreated)
+            ShowScrollBar(Handle,SB_BOTH,false);
+    }
+
+    public void HideNativeScrollBars() {
+        HideNativeScrollBarsCore();
+    }
+
+    protected override void OnHandleCreated(EventArgs e) {
+        base.OnHandleCreated(e);
+        HideNativeScrollBarsCore();
+    }
+
+    protected override void OnTextChanged(EventArgs e) {
+        base.OnTextChanged(e);
+        HideNativeScrollBarsCore();
+    }
+
+    protected override void OnResize(EventArgs e) {
+        base.OnResize(e);
+        HideNativeScrollBarsCore();
+    }
+
+    private void ApplyExactLineSpacing(int start,int length,float subtractPixels) {
+        if (length <= 0 || !IsHandleCreated) return;
+
+        int oldStart = SelectionStart;
+        int oldLength = SelectionLength;
+        try {
+            float dpiY;
+            float linePx;
+            using (Graphics g = CreateGraphics()) {
+                dpiY = g.DpiY;
+                linePx = Math.Max(1f,Font.GetHeight(g)-Math.Max(0f,subtractPixels));
+            }
+
+            PARAFORMAT2 pf = new PARAFORMAT2();
+            pf.cbSize = (uint)Marshal.SizeOf(typeof(PARAFORMAT2));
+            pf.dwMask = PFM_LINESPACING;
+            pf.rgxTabs = new int[32];
+            pf.dyLineSpacing = Math.Max(1,(int)Math.Round(linePx*1440.0/dpiY));
+            pf.bLineSpacingRule = 4;
+
+            Select(Math.Max(0,start),Math.Min(length,Math.Max(0,TextLength-start)));
+            SendMessage(Handle,EM_SETPARAFORMAT,IntPtr.Zero,ref pf);
+        }
+        finally {
+            Select(Math.Min(oldStart,TextLength),
+                Math.Min(oldLength,Math.Max(0,TextLength-Math.Min(oldStart,TextLength))));
+        }
     }
 
     public static string ReadChunk(TextReader reader, int maxChars) {
@@ -380,9 +552,14 @@ public class RdcLogBox : RichTextBox {
         SendMessage(Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
         try {
             int searchFrom = 0;
+            int bannerStart = -1;
+            int bannerEnd = -1;
             foreach (string line in target) {
                 int start = all.IndexOf(line, searchFrom, StringComparison.Ordinal);
                 if (start < 0) continue;
+                if (bannerStart < 0) bannerStart = start;
+                bannerEnd = Math.Max(bannerEnd,start + line.Length);
+
                 int split = Math.Min(61, line.Length);
                 if (split > 0) {
                     Select(start, split);
@@ -394,6 +571,10 @@ public class RdcLogBox : RichTextBox {
                 }
                 searchFrom = start + line.Length;
             }
+
+            if (bannerStart >= 0 && bannerEnd > bannerStart)
+                ApplyExactLineSpacing(bannerStart,bannerEnd-bannerStart,1.0f);
+
             Select(TextLength, 0);
             SelectionColor = ForeColor;
         }
@@ -527,6 +708,9 @@ public class RdcLogBox : RichTextBox {
 public class RdcScrollCorner : Control {
     private bool dragging;
     private int lastScreenY;
+    private int pendingDelta;
+    private readonly System.Diagnostics.Stopwatch dragWatch =
+        new System.Diagnostics.Stopwatch();
 
     public int VerticalDelta { get; private set; }
     public bool IsDragging { get { return dragging; } }
@@ -536,13 +720,14 @@ public class RdcScrollCorner : Control {
         SetStyle(ControlStyles.UserPaint |
                  ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.OptimizedDoubleBuffer |
-                 ControlStyles.ResizeRedraw, true);
+                 ControlStyles.ResizeRedraw |
+                 ControlStyles.Opaque, true);
         Cursor = Cursors.SizeNS;
     }
 
     protected override void OnPaint(PaintEventArgs e) {
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        e.Graphics.Clear(Color.FromArgb(50,52,56));
+        e.Graphics.Clear(Color.FromArgb(18,20,23));
         using (Pen p = new Pen(Color.FromArgb(191,118,67),1.4f)) {
             e.Graphics.DrawLine(p,10,15,15,10);
             e.Graphics.DrawLine(p,6,15,15,6);
@@ -554,7 +739,9 @@ public class RdcScrollCorner : Control {
         if (e.Button == MouseButtons.Left) {
             dragging = true;
             lastScreenY = Control.MousePosition.Y;
+            pendingDelta = 0;
             VerticalDelta = 0;
+            dragWatch.Restart();
             Capture = true;
             Invalidate();
         }
@@ -567,8 +754,13 @@ public class RdcScrollCorner : Control {
             int delta = nowY - lastScreenY;
             if (delta != 0) {
                 lastScreenY = nowY;
-                VerticalDelta = delta;
-                if (DragDelta != null) DragDelta(this, EventArgs.Empty);
+                pendingDelta += delta;
+                if (dragWatch.ElapsedMilliseconds >= 16) {
+                    VerticalDelta = pendingDelta;
+                    pendingDelta = 0;
+                    if (DragDelta != null) DragDelta(this, EventArgs.Empty);
+                    dragWatch.Restart();
+                }
             }
         }
         base.OnMouseMove(e);
@@ -576,7 +768,13 @@ public class RdcScrollCorner : Control {
 
     protected override void OnMouseUp(MouseEventArgs e) {
         if (dragging) {
+            if (pendingDelta != 0) {
+                VerticalDelta = pendingDelta;
+                pendingDelta = 0;
+                if (DragDelta != null) DragDelta(this, EventArgs.Empty);
+            }
             dragging = false;
+            dragWatch.Stop();
             Capture = false;
             VerticalDelta = 0;
             Invalidate();
@@ -585,7 +783,17 @@ public class RdcScrollCorner : Control {
     }
 
     protected override void OnMouseCaptureChanged(EventArgs e) {
-        if (!Capture) dragging = false;
+        if (!Capture && dragging) {
+            if (pendingDelta != 0) {
+                VerticalDelta = pendingDelta;
+                pendingDelta = 0;
+                if (DragDelta != null) DragDelta(this, EventArgs.Empty);
+            }
+            dragging = false;
+            dragWatch.Stop();
+            VerticalDelta = 0;
+            Invalidate();
+        }
         base.OnMouseCaptureChanged(e);
     }
 }
@@ -640,6 +848,8 @@ public class RdcOverlayScrollBar : Control {
     private int dragOffset;
     private int dragVisualOffset = -1;
     private int dragLogicalPos = -1;
+    private readonly System.Diagnostics.Stopwatch dragWatch =
+        new System.Diagnostics.Stopwatch();
     public Control Target { get; set; }
     public bool Vertical { get; set; }
     public bool IsDragging { get { return dragging; } }
@@ -667,7 +877,8 @@ public class RdcOverlayScrollBar : Control {
         SetStyle(ControlStyles.UserPaint |
                  ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.OptimizedDoubleBuffer |
-                 ControlStyles.ResizeRedraw, true);
+                 ControlStyles.ResizeRedraw |
+                 ControlStyles.Opaque, true);
         Cursor = Cursors.Default;
     }
 
@@ -765,7 +976,7 @@ public class RdcOverlayScrollBar : Control {
 
     protected override void OnPaint(PaintEventArgs e) {
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        e.Graphics.Clear(Color.FromArgb(45,47,51));
+        e.Graphics.Clear(Color.FromArgb(18,20,23));
         Rectangle dec,inc,track,thumb;
         Geometry(out dec,out inc,out track,out thumb);
 
@@ -845,6 +1056,8 @@ public class RdcOverlayScrollBar : Control {
             dragging=true;
             dragVisualOffset = Vertical ? (thumb.Y-track.Y) : (thumb.X-track.X);
             dragOffset=(Vertical ? p.Y-thumb.Y : p.X-thumb.X);
+            dragLogicalPos=-1;
+            dragWatch.Restart();
             Capture=true;
         } else if ((Vertical ? p.Y : p.X) < (Vertical ? thumb.Y : thumb.X))
             SendScroll(SB_PAGEUP,0);
@@ -877,7 +1090,10 @@ public class RdcOverlayScrollBar : Control {
                     pos=si.nMin+(int)Math.Round(raw*(double)Math.Max(1,maxPos-si.nMin)/travel);
                 }
                 dragLogicalPos = pos;
-                SendScroll(SB_THUMBTRACK,pos);
+                if (dragWatch.ElapsedMilliseconds >= 16) {
+                    SendScroll(SB_THUMBTRACK,pos);
+                    dragWatch.Restart();
+                }
             }
         }
         Invalidate();
@@ -892,7 +1108,9 @@ public class RdcOverlayScrollBar : Control {
     protected override void OnMouseUp(MouseEventArgs e) {
         if (dragging) {
             int finalPos = dragLogicalPos;
-            dragging=false; Capture=false;
+            dragging=false;
+            dragWatch.Stop();
+            Capture=false;
             dragVisualOffset = -1;
             dragLogicalPos = -1;
             if (finalPos >= 0)
@@ -901,6 +1119,17 @@ public class RdcOverlayScrollBar : Control {
         }
         Invalidate();
         base.OnMouseUp(e);
+    }
+
+    protected override void OnMouseCaptureChanged(EventArgs e) {
+        if (!Capture && dragging) {
+            dragging=false;
+            dragWatch.Stop();
+            dragVisualOffset=-1;
+            dragLogicalPos=-1;
+            Invalidate();
+        }
+        base.OnMouseCaptureChanged(e);
     }
 }
 '@ -ReferencedAssemblies @('System.Drawing','System.Windows.Forms')
@@ -1382,6 +1611,7 @@ $detail.TextAlign = 'MiddleLeft'
 $detail.ForeColor = [Drawing.Color]::Silver
 $finish = New-Object RdcRoundedButton
 $finish.Text = 'Завершить'
+$finish.Glyph = [RdcButtonGlyph]::Stop
 $finish.Size = New-Object Drawing.Size(118,36)
 $finish.Margin = New-Object Windows.Forms.Padding(8,0,0,0)
 
@@ -1629,13 +1859,21 @@ $headerTextHost.Controls.Add($headerVScroll,1,0)
 $headerHost.Controls.Add($headerTextHost,0,0)
 $headerHost.Controls.Add($headerDivider,0,1)
 
-$logHost = New-Object Windows.Forms.Panel
+$logHost = New-Object Windows.Forms.TableLayoutPanel
 $logHost.Dock = 'Fill'
 $logHost.Margin = New-Object Windows.Forms.Padding(0)
+$logHost.Padding = New-Object Windows.Forms.Padding(0)
 $logHost.BackColor = [Drawing.Color]::FromArgb(18,20,23)
+$logHost.ColumnCount = 2
+$logHost.RowCount = 2
+[void]$logHost.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent,100)))
+[void]$logHost.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,17)))
+[void]$logHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent,100)))
+[void]$logHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,17)))
 
 $log = New-Object RdcLogBox
 $log.Dock = 'Fill'
+$log.Margin = New-Object Windows.Forms.Padding(0)
 $log.ReadOnly = $true
 $log.BackColor = [Drawing.Color]::FromArgb(18,20,23)
 $log.ForeColor = [Drawing.Color]::Gainsboro
@@ -1649,18 +1887,18 @@ $log.Add_LinkClicked({ try { Start-Process $_.LinkText } catch {} })
 $vScroll = New-Object RdcOverlayScrollBar
 $vScroll.Target = $log
 $vScroll.Vertical = $true
-$vScroll.Width = 17
-$vScroll.Anchor = 'Top,Bottom,Right'
+$vScroll.Dock = 'Fill'
+$vScroll.Margin = New-Object Windows.Forms.Padding(0)
 
 $hScroll = New-Object RdcOverlayScrollBar
 $hScroll.Target = $log
 $hScroll.Vertical = $false
-$hScroll.Height = 17
-$hScroll.Anchor = 'Left,Right,Bottom'
+$hScroll.Dock = 'Fill'
+$hScroll.Margin = New-Object Windows.Forms.Padding(0)
 
 $scrollCorner = New-Object RdcScrollCorner
-$scrollCorner.Size = New-Object Drawing.Size(17,17)
-$scrollCorner.Anchor = 'Bottom,Right'
+$scrollCorner.Dock = 'Fill'
+$scrollCorner.Margin = New-Object Windows.Forms.Padding(0)
 
 $log.Add_ScrollActivity({
     $vScroll.Invalidate()
@@ -1688,16 +1926,10 @@ $log.Add_KeyUp({
 })
 
 function Layout-LogScrollbars {
-    $w = [Math]::Max(17,$logHost.ClientSize.Width)
-    $h = [Math]::Max(17,$logHost.ClientSize.Height)
-    $vScroll.Location = New-Object Drawing.Point(($w-17),0)
-    $vScroll.Size = New-Object Drawing.Size(17,[Math]::Max(0,($h-17)))
-    $hScroll.Location = New-Object Drawing.Point(0,($h-17))
-    $hScroll.Size = New-Object Drawing.Size([Math]::Max(0,($w-17)),17)
-    $scrollCorner.Location = New-Object Drawing.Point(($w-17),($h-17))
-    $vScroll.BringToFront()
-    $hScroll.BringToFront()
-    $scrollCorner.BringToFront()
+    try { $log.HideNativeScrollBars() } catch {}
+    $vScroll.Invalidate()
+    $hScroll.Invalidate()
+    $scrollCorner.Invalidate()
 }
 function Get-EffectivePaneMinHeight {
     $available = [Math]::Max(1,$contentHost.ClientSize.Height)
@@ -1792,10 +2024,10 @@ $headerDivider.Add_MouseCaptureChanged({
     }
 })
 
-$logHost.Controls.Add($log)
-$logHost.Controls.Add($vScroll)
-$logHost.Controls.Add($hScroll)
-$logHost.Controls.Add($scrollCorner)
+$logHost.Controls.Add($log,0,0)
+$logHost.Controls.Add($vScroll,1,0)
+$logHost.Controls.Add($hScroll,0,1)
+$logHost.Controls.Add($scrollCorner,1,1)
 Layout-LogScrollbars
 
 $contentHost.Controls.Add($headerHost,0,0)
@@ -1879,6 +2111,16 @@ function Set-State([string]$name,[string]$message,[Drawing.Color]$color) {
     $statusDot.IndicatorColor = $color
     $title.Text = 'Remote Desktop Commander  —  ' + $name
     $detail.Text = $message
+}
+function Set-FinishButtonMode([bool]$running) {
+    if ($running) {
+        $finish.Text = 'Завершить'
+        $finish.Glyph = [RdcButtonGlyph]::Stop
+    } else {
+        $finish.Text = 'Запустить'
+        $finish.Glyph = [RdcButtonGlyph]::Play
+    }
+    $finish.Enabled = $true
 }
 function Set-RuntimeDisplay([string]$left,[string]$right = '',[bool]$showSeparator = $false) {
     $runtimeLeft.Text = $left
@@ -2415,8 +2657,7 @@ function Start-Remote {
             $script:startTime = $existing.StartTime
             $script:stopping = $false
             $script:exitHandled = $false
-            $finish.Text = 'Завершить'
-            $finish.Enabled = $true
+            Set-FinishButtonMode $true
             Set-State 'Работает' 'Подхвачен уже запущенный Remote Desktop Commander.' ([Drawing.Color]::LightGreen)
             Set-RuntimeDisplay ('PID ' + $existing.Id) 'Подхвачен существующий процесс' $true
             Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Найден уже работающий remote-процесс. Перезапуск не требуется.' + $nl)
@@ -2429,8 +2670,7 @@ function Start-Remote {
         $script:stopping = $false
         $script:exitHandled = $false
         $script:startTime = Get-Date
-        $finish.Text = 'Завершить'
-        $finish.Enabled = $true
+        Set-FinishButtonMode $true
         Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Запуск remote-процесса...' + $nl)
         Set-State 'Запускается…' ('Запускаю npx ' + $desktopCommanderPackage + ' remote') ([Drawing.Color]::Khaki)
         $cmd = '""' + $npxPath + '" --yes ' + $desktopCommanderPackage + ' remote > "' + $logPath + '" 2>&1"'
@@ -2440,8 +2680,7 @@ function Start-Remote {
     } catch {
         Set-State 'Ошибка запуска' $_.Exception.Message ([Drawing.Color]::LightCoral)
         Add-Log ('Ошибка запуска: ' + $_.Exception.Message + $nl)
-        $finish.Text = 'Закрыть'
-        $finish.Enabled = $true
+        Set-FinishButtonMode $false
         $script:exitHandled = $true
     }
 }
@@ -2581,8 +2820,19 @@ function Switch-RemoteAccount {
     }
 }
 $finish.Add_Click({
-    if ($script:proc -and -not $script:proc.HasExited) { Stop-Remote }
-    else { $form.Close() }
+    if ($script:proc -and -not $script:proc.HasExited) {
+        Stop-Remote
+        return
+    }
+
+    try {
+        Reset-RemoteHandle
+        Set-FinishButtonMode $true
+        Start-Remote
+        Refresh-Window
+    } catch {
+        Set-FinishButtonMode $false
+    }
 })
 $accountButton.Add_Click({
     $accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))
@@ -2617,7 +2867,7 @@ $aboutItem.Add_Click({
         'Графическая оболочка для Desktop Commander Remote. Remote-процесс работает скрыто, ' +
         'а его состояние и журнал отображаются в этом окне.' + $nl + $nl +
         'Управление' + $nl +
-        '• «Завершить» — останавливает remote-процесс.' + $nl +
+        '• «Завершить» — останавливает remote-процесс; после остановки кнопка становится «Запустить».' + $nl +
         '• «Аккаунт» — смена аккаунта, переподключение и управление устройствами.' + $nl +
         '• Крестик окна завершает remote-процесс вместе с оболочкой.' + $nl + $nl +
         'Аккаунты' + $nl +
@@ -2678,8 +2928,7 @@ function Refresh-Window {
             Read-LiveLog
             $code = $script:proc.ExitCode
             $script:exitHandled = $true
-            $finish.Text = 'Закрыть'
-            $finish.Enabled = $true
+            Set-FinishButtonMode $false
             if ($script:stopping) {
                 Set-State 'Завершён' 'Remote-процесс остановлен.' ([Drawing.Color]::Silver)
             } elseif ($code -eq 0) {
@@ -2725,7 +2974,10 @@ if ($SelfTest) {
     Set-State 'Тест' 'Проверка интерфейса без запуска remote.' ([Drawing.Color]::LightBlue)
     Add-Log ('SELF TEST OK' + $nl)
     if ($form.Controls.Count -lt 3) { throw 'UI controls missing' }
-    if ($finish.Text -ne 'Завершить') { throw 'Finish button missing' }
+    if ($finish.Text -ne 'Завершить' -or $finish.Glyph -ne [RdcButtonGlyph]::Stop) { throw 'Stop button state missing' }
+    Set-FinishButtonMode $false
+    if ($finish.Text -ne 'Запустить' -or $finish.Glyph -ne [RdcButtonGlyph]::Play) { throw 'Start button state missing' }
+    Set-FinishButtonMode $true
     if ($accountButton.Text -notlike 'Аккаунт*') { throw 'Account button missing' }
     if ($helpButton.Text -ne '?') { throw 'Help button missing' }
     if ($accountMenu.Items.Count -lt 4) { throw 'Account menu missing' }
@@ -2779,6 +3031,12 @@ if ($SelfTest) {
     if (($contentHost.ClientSize.Height - $contentHost.RowStyles[1].Height) -lt ($testPaneMin-1)) { throw 'Header minimum height clamp failed' }
     Set-ActivityPaneHeight $testPaneHeight
     if ($log.GetType().Name -ne 'RdcLogBox') { throw 'Activity log control missing' }
+    if ($logHost.GetColumn($log) -ne 0 -or $logHost.GetRow($log) -ne 0 -or
+        $logHost.GetColumn($vScroll) -ne 1 -or $logHost.GetRow($vScroll) -ne 0 -or
+        $logHost.GetColumn($hScroll) -ne 0 -or $logHost.GetRow($hScroll) -ne 1 -or
+        $logHost.GetColumn($scrollCorner) -ne 1 -or $logHost.GetRow($scrollCorner) -ne 1) {
+        throw 'Dedicated scrollbar grid layout missing'
+    }
     if ($contentHost.RowCount -ne 2 -or $contentHost.RowStyles[0].SizeType -ne [Windows.Forms.SizeType]::Percent -or $contentHost.RowStyles[1].SizeType -ne [Windows.Forms.SizeType]::Absolute -or [Math]::Abs($contentHost.RowStyles[1].Height - $activityDefaultHeight) -gt 0.1) { throw 'Two-panel log layout missing' }
     if (-not $headerLog.WordWrap -or $headerLog.ScrollBars -ne [Windows.Forms.RichTextBoxScrollBars]::None -or [Math]::Abs($headerLog.Font.Size - 9.0) -gt 0.1) { throw 'Header wrapping/scroll policy mismatch' }
     if ([Math]::Abs($headerLog.ZoomFactor - 1.0) -gt 0.001) { throw 'Header zoom must be fixed at 100 percent' }
@@ -2907,10 +3165,36 @@ if ($SelfTest) {
 }
 if ($Preview) {
     Set-State 'Предпросмотр' 'Dev preview без запуска remote-процесса.' ([Drawing.Color]::LightBlue)
-    $script:startupBlock = 'Remote Desktop Commander visual preview' + $nl +
-        'Drag the divider to validate resize rendering.'
-    Add-CompletedEvent ('Received tool call preview: divider rendering' + $nl +
-        'Animated overflow is active until the drag begins.')
+
+    $previewBanner = @(
+        (('█' * 56) + ('▓' * 34)),
+        (('█' * 50) + '      ' + ('▓' * 34)),
+        (('█' * 54) + '  ' + ('▓' * 34)),
+        (('█' * 50) + '      ' + ('▓' * 34)),
+        (('█' * 50) + '      ' + ('▓' * 34)),
+        (('█' * 56) + ('▓' * 34))
+    )
+    $script:startupBlock = [string]::Join($nl,$previewBanner) + $nl +
+        'Remote Connection' + $nl +
+        'Visual preview for banner line spacing and scroll rendering.'
+
+    $previewLines = New-Object System.Collections.Generic.List[string]
+    for ($i = 1; $i -le 80; $i++) {
+        [void]$previewLines.Add(
+            ('{0:D2}  Vertical scroll probe  ' -f $i) +
+            ('0123456789ABCDEF' * 4)
+        )
+    }
+    Add-CompletedEvent ([string]::Join($nl,$previewLines))
+
+    $wideLines = New-Object System.Collections.Generic.List[string]
+    for ($i = 1; $i -le 8; $i++) {
+        [void]$wideLines.Add(
+            ('W{0:D2}  Horizontal scroll probe  ' -f $i) +
+            ('0123456789ABCDEF' * 24)
+        )
+    }
+    Add-CompletedEvent ([string]::Join($nl,$wideLines))
     Render-CompactLog
     Set-DividerWorkState $true
     $timer.Start()

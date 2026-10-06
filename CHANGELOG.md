@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.6 (development)
+
+- Replaced the ambiguous post-stop "Close" action with a Start/Stop state button.
+- Added vector Stop/Play button glyphs rendered by the shell itself.
+- Tightened startup banner line spacing by one physical pixel to remove dark seams between ASCII-art rows.
+- Rebuilt the activity log scroll area as a fixed 2x2 grid instead of overlaying custom scrollbars on RichEdit native scrollbars.
+- Hide RichEdit native scrollbars while preserving their scroll metrics for the custom controls.
+- Coalesce expensive RichEdit thumb tracking to display-frame cadence while keeping the custom thumb visually responsive.
+- Unified scrollbar/corner backgrounds to eliminate edge gaps during fast scrolling and pane resizing.
+
 ## 1.5.5
 
 Maintenance and release-engineering release. No intentional UI redesign.
