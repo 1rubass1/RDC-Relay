@@ -29,7 +29,7 @@ internal static class SetupProgram
         new Payload("version.txt", "RdcPayload.version.txt"),
         new Payload("update.ps1", "RdcPayload.update.ps1"),
         new Payload("update-manifest.json", "RdcPayload.update-manifest.json"),
-        new Payload("Remote Desktop Commander.cmd", "RdcPayload.launch.cmd")
+        new Payload("RDC Relay.cmd", "RdcPayload.launch.cmd")
     };
 
     [DllImport("shell32.dll")]
@@ -60,6 +60,8 @@ internal static class SetupProgram
 
             BackupExistingPayload(installRoot);
             ExtractPayload(installRoot);
+            DeleteIfExists(Path.Combine(installRoot, "Remote Desktop Commander.cmd"));
+            DeleteIfExists(Path.Combine(installRoot, "CommanderRelay.cmd"));
 
             string iconPath = CreateVersionedIcon(installRoot, newVersion);
             if (!noShortcuts)
@@ -71,9 +73,9 @@ internal static class SetupProgram
             if (!silent)
             {
                 MessageBox.Show(
-                    "Remote Desktop Commander v" + newVersion + " установлен.\r\n\r\n" +
-                    "Используйте ярлык «Remote Desktop Commander» на рабочем столе или в меню Пуск.",
-                    "Remote Desktop Commander",
+                    "RDC Relay v" + newVersion + " установлен.\r\n\r\n" +
+                    "Используйте ярлык «RDC Relay» на рабочем столе или в меню Пуск.",
+                    "RDC Relay",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
             }
@@ -85,8 +87,8 @@ internal static class SetupProgram
             if (!silent)
             {
                 MessageBox.Show(
-                    "Не удалось установить Remote Desktop Commander.\r\n\r\n" + ex.Message,
-                    "Remote Desktop Commander Setup",
+                    "Не удалось установить RDC Relay.\r\n\r\n" + ex.Message,
+                    "RDC Relay Setup",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }
@@ -202,13 +204,27 @@ internal static class SetupProgram
         return versioned;
     }
 
+    private static void DeleteIfExists(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch { }
+    }
+
     private static void CreateShortcuts(string installRoot, string iconPath)
     {
         string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         string programs = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
 
-        CreateShortcut(Path.Combine(desktop, "Remote Desktop Commander.lnk"), installRoot, iconPath);
-        CreateShortcut(Path.Combine(programs, "Remote Desktop Commander.lnk"), installRoot, iconPath);
+        DeleteIfExists(Path.Combine(desktop, "Remote Desktop Commander.lnk"));
+        DeleteIfExists(Path.Combine(programs, "Remote Desktop Commander.lnk"));
+        DeleteIfExists(Path.Combine(desktop, "CommanderRelay.lnk"));
+        DeleteIfExists(Path.Combine(programs, "CommanderRelay.lnk"));
+        CreateShortcut(Path.Combine(desktop, "RDC Relay.lnk"), installRoot, iconPath);
+        CreateShortcut(Path.Combine(programs, "RDC Relay.lnk"), installRoot, iconPath);
     }
 
     private static void CreateShortcut(string shortcutPath, string installRoot, string iconPath)
@@ -242,7 +258,7 @@ internal static class SetupProgram
             new object[] { "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File \"" + script + "\"" });
         shortcutType.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, shortcut, new object[] { installRoot });
         shortcutType.InvokeMember("IconLocation", BindingFlags.SetProperty, null, shortcut, new object[] { iconPath + ",0" });
-        shortcutType.InvokeMember("Description", BindingFlags.SetProperty, null, shortcut, new object[] { "Remote Desktop Commander" });
+        shortcutType.InvokeMember("Description", BindingFlags.SetProperty, null, shortcut, new object[] { "RDC Relay" });
         shortcutType.InvokeMember("Save", BindingFlags.InvokeMethod, null, shortcut, null);
 
         Marshal.FinalReleaseComObject(shortcut);

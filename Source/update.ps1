@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$InstallRoot,
     [Parameter(Mandatory=$true)][string]$CurrentVersion,
-    [string]$Repository = '1rubass1/Remote-Desktop-Commander',
+    [string]$Repository = '1rubass1/RDC-Relay',
     [string]$Branch = 'stable',
     [switch]$Force
 )
@@ -66,7 +66,7 @@ try {
     # Resolve the stable branch to one immutable commit before downloading
     # either the manifest or payload files.
     $apiHeaders = @{
-        'User-Agent' = 'RemoteDesktopCommanderUpdater'
+        'User-Agent' = 'RDCRelayUpdater'
         'Accept' = 'application/vnd.github+json'
     }
     $refUrl = 'https://api.github.com/repos/' + $Repository + '/commits/' + [Uri]::EscapeDataString($Branch)
@@ -104,7 +104,7 @@ try {
         Write-UpdateLog ('Updating v' + $CurrentVersion + ' -> v' + [string]$manifest.version + '.')
     }
 
-    $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('RemoteDesktopCommander-update-' + [Guid]::NewGuid().ToString('N'))
+    $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('RDCRelay-update-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
     foreach ($file in $manifest.files) {

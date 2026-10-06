@@ -1,7 +1,10 @@
-# Remote Desktop Commander
+# RDC Relay
 
-Remote Desktop Commander is a Windows GUI launcher and monitor for
+RDC Relay is a Windows GUI launcher and monitor for
 `@wonderwhy-er/desktop-commander` Remote mode.
+
+RDC Relay is an independent companion shell. It is not the upstream
+`desktop-commander/remote-desktop-commander` project.
 
 It keeps the Desktop Commander remote process hidden, shows connection/device
 information and recent tool activity, and provides restart, logout and account
@@ -15,7 +18,7 @@ management actions.
 - The computer and ChatGPT must use the same Desktop Commander account
 
 The launcher currently pins Desktop Commander to **0.2.52** so a new upstream
-release cannot silently change the log protocol underneath an existing RDC
+release cannot silently change the log protocol underneath an existing RDC Relay
 release.
 
 ## Install
@@ -25,7 +28,9 @@ The installer writes the application to:
 
 `%LOCALAPPDATA%\RemoteDesktopCommanderLauncher`
 
-and creates fresh Desktop/Start Menu shortcuts for the current user.
+The legacy directory name is intentionally retained so existing installations
+upgrade in place. The installer creates `RDC Relay` Desktop/Start Menu shortcuts
+for the current user and removes the old `Remote Desktop Commander` shortcuts.
 
 A portable ZIP is produced by the release build as well.
 
@@ -59,8 +64,8 @@ The build:
 
 ## Update channel
 
-Released clients update from the **`stable`** branch, not from moving
-development work on `main`.
+Released clients update from the **`stable`** branch of
+`1rubass1/RDC-Relay`, not from moving development work on `main`.
 
 Release procedure:
 

@@ -35,7 +35,7 @@ foreach ($name in @(
     'remote-window.ps1',
     'update.ps1',
     'version.txt',
-    'Remote Desktop Commander.cmd'
+    'RDC Relay.cmd'
 )) {
     Convert-ToCanonicalUtf8Lf (Join-Path $sourceDir $name)
 }
@@ -57,7 +57,7 @@ $manifestPayload = @(
     'DesktopCommander.ico',
     'version.txt',
     'update.ps1',
-    'Remote Desktop Commander.cmd'
+    'RDC Relay.cmd'
 )
 
 $manifestFiles = @()
@@ -116,17 +116,17 @@ try {
     $assemblyVersion = $version + '.0'
     $assemblySource = @"
 using System.Reflection;
-[assembly: AssemblyTitle("Remote Desktop Commander Setup")]
-[assembly: AssemblyDescription("Installer for Remote Desktop Commander")]
+[assembly: AssemblyTitle("RDC Relay Setup")]
+[assembly: AssemblyDescription("Installer for RDC Relay")]
 [assembly: AssemblyCompany("UMAS")]
-[assembly: AssemblyProduct("Remote Desktop Commander")]
+[assembly: AssemblyProduct("RDC Relay")]
 [assembly: AssemblyCopyright("Copyright (c) UMAS")]
 [assembly: AssemblyVersion("$assemblyVersion")]
 [assembly: AssemblyFileVersion("$assemblyVersion")]
 "@
     [IO.File]::WriteAllText($assemblyInfo,$assemblySource,$utf8NoBom)
 
-    $setupExe = Join-Path $outDir ('Remote Desktop Commander Setup v' + $version + '.exe')
+    $setupExe = Join-Path $outDir ('RDC Relay Setup v' + $version + '.exe')
     $setupSource = Join-Path $installerDir 'Setup.cs'
 
     $compilerArgs = @(
@@ -146,7 +146,7 @@ using System.Reflection;
         ('/resource:' + (Join-Path $sourceDir 'version.txt') + ',RdcPayload.version.txt'),
         ('/resource:' + (Join-Path $sourceDir 'update.ps1') + ',RdcPayload.update.ps1'),
         ('/resource:' + (Join-Path $sourceDir 'update-manifest.json') + ',RdcPayload.update-manifest.json'),
-        ('/resource:' + (Join-Path $sourceDir 'Remote Desktop Commander.cmd') + ',RdcPayload.launch.cmd')
+        ('/resource:' + (Join-Path $sourceDir 'RDC Relay.cmd') + ',RdcPayload.launch.cmd')
     )
 
     & $csc @compilerArgs
@@ -154,13 +154,13 @@ using System.Reflection;
         throw 'Installer compilation failed.'
     }
 
-    $portableRoot = Join-Path $buildTemp ('Remote Desktop Commander v' + $version)
+    $portableRoot = Join-Path $buildTemp ('RDC Relay v' + $version)
     New-Item -ItemType Directory -Path $portableRoot -Force | Out-Null
     foreach ($name in ($manifestPayload + 'update-manifest.json')) {
         Copy-Item -LiteralPath (Join-Path $sourceDir $name) -Destination (Join-Path $portableRoot $name) -Force
     }
 
-    $portableZip = Join-Path $outDir ('Remote Desktop Commander v' + $version + ' Portable.zip')
+    $portableZip = Join-Path $outDir ('RDC Relay v' + $version + ' Portable.zip')
     Compress-Archive -LiteralPath $portableRoot -DestinationPath $portableZip -CompressionLevel Optimal -Force
 
     $releaseInfo = [ordered]@{

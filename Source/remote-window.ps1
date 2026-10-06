@@ -1,10 +1,47 @@
 ﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$appVersion = '1.5.6'
+$appVersion = '1.5.7'
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'DesktopCommander.ico'
+
+# Branding migration cleanup. Keep the legacy install directory/mutex for
+# compatibility, but remove obsolete launchers once the new payload exists.
+if (-not $SelfTest -and (Test-Path -LiteralPath (Join-Path $root 'RDC Relay.cmd'))) {
+    foreach ($legacyLauncher in @('Remote Desktop Commander.cmd','CommanderRelay.cmd')) {
+        try {
+            $legacyPath = Join-Path $root $legacyLauncher
+            if (Test-Path -LiteralPath $legacyPath) {
+                Remove-Item -LiteralPath $legacyPath -Force -ErrorAction Stop
+            }
+        } catch {}
+    }
+
+    foreach ($shortcutRoot in @(
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory),
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
+    )) {
+        if ([string]::IsNullOrWhiteSpace($shortcutRoot)) { continue }
+
+        $newShortcut = Join-Path $shortcutRoot 'RDC Relay.lnk'
+        foreach ($legacyShortcutName in @(
+            'Remote Desktop Commander.lnk',
+            'CommanderRelay.lnk'
+        )) {
+            try {
+                $legacyShortcut = Join-Path $shortcutRoot $legacyShortcutName
+                if (-not (Test-Path -LiteralPath $legacyShortcut)) { continue }
+
+                if (Test-Path -LiteralPath $newShortcut) {
+                    Remove-Item -LiteralPath $legacyShortcut -Force -ErrorAction Stop
+                } else {
+                    Move-Item -LiteralPath $legacyShortcut -Destination $newShortcut -Force -ErrorAction Stop
+                }
+            } catch {}
+        }
+    }
+}
 
 function Resolve-NpxPath {
     $resolved = Get-Command npx.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -2210,7 +2247,7 @@ $gpuDividerAvailable =
 
 [Windows.Forms.Application]::EnableVisualStyles()
 $form = New-Object Windows.Forms.Form
-$form.Text = 'Remote Desktop Commander'
+$form.Text = 'RDC Relay'
 $baseWindowWidth = 1074
 $baseWindowHeight = 900
 $paneMinHeightPreferred = 125
@@ -2260,7 +2297,7 @@ $statusDot = New-Object RdcStatusIndicator
 $statusDot.Dock = 'Fill'
 $statusDot.IndicatorColor = [Drawing.Color]::Gray
 $title = New-Object Windows.Forms.Label
-$title.Text = 'Remote Desktop Commander'
+$title.Text = 'RDC Relay'
 $title.Dock = 'Fill'
 $title.TextAlign = 'MiddleLeft'
 $title.Font = New-Object Drawing.Font('Segoe UI',13,[Drawing.FontStyle]::Bold)
@@ -2845,7 +2882,7 @@ $nl = [Environment]::NewLine
 function Hide-LegacyRemoteTerminal {
     try {
         Get-Process WindowsTerminal -ErrorAction SilentlyContinue | Where-Object {
-            $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -eq 'Remote Desktop Commander'
+            $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -eq 'RDC Relay'
         } | ForEach-Object {
             [void][RdcNativeWindow]::ShowWindow($_.MainWindowHandle,0)
         }
@@ -2876,7 +2913,7 @@ function Apply-SystemFrameTheme {
 }
 function Set-State([string]$name,[string]$message,[Drawing.Color]$color) {
     $statusDot.IndicatorColor = $color
-    $title.Text = 'Remote Desktop Commander  —  ' + $name
+    $title.Text = 'RDC Relay  —  ' + $name
     $detail.Text = $message
 }
 function Set-FinishButtonMode([bool]$running) {
@@ -3430,7 +3467,7 @@ function Start-Remote {
             $script:stopping = $false
             $script:exitHandled = $false
             Set-FinishButtonMode $true
-            Set-State 'Работает' 'Подхвачен уже запущенный Remote Desktop Commander.' ([Drawing.Color]::LightGreen)
+            Set-State 'Работает' 'Подхвачен уже запущенный RDC Relay.' ([Drawing.Color]::LightGreen)
             Set-RuntimeDisplay ('PID ' + $existing.Id) 'Подхвачен существующий процесс' $true
             Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Найден уже работающий remote-процесс. Перезапуск не требуется.' + $nl)
             return
@@ -3510,8 +3547,8 @@ function Wait-RemoteStopped([int]$timeoutMs = 5000) {
 }
 function Restart-Remote {
     $answer = [Windows.Forms.MessageBox]::Show(
-        'Remote Desktop Commander будет кратковременно отключён и запущен снова под текущим аккаунтом.',
-        'Переподключить Remote Desktop Commander',
+        'RDC Relay будет кратковременно отключён и запущен снова под текущим аккаунтом.',
+        'Переподключить RDC Relay',
         [Windows.Forms.MessageBoxButtons]::YesNo,
         [Windows.Forms.MessageBoxIcon]::Question
     )
@@ -3530,7 +3567,7 @@ function Restart-Remote {
 }
 function Switch-RemoteAccount {
     $message = 'Смена аккаунта разорвёт текущее удалённое соединение.' + $nl + $nl +
-        'После выхода Remote Desktop Commander запустится снова и попросит авторизоваться в браузере.' + $nl + $nl +
+        'После выхода RDC Relay запустится снова и попросит авторизоваться в браузере.' + $nl + $nl +
         'ВАЖНО: после входа под другим аккаунтом переподключите Desktop Commander в ChatGPT к ЭТОМУ ЖЕ аккаунту. ' +
         'Если аккаунты на компьютере и в ChatGPT различаются, устройство не появится.' + $nl + $nl +
         'Продолжить?'
@@ -3574,7 +3611,7 @@ function Switch-RemoteAccount {
         if ($logout.ExitCode -ne 0) { throw ('Команда выхода завершилась с кодом ' + $logout.ExitCode) }
         $logout.Dispose()
 
-        Set-State 'Ожидание авторизации…' 'Запускаю Remote Desktop Commander для входа в другой аккаунт.' ([Drawing.Color]::Khaki)
+        Set-State 'Ожидание авторизации…' 'Запускаю RDC Relay для входа в другой аккаунт.' ([Drawing.Color]::Khaki)
         Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Авторизация сброшена. Запускаю новый вход…' + $nl)
         Start-Remote
         Refresh-Window
@@ -3634,7 +3671,7 @@ $helpButton.Add_Click({
 
 $aboutItem.Add_Click({
     $helpText =
-        'Remote Desktop Commander v' + $appVersion + $nl + $nl +
+        'RDC Relay v' + $appVersion + $nl + $nl +
         'О программе' + $nl +
         'Графическая оболочка для Desktop Commander Remote. Remote-процесс работает скрыто, ' +
         'а его состояние и журнал отображаются в этом окне.' + $nl + $nl +
@@ -3650,7 +3687,7 @@ $aboutItem.Add_Click({
         'Пароли и токены эта оболочка не копирует и не хранит.'
     [Windows.Forms.MessageBox]::Show(
         $helpText,
-        'Remote Desktop Commander — справка',
+        'RDC Relay — справка',
         [Windows.Forms.MessageBoxButtons]::OK,
         [Windows.Forms.MessageBoxIcon]::Information
     ) | Out-Null
@@ -3661,7 +3698,7 @@ $openLogItem.Add_Click({
         if (-not (Test-Path $logPath)) {
             [Windows.Forms.MessageBox]::Show(
                 'Журнал ещё не создан.',
-                'Remote Desktop Commander — журнал',
+                'RDC Relay — журнал',
                 [Windows.Forms.MessageBoxButtons]::OK,
                 [Windows.Forms.MessageBoxIcon]::Information
             ) | Out-Null
@@ -3672,7 +3709,7 @@ $openLogItem.Add_Click({
     } catch {
         [Windows.Forms.MessageBox]::Show(
             ('Не удалось открыть журнал.' + $nl + $nl + $_.Exception.Message),
-            'Remote Desktop Commander — журнал',
+            'RDC Relay — журнал',
             [Windows.Forms.MessageBoxButtons]::OK,
             [Windows.Forms.MessageBoxIcon]::Error
         ) | Out-Null
@@ -3694,7 +3731,7 @@ function Refresh-Window {
             $elapsed = (Get-Date) - $script:startTime
             Set-RuntimeDisplay ('PID ' + $script:proc.Id) ('Время работы {0:hh\:mm\:ss}' -f $elapsed) $true
             if (-not $script:stopping) {
-                Set-State 'Работает' 'Remote Desktop Commander запущен и готов принимать задачи.' ([Drawing.Color]::LightGreen)
+                Set-State 'Работает' 'RDC Relay запущен и готов принимать задачи.' ([Drawing.Color]::LightGreen)
             }
         } elseif (-not $script:exitHandled) {
             Read-LiveLog
@@ -3756,7 +3793,7 @@ if ($SelfTest) {
     if ($reconnectItem.Text -ne 'Переподключить') { throw 'Reconnect account action missing' }
     if ($helpMenu.Items.Count -ne 2) { throw 'Help menu missing' }
     if ($openLogItem.Text -ne 'Открыть журнал') { throw 'Open log action missing' }
-    if ($form.Text -ne 'Remote Desktop Commander') { throw 'Window title changed unexpectedly' }
+    if ($form.Text -ne 'RDC Relay') { throw 'Window title changed unexpectedly' }
     if ($form.FormBorderStyle -ne [Windows.Forms.FormBorderStyle]::Sizable -or $form.MaximizeBox -or $form.SizeGripStyle -ne [Windows.Forms.SizeGripStyle]::Hide) { throw 'Window vertical resize policy mismatch' }
     if ($form.MinimumSize.Width -ne $windowWidth -or $form.MaximumSize.Width -ne $windowWidth) { throw 'Window width must stay fixed' }
     if ($form.MinimumSize.Height -ge $form.MaximumSize.Height) { throw 'Window height must remain resizable' }
@@ -3768,7 +3805,7 @@ if ($SelfTest) {
     if ($scrollCorner.Cursor -ne [Windows.Forms.Cursors]::SizeNS) { throw 'Activity resize grip cursor mismatch' }
     $legacyGripPattern = ('WM_NCLBUTTON'+'DOWN|HTBOTTOM'+'RIGHT')
     if (Select-String -LiteralPath $PSCommandPath -Pattern $legacyGripPattern -Quiet) { throw 'Legacy whole-window resize grip still present' }
-    if ($title.Text -notlike 'Remote Desktop Commander*') { throw 'Header title missing' }
+    if ($title.Text -notlike 'RDC Relay*') { throw 'Header title missing' }
     if ($title.Text -match '\bv\d+\.\d+\b') { throw 'Version must not be in header' }
     if ($hintVersion.Text -ne ('v' + $appVersion)) { throw 'Bottom version label missing' }
     if ($bottom.ColumnStyles[1].Width -lt 440) { throw 'Bottom version container too narrow' }

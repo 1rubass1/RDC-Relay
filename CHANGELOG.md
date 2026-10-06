@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.7 (2026-10-06)
+
+- Renamed the application and repository branding from `Remote Desktop Commander` to `RDC Relay` to avoid conflict with the upstream Desktop Commander project.
+- Changed future update checks to `1rubass1/RDC-Relay` while retaining the legacy install directory and mutex identifiers for seamless upgrades.
+- Renamed Setup, Portable, launcher and shortcuts to `RDC Relay`.
+- Added first-run migration that removes obsolete launchers and renames existing Desktop/Start Menu shortcuts without creating a parallel installation.
+
 ## 1.5.6 (2026-10-06)
 
 - Replaced the ambiguous post-stop "Close" action with a Stop/Start state button: `■ Остановить` / `▶ Запустить`.
