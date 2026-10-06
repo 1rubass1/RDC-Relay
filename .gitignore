@@ -1,6 +1,8 @@
-﻿*.log
+*.log
 backups/
+dist/
 *.tmp
 *.bak
+.update-state.json
 .DS_Store
 Thumbs.db

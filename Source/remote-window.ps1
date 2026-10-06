@@ -1,32 +1,25 @@
-﻿param([switch]$SelfTest,[switch]$SkipUpdate)
+﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$appVersion = '1.5.4'
+$appVersion = '1.5.5'
+$desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'DesktopCommander.ico'
-$npxPath = 'C:\Program Files\nodejs\npx.cmd'
 
-# Self-update bootstrap. The updater runs before the window mutex and before
-# the remote process is touched, so a successful update can safely restart
-# only the UI script while leaving any existing remote session alone.
-if (-not $SelfTest -and -not $SkipUpdate) {
-    $updaterPath = Join-Path $root 'update.ps1'
-    if (Test-Path -LiteralPath $updaterPath) {
-        try {
-            $updateArgs = @(
-                '-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $updaterPath + '"'),
-                '-InstallRoot',('"' + $root + '"'),'-CurrentVersion',$appVersion
-            )
-            $updateProc = Start-Process -FilePath 'powershell.exe' -ArgumentList $updateArgs -WindowStyle Hidden -Wait -PassThru
-            if ($updateProc.ExitCode -eq 42) {
-                Start-Process -FilePath 'powershell.exe' -ArgumentList @(
-                    '-NoProfile','-STA','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
-                    '-File',('"' + (Join-Path $root 'remote-window.ps1') + '"'),'-SkipUpdate'
-                ) -WindowStyle Hidden
-                exit 0
-            }
-        } catch {}
+function Resolve-NpxPath {
+    $resolved = Get-Command npx.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($resolved -and $resolved.Source) { return [string]$resolved.Source }
+
+    $candidates = @()
+    if ($env:ProgramFiles) { $candidates += (Join-Path $env:ProgramFiles 'nodejs\npx.cmd') }
+    $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+    if ($programFilesX86) { $candidates += (Join-Path $programFilesX86 'nodejs\npx.cmd') }
+    if ($env:APPDATA) { $candidates += (Join-Path $env:APPDATA 'npm\npx.cmd') }
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) { return $candidate }
     }
+    throw 'npx.cmd не найден. Установите Node.js 18 или новее.'
 }
 
 $windowMutex = $null
@@ -37,10 +30,37 @@ if (-not $SelfTest) {
     $windowMutex = New-Object Threading.Mutex($false,('Local\RemoteDesktopCommanderWindow-'+$key))
     try { $ownsWindow = $windowMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $ownsWindow = $true }
     if (-not $ownsWindow) {
-        # A second launcher must never steal focus from the user's current app.
-        # It simply exits while the already-running RDC window keeps working.
+        # A second launcher must never update files or steal focus from the
+        # already-running instance. It simply exits.
         $windowMutex.Dispose()
         exit 0
+    }
+}
+
+# Update only after this instance owns the single-instance mutex. This prevents
+# a second launcher from replacing files under a live RDC window.
+if (-not $SelfTest -and -not $Preview -and -not $SkipUpdate) {
+    $updaterPath = Join-Path $root 'update.ps1'
+    if (Test-Path -LiteralPath $updaterPath) {
+        try {
+            $updateArgs = @(
+                '-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $updaterPath + '"'),
+                '-InstallRoot',('"' + $root + '"'),'-CurrentVersion',$appVersion
+            )
+            $updateProc = Start-Process -FilePath 'powershell.exe' -ArgumentList $updateArgs -WindowStyle Hidden -Wait -PassThru
+            if ($updateProc.ExitCode -eq 42) {
+                if ($windowMutex) {
+                    try { $windowMutex.ReleaseMutex() } catch {}
+                    $windowMutex.Dispose()
+                    $windowMutex = $null
+                }
+                Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+                    '-NoProfile','-STA','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
+                    '-File',('"' + (Join-Path $root 'remote-window.ps1') + '"'),'-SkipUpdate'
+                ) -WindowStyle Hidden
+                exit 0
+            }
+        } catch {}
     }
 }
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
@@ -947,6 +967,7 @@ public sealed class RdcGpuDividerHost : ElementHost {
     private double activity;
     private double targetActivity;
     private double lastFrameSeconds;
+    private bool interactiveMove;
     private IntPtr particlePopupHwnd = IntPtr.Zero;
     private int lastPopupX = Int32.MinValue;
     private int lastPopupY = Int32.MinValue;
@@ -1056,6 +1077,13 @@ public sealed class RdcGpuDividerHost : ElementHost {
 
         causticEffect.Time = now;
 
+        if (interactiveMove) {
+            // A transparent layered WPF Popup does not track WinForms layout
+            // synchronously while the splitter is dragged. Keeping it closed
+            // during the gesture prevents compositor trails and visible lag.
+            return;
+        }
+
         if (targetActivity > 0.0 || activity > 0.002) {
             if (!particlePopup.IsOpen) EnsurePopupOpen();
             particleLayer.Opacity = Math.Min(1.0,Math.Max(0.0,activity*1.15));
@@ -1066,9 +1094,8 @@ public sealed class RdcGpuDividerHost : ElementHost {
             particleEffectB.Activity = activity;
             PositionPopup();
         } else {
-            // Keep the layered popup HWND alive. Reopening a WPF Popup on every
-            // remote task can transiently activate its owner before NOACTIVATE
-            // is applied. At idle we only hide its content and stop updating it.
+            // Keep the layered popup HWND alive between remote tasks. Reopening
+            // it for every task can transiently activate its owner.
             particleLayer.Opacity = 0.0;
         }
     }
@@ -1220,6 +1247,7 @@ public sealed class RdcGpuDividerHost : ElementHost {
         activity=0.0;
         targetActivity=0.0;
         lastFrameSeconds=0.0;
+        interactiveMove=false;
 
         watch=Stopwatch.StartNew();
         animationTimer=new System.Windows.Forms.Timer();
@@ -1234,6 +1262,24 @@ public sealed class RdcGpuDividerHost : ElementHost {
 
     public void SetActivity(bool active) {
         targetActivity=active ? 1.0 : 0.0;
+    }
+
+    public void SetInteractiveMove(bool active) {
+        if (interactiveMove == active) return;
+        interactiveMove=active;
+
+        if (active) {
+            // Destroy the overflow HWND once at drag start. The inline 7 px
+            // divider remains visible and moves with normal WinForms layout.
+            ClosePopup();
+        } else {
+            EnsurePopupOpen();
+            PositionPopup();
+            particleLayer.Opacity =
+                (targetActivity > 0.0 || activity > 0.002)
+                ? Math.Min(1.0,Math.Max(0.0,activity*1.15))
+                : 0.0;
+        }
     }
 
     protected override void OnResize(EventArgs e) {
@@ -1270,8 +1316,9 @@ public sealed class RdcGpuDividerHost : ElementHost {
 )
 $causticShaderPath = Join-Path $root 'divider-caustic.ps'
 $particleShaderPath = Join-Path $root 'divider-particles.ps'
-if (-not (Test-Path $causticShaderPath)) { throw 'GPU caustic shader bytecode not found: ' + $causticShaderPath }
-if (-not (Test-Path $particleShaderPath)) { throw 'GPU particle shader bytecode not found: ' + $particleShaderPath }
+$gpuDividerAvailable =
+    (Test-Path -LiteralPath $causticShaderPath) -and
+    (Test-Path -LiteralPath $particleShaderPath)
 
 [Windows.Forms.Application]::EnableVisualStyles()
 $form = New-Object Windows.Forms.Form
@@ -1552,15 +1599,22 @@ $headerDivider.Add_Paint({
     }
 })
 
-# GPU is a visual child only. The original divider Panel remains the input
-# surface, so its cursor/capture/drag implementation stays exactly as in Git.
-$gpuDivider = New-Object RdcGpuDividerHost -ArgumentList @($causticShaderPath,$particleShaderPath)
-$gpuDivider.Dock = 'Fill'
-$gpuDivider.Margin = New-Object Windows.Forms.Padding(0)
-$gpuDivider.TabStop = $false
-$gpuDivider.Enabled = $false
-$headerDivider.Controls.Add($gpuDivider)
-$gpuDivider.BringToFront()
+# GPU is decorative only. If shader bytecode or WPF shader initialization is
+# unavailable, the normal painted divider remains fully functional.
+$gpuDivider = $null
+if ($gpuDividerAvailable) {
+    try {
+        $gpuDivider = New-Object RdcGpuDividerHost -ArgumentList @($causticShaderPath,$particleShaderPath)
+        $gpuDivider.Dock = 'Fill'
+        $gpuDivider.Margin = New-Object Windows.Forms.Padding(0)
+        $gpuDivider.TabStop = $false
+        $gpuDivider.Enabled = $false
+        $headerDivider.Controls.Add($gpuDivider)
+        $gpuDivider.BringToFront()
+    } catch {
+        $gpuDivider = $null
+    }
+}
 
 $headerLog.Add_ScrollActivity({ $headerVScroll.Invalidate() })
 $headerLog.Add_MouseWheel({
@@ -1678,38 +1732,63 @@ $scrollCorner.Add_MouseUp({
 })
 
 $script:dividerDragging = $false
-$script:dividerLastScreenY = 0
+$script:dividerStartScreenY = 0
+$script:dividerStartPaneHeight = 0.0
+$script:dividerPendingHeight = 0.0
+$script:dividerDragWatch = New-Object Diagnostics.Stopwatch
 $headerDivider.Add_MouseDown({
     param($sender,$e)
     if ($e.Button -eq [Windows.Forms.MouseButtons]::Left) {
         $script:dividerDragging = $true
-        $script:dividerLastScreenY = [Windows.Forms.Control]::MousePosition.Y
+        $script:dividerStartScreenY = [Windows.Forms.Control]::MousePosition.Y
+        $script:dividerStartPaneHeight = [double]$contentHost.RowStyles[1].Height
+        $script:dividerPendingHeight = $script:dividerStartPaneHeight
+        $script:dividerDragWatch.Restart()
         $script:uiInteracting = $true
+        try { $gpuDivider.SetInteractiveMove($true) } catch {}
         $headerDivider.Capture = $true
     }
 })
 $headerDivider.Add_MouseMove({
     if ($script:dividerDragging) {
         $nowY = [Windows.Forms.Control]::MousePosition.Y
-        $delta = $nowY - $script:dividerLastScreenY
-        if ($delta -ne 0) {
-            $script:dividerLastScreenY = $nowY
-            Set-ActivityPaneHeight ($contentHost.RowStyles[1].Height - $delta)
+        $delta = $nowY - $script:dividerStartScreenY
+        $script:dividerPendingHeight = $script:dividerStartPaneHeight - $delta
+
+        # Coalesce high-frequency mouse messages to roughly one layout per
+        # display frame. RichEdit + WPF layout on every raw mouse event causes
+        # visible jitter even when the pointer itself moves smoothly.
+        if ($script:dividerDragWatch.ElapsedMilliseconds -ge 16) {
+            Set-ActivityPaneHeight $script:dividerPendingHeight
+            $script:dividerDragWatch.Restart()
         }
     }
 })
 $headerDivider.Add_MouseUp({
     if ($script:dividerDragging) {
+        $nowY = [Windows.Forms.Control]::MousePosition.Y
+        $delta = $nowY - $script:dividerStartScreenY
+        $script:dividerPendingHeight = $script:dividerStartPaneHeight - $delta
+        Set-ActivityPaneHeight $script:dividerPendingHeight
+        $script:dividerDragWatch.Stop()
         $script:dividerDragging = $false
         $headerDivider.Capture = $false
         $script:uiInteracting = $false
+        try { $gpuDivider.SetInteractiveMove($false) } catch {}
         Layout-LogScrollbars
+        $contentHost.Invalidate($true)
+        $contentHost.Update()
     }
 })
 $headerDivider.Add_MouseCaptureChanged({
-    if (-not $headerDivider.Capture) {
+    if (-not $headerDivider.Capture -and $script:dividerDragging) {
+        Set-ActivityPaneHeight $script:dividerPendingHeight
+        $script:dividerDragWatch.Stop()
         $script:dividerDragging = $false
         $script:uiInteracting = $false
+        try { $gpuDivider.SetInteractiveMove($false) } catch {}
+        Layout-LogScrollbars
+        $contentHost.Invalidate($true)
     }
 })
 
@@ -2302,18 +2381,18 @@ function Read-LiveLog {
 }
 function Find-ExistingRemote {
     try {
-        $candidates = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
-            ($_.Name -eq 'cmd.exe' -and (
-                $_.CommandLine -like '*@wonderwhy-er/desktop-commander@latest remote*' -or
-                $_.CommandLine -like '*desktop-commander remote*'
-            )) -or
-            ($_.Name -eq 'node.exe' -and $_.CommandLine -like '*desktop-commander*' -and $_.CommandLine -like '* remote*')
-        })
-        if (-not $candidates) { return $null }
-        $ids = @($candidates | ForEach-Object { [int]$_.ProcessId })
-        $rootProc = $candidates | Where-Object { $ids -notcontains [int]$_.ParentProcessId } | Select-Object -First 1
-        if (-not $rootProc) { $rootProc = $candidates | Select-Object -First 1 }
-        return Get-Process -Id $rootProc.ProcessId -ErrorAction Stop
+        # Only attach to a launcher that writes to this installation's own log.
+        # Do not adopt an arbitrary desktop-commander process started manually
+        # by the user or by another RDC installation.
+        $candidate = Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+            $_.Name -eq 'cmd.exe' -and
+            $_.CommandLine -and
+            $_.CommandLine.IndexOf('desktop-commander',[StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+            $_.CommandLine.IndexOf(' remote',[StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+            $_.CommandLine.IndexOf($logPath,[StringComparison]::OrdinalIgnoreCase) -ge 0
+        } | Select-Object -First 1
+        if (-not $candidate) { return $null }
+        return Get-Process -Id $candidate.ProcessId -ErrorAction Stop
     } catch { return $null }
 }
 function Start-NoWindowCmd([string]$commandLine) {
@@ -2343,7 +2422,7 @@ function Start-Remote {
             Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Найден уже работающий remote-процесс. Перезапуск не требуется.' + $nl)
             return
         }
-        if (-not (Test-Path $npxPath)) { throw 'npx.cmd не найден: ' + $npxPath }
+        $npxPath = Resolve-NpxPath
         if ($script:reader) { $script:reader.Dispose(); $script:reader = $null }
         Reset-CompactLogSession
         if (Test-Path $logPath) { Remove-Item -LiteralPath $logPath -Force }
@@ -2353,8 +2432,8 @@ function Start-Remote {
         $finish.Text = 'Завершить'
         $finish.Enabled = $true
         Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Запуск remote-процесса...' + $nl)
-        Set-State 'Запускается…' 'Запускаю npx @wonderwhy-er/desktop-commander@latest remote' ([Drawing.Color]::Khaki)
-        $cmd = '""' + $npxPath + '" --yes @wonderwhy-er/desktop-commander@latest remote > "' + $logPath + '" 2>&1"'
+        Set-State 'Запускается…' ('Запускаю npx ' + $desktopCommanderPackage + ' remote') ([Drawing.Color]::Khaki)
+        $cmd = '""' + $npxPath + '" --yes ' + $desktopCommanderPackage + ' remote > "' + $logPath + '" 2>&1"'
         $script:proc = Start-NoWindowCmd $cmd
         if (-not $script:proc) { throw 'Не удалось запустить remote-процесс без консольного окна.' }
         Set-RuntimeDisplay ('PID ' + $script:proc.Id)
@@ -2462,13 +2541,21 @@ function Switch-RemoteAccount {
         Set-State 'Выход из аккаунта…' 'Удаляю текущую авторизацию Desktop Commander.' ([Drawing.Color]::Khaki)
         Add-Log ($nl + '[' + (Get-Date -Format 'HH:mm:ss') + '] Выход из текущего аккаунта…' + $nl)
 
-        if (-not (Test-Path $npxPath)) { throw 'npx.cmd не найден: ' + $npxPath }
+        $npxPath = Resolve-NpxPath
         $logoutFile = Join-Path $root 'logout-session.log'
         if (Test-Path $logoutFile) { Remove-Item -LiteralPath $logoutFile -Force -ErrorAction SilentlyContinue }
-        $logoutCmd = '""' + $npxPath + '" --yes @wonderwhy-er/desktop-commander@latest remote --logout > "' + $logoutFile + '" 2>&1"'
+        $logoutCmd = '""' + $npxPath + '" --yes ' + $desktopCommanderPackage + ' remote --logout > "' + $logoutFile + '" 2>&1"'
         $logout = Start-NoWindowCmd $logoutCmd
         if (-not $logout) { throw 'Не удалось запустить команду выхода без консольного окна.' }
-        $logout.WaitForExit()
+        if (-not $logout.WaitForExit(30000)) {
+            try {
+                $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+                $killCmd = '""' + $taskkill + '" /PID ' + $logout.Id + ' /T /F"'
+                $killer = Start-NoWindowCmd $killCmd
+                if ($killer) { [void]$killer.WaitForExit(5000); $killer.Dispose() }
+            } catch {}
+            throw 'Команда выхода не завершилась за 30 секунд.'
+        }
         if (Test-Path $logoutFile) {
             $logoutText = Get-Content -LiteralPath $logoutFile -Raw -ErrorAction SilentlyContinue
             if ($logoutText) { Add-Log ($logoutText + $nl) }
@@ -2672,6 +2759,9 @@ if ($SelfTest) {
     $bannerProbe.Dispose()
     if ($hintSep.Text -ne '•') { throw 'Bottom separator missing' }
     if ($runtimeSep.Text -ne '|') { throw 'Runtime separator missing' }
+    $npxProbe = Resolve-NpxPath
+    if (-not $npxProbe -or -not (Test-Path -LiteralPath $npxProbe)) { throw 'npx resolver failed' }
+    if ($desktopCommanderPackage -ne '@wonderwhy-er/desktop-commander@0.2.52') { throw 'Unexpected Desktop Commander package pin' }
     if ($hintSep.ForeColor.ToArgb() -ne $accentOrange.ToArgb()) { throw 'Bottom separator color mismatch' }
     if ($runtimeSep.ForeColor.ToArgb() -ne $accentOrange.ToArgb()) { throw 'Runtime separator color mismatch' }
     if ($statusDot.GetType().Name -ne 'RdcStatusIndicator') { throw 'Status indicator control missing' }
@@ -2792,19 +2882,47 @@ if ($SelfTest) {
     if($headerLog.SelectionColor.ToArgb() -ne $headerValue.ToArgb()){throw 'Email highlight color mismatch'}
     if($accountInfo.ForeColor.ToArgb() -ne ([Drawing.Color]::Silver).ToArgb()){throw 'Bottom account color mismatch'}
 
-    if ($gpuDivider.GetType().Name -ne 'RdcGpuDividerHost') { throw 'GPU divider visual layer missing' }
     Reset-CompactLogSession
-    Process-RemoteLine 'Received tool call shader_test: begin'
-    if ($script:activeToolCalls -ne 1 -or -not $gpuDivider.ActivityRequested) { throw 'GPU activity did not start on Received tool call' }
-    Process-RemoteLine 'Tool call shader_test completed:'
-    if ($script:activeToolCalls -ne 0 -or -not $gpuDivider.ActivityRequested) { throw 'GPU activity hold did not remain active after completion' }
-    $script:activityHoldUntil = (Get-Date).AddMilliseconds(-1)
-    Refresh-DividerActivitySession
-    if ($gpuDivider.ActivityRequested) { throw 'GPU activity did not stop after hold expiry' }
+    if ($gpuDivider) {
+        if ($gpuDivider.GetType().Name -ne 'RdcGpuDividerHost') { throw 'Unexpected GPU divider control type' }
+        $gpuDivider.SetInteractiveMove($true)
+        $gpuDivider.SetInteractiveMove($false)
+        Process-RemoteLine 'Received tool call shader_test: begin'
+        if ($script:activeToolCalls -ne 1 -or -not $gpuDivider.ActivityRequested) { throw 'GPU activity did not start on Received tool call' }
+        Process-RemoteLine 'Tool call shader_test completed:'
+        if ($script:activeToolCalls -ne 0 -or -not $gpuDivider.ActivityRequested) { throw 'GPU activity hold did not remain active after completion' }
+        $script:activityHoldUntil = (Get-Date).AddMilliseconds(-1)
+        Refresh-DividerActivitySession
+        if ($gpuDivider.ActivityRequested) { throw 'GPU activity did not stop after hold expiry' }
+    } else {
+        Process-RemoteLine 'Received tool call fallback_test: begin'
+        Process-RemoteLine 'Tool call fallback_test completed:'
+        if ($script:activeToolCalls -ne 0) { throw 'Static divider fallback broke activity state tracking' }
+    }
 
     Write-Output 'GUI SELF TEST PASSED'
     $form.Dispose()
     if ($windowMutex) { $windowMutex.ReleaseMutex(); $windowMutex.Dispose() }
+    exit 0
+}
+if ($Preview) {
+    Set-State 'Предпросмотр' 'Dev preview без запуска remote-процесса.' ([Drawing.Color]::LightBlue)
+    $script:startupBlock = 'Remote Desktop Commander visual preview' + $nl +
+        'Drag the divider to validate resize rendering.'
+    Add-CompletedEvent ('Received tool call preview: divider rendering' + $nl +
+        'Animated overflow is active until the drag begins.')
+    Render-CompactLog
+    Set-DividerWorkState $true
+    $timer.Start()
+    try {
+        [Windows.Forms.Application]::Run($form)
+    }
+    finally {
+        if ($windowMutex) {
+            try { $windowMutex.ReleaseMutex() } catch {}
+            $windowMutex.Dispose()
+        }
+    }
     exit 0
 }
 Hide-LegacyRemoteTerminal
