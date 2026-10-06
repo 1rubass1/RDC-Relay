@@ -1,14 +1,16 @@
 # Changelog
 
-## 1.5.6 (development)
+## 1.5.6 (2026-10-06)
 
 - Replaced the ambiguous post-stop "Close" action with a Stop/Start state button: `■ Остановить` / `▶ Запустить`.
 - Added vector Stop/Play button glyphs rendered by the shell itself.
-- Added an orange outline to the Help button.
+- Refined the top-right command group: retained the 4 px utility spacing and 16 px separation before Stop, restored the purple Help treatment, and reduced only its visible circle while keeping the full hit target.
 - Tightened startup banner line spacing by one physical pixel to remove dark seams between ASCII-art rows.
 - Rebuilt the activity log viewport as a double-buffered panel with one atomic manual layout for the text area, vertical scrollbar, horizontal scrollbar and resize corner.
 - Disabled RichEdit native scrollbars entirely and moved horizontal range calculation into the custom controls.
-- Changed divider dragging to bitmap-backed live preview: text panes and custom scrollbars visually follow the pointer, while the real RichEdit controls keep fixed geometry until one atomic resize on release.
+- Changed divider dragging to bitmap-backed live preview: text panes visually follow the pointer while the real RichEdit controls keep fixed geometry until one atomic resize on release.
+- During divider drag, replace both vertical scrollbars with one unified rounded orange ruler using the real scrollbar arrow geometry, crisp 2 px / 2 px 45-degree hatching, a five-layer inward capsule edge fade, and a linear crossing fade around the animated divider.
+- Added fade-in/fade-out transitions for the temporary drag overlay so the real controls finish repainting before the overlay disappears.
 - Coalesce expensive RichEdit thumb tracking to display-frame cadence while keeping the custom thumb visually responsive.
 - Unified scrollbar/corner backgrounds to eliminate edge gaps during fast scrolling and pane resizing.
 - Changed divider activity timing to an adaptive 10-30 second normal hold and a 60 second timeout for interrupted tool calls.

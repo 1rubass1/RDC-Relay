@@ -148,7 +148,16 @@ public class RdcCircleButton : Control {
         Color edge = pressed ? Color.FromArgb(139,81,45)
                    : hovered ? Color.FromArgb(207,132,75)
                    : Color.FromArgb(191,118,67);
-        RectangleF r = new RectangleF(1.5f,1.5f,Width-3f,Height-3f);
+        // Keep the full 36x36 hit target, but use a quieter 30x30
+        // visual circle centered inside it.
+        float visualSize = Math.Min(30f,Math.Min(Width,Height));
+        float visualX = (Width-visualSize)/2f;
+        float visualY = (Height-visualSize)/2f;
+        RectangleF r = new RectangleF(
+            visualX,
+            visualY,
+            visualSize,
+            visualSize);
         using (SolidBrush b = new SolidBrush(fill)) e.Graphics.FillEllipse(b,r);
         using (Pen p = new Pen(edge,1f)) e.Graphics.DrawEllipse(p,r);
         TextRenderer.DrawText(
@@ -215,14 +224,25 @@ public enum RdcButtonGlyph {
     Play
 }
 
+public enum RdcButtonTone {
+    Accent,
+    Neutral
+}
+
 public class RdcRoundedButton : Control {
     private bool hovered;
     private bool pressed;
     private RdcButtonGlyph glyph = RdcButtonGlyph.None;
+    private RdcButtonTone tone = RdcButtonTone.Accent;
 
     public RdcButtonGlyph Glyph {
         get { return glyph; }
         set { glyph = value; Invalidate(); }
+    }
+
+    public RdcButtonTone Tone {
+        get { return tone; }
+        set { tone = value; Invalidate(); }
     }
 
     public RdcRoundedButton() {
@@ -295,14 +315,30 @@ public class RdcRoundedButton : Control {
 
         bool activeHover = Enabled && hovered;
         bool activePress = Enabled && pressed;
-        Color fill = activePress ? Color.FromArgb(42,46,51)
-                   : activeHover ? Color.FromArgb(61,66,72)
-                   : Color.FromArgb(49,53,59);
-        Color edge = activePress ? Color.FromArgb(139,81,45)
-                   : activeHover ? Color.FromArgb(207,132,75)
-                   : Enabled ? Color.FromArgb(191,118,67)
-                   : Color.FromArgb(95,82,72);
-        Color content = Enabled ? ForeColor : Color.FromArgb(132,135,139);
+        Color fill;
+        Color edge;
+        Color content;
+
+        if (!Enabled) {
+            fill = Color.FromArgb(49,53,59);
+            edge = Color.FromArgb(82,84,88);
+            content = Color.FromArgb(132,135,139);
+        } else {
+            fill = activePress ? Color.FromArgb(42,46,51)
+                 : activeHover ? Color.FromArgb(61,66,72)
+                 : Color.FromArgb(49,53,59);
+
+            if (tone == RdcButtonTone.Neutral) {
+                edge = activePress ? Color.FromArgb(139,81,45)
+                     : activeHover ? Color.FromArgb(207,132,75)
+                     : Color.FromArgb(191,118,67);
+            } else {
+                edge = activePress ? Color.FromArgb(139,81,45)
+                     : activeHover ? Color.FromArgb(207,132,75)
+                     : Color.FromArgb(191,118,67);
+            }
+            content = ForeColor;
+        }
 
         RectangleF r = new RectangleF(1f,1f,Width-2f,Height-2f);
         using (GraphicsPath p = Rounded(r,6f))
@@ -388,10 +424,23 @@ public class RdcBufferedPanel : Panel {
 public class RdcDividerDragPreview : Control {
     private Bitmap headerImage;
     private Bitmap logImage;
-    private Bitmap vScrollImage;
+    private Bitmap upperVScrollImage;
+    private Bitmap lowerVScrollImage;
     private Bitmap hScrollImage;
     private Bitmap cornerImage;
     private int dividerY;
+
+    private readonly System.Windows.Forms.Timer fadeTimer;
+    private readonly System.Diagnostics.Stopwatch fadeWatch =
+        new System.Diagnostics.Stopwatch();
+    private float rulerOpacity = 1f;
+    private float fadeFrom = 1f;
+    private float fadeTo = 1f;
+    private int fadeDelayMs;
+    private int fadeDurationMs;
+    private bool completeFadeOut;
+
+    public event EventHandler FadeOutCompleted;
 
     public RdcDividerDragPreview() {
         SetStyle(ControlStyles.UserPaint |
@@ -402,6 +451,10 @@ public class RdcDividerDragPreview : Control {
         BackColor = Color.FromArgb(18,20,23);
         TabStop = false;
         Enabled = false;
+
+        fadeTimer = new System.Windows.Forms.Timer();
+        fadeTimer.Interval = 15;
+        fadeTimer.Tick += FadeTimer_Tick;
     }
 
     private static Bitmap CaptureControl(Control control) {
@@ -416,29 +469,166 @@ public class RdcDividerDragPreview : Control {
         return bmp;
     }
 
+    private static Bitmap RenderControl(Control control) {
+        if (control == null || control.Width <= 0 || control.Height <= 0)
+            return null;
+
+        Bitmap bmp = new Bitmap(control.Width,control.Height);
+        control.DrawToBitmap(
+            bmp,
+            new Rectangle(0,0,control.Width,control.Height));
+        return bmp;
+    }
+
+    private void DisposeVerticalImages() {
+        if (upperVScrollImage != null) {
+            upperVScrollImage.Dispose();
+            upperVScrollImage = null;
+        }
+        if (lowerVScrollImage != null) {
+            lowerVScrollImage.Dispose();
+            lowerVScrollImage = null;
+        }
+    }
+
     private void DisposeImages() {
         if (headerImage != null) { headerImage.Dispose(); headerImage = null; }
         if (logImage != null) { logImage.Dispose(); logImage = null; }
-        if (vScrollImage != null) { vScrollImage.Dispose(); vScrollImage = null; }
+        DisposeVerticalImages();
         if (hScrollImage != null) { hScrollImage.Dispose(); hScrollImage = null; }
         if (cornerImage != null) { cornerImage.Dispose(); cornerImage = null; }
+    }
+
+    private static void DrawImageAlpha(
+        Graphics g,
+        Bitmap image,
+        Rectangle dest,
+        float alpha) {
+
+        if (image == null || dest.Width <= 0 || dest.Height <= 0 || alpha <= 0f)
+            return;
+
+        alpha = Math.Max(0f,Math.Min(1f,alpha));
+        System.Drawing.Imaging.ColorMatrix matrix =
+            new System.Drawing.Imaging.ColorMatrix();
+        matrix.Matrix33 = alpha;
+
+        using (System.Drawing.Imaging.ImageAttributes attrs =
+            new System.Drawing.Imaging.ImageAttributes()) {
+            attrs.SetColorMatrix(matrix);
+            g.DrawImage(
+                image,
+                dest,
+                0,0,image.Width,image.Height,
+                GraphicsUnit.Pixel,
+                attrs);
+        }
+    }
+
+    private void BeginFade(
+        float target,
+        int delayMs,
+        int durationMs,
+        bool completeOnEnd) {
+
+        fadeTimer.Stop();
+        fadeFrom = rulerOpacity;
+        fadeTo = Math.Max(0f,Math.Min(1f,target));
+        fadeDelayMs = Math.Max(0,delayMs);
+        fadeDurationMs = Math.Max(1,durationMs);
+        completeFadeOut = completeOnEnd;
+        fadeWatch.Restart();
+        fadeTimer.Start();
+    }
+
+    private void FadeTimer_Tick(object sender,EventArgs e) {
+        double elapsed = fadeWatch.Elapsed.TotalMilliseconds;
+        if (elapsed < fadeDelayMs) return;
+
+        double t = Math.Min(
+            1.0,
+            (elapsed-fadeDelayMs)/Math.Max(1.0,fadeDurationMs));
+
+        // Fast ease-out on appearance, smoothstep on disappearance.
+        double eased = fadeTo > fadeFrom
+            ? 1.0-Math.Pow(1.0-t,3.0)
+            : t*t*(3.0-2.0*t);
+
+        rulerOpacity =
+            fadeFrom + (fadeTo-fadeFrom)*(float)eased;
+        Invalidate();
+
+        if (t >= 1.0) {
+            fadeTimer.Stop();
+            fadeWatch.Stop();
+            rulerOpacity = fadeTo;
+            Invalidate();
+
+            if (completeFadeOut) {
+                completeFadeOut = false;
+                EventHandler handler = FadeOutCompleted;
+                if (handler != null)
+                    handler(this,EventArgs.Empty);
+            }
+        }
+    }
+
+    public void FadeIn(int durationMs) {
+        BeginFade(1f,0,durationMs,false);
+    }
+
+    public void FadeOut(int settleDelayMs,int durationMs) {
+        BeginFade(0f,settleDelayMs,durationMs,true);
+    }
+
+    public void CaptureFinalScrollbars(
+        Control upperVScroll,
+        Control lowerVScroll) {
+
+        DisposeVerticalImages();
+        upperVScrollImage = RenderControl(upperVScroll);
+        lowerVScrollImage = RenderControl(lowerVScroll);
+        Invalidate();
+    }
+
+    private GraphicsPath Rounded(Rectangle r, int radius) {
+        GraphicsPath p = new GraphicsPath();
+        int d = radius * 2;
+        if (d <= 0 || r.Width <= d || r.Height <= d) {
+            p.AddRectangle(r);
+            return p;
+        }
+        p.AddArc(r.Left,r.Top,d,d,180,90);
+        p.AddArc(r.Right-d,r.Top,d,d,270,90);
+        p.AddArc(r.Right-d,r.Bottom-d,d,d,0,90);
+        p.AddArc(r.Left,r.Bottom-d,d,d,90,90);
+        p.CloseFigure();
+        return p;
     }
 
     public void BeginPreview(
         Control headerText,
         Control log,
-        Control vScroll,
+        Control upperVScroll,
+        Control lowerVScroll,
         Control hScroll,
         Control corner,
         int initialDividerY) {
 
+        fadeTimer.Stop();
+        fadeWatch.Reset();
+        completeFadeOut = false;
         DisposeImages();
+
         headerImage = CaptureControl(headerText);
         logImage = CaptureControl(log);
-        vScrollImage = CaptureControl(vScroll);
+        upperVScrollImage = RenderControl(upperVScroll);
+        lowerVScrollImage = RenderControl(lowerVScroll);
         hScrollImage = CaptureControl(hScroll);
         cornerImage = CaptureControl(corner);
+
         dividerY = initialDividerY;
+        rulerOpacity = 0f;
         Invalidate();
     }
 
@@ -449,40 +639,46 @@ public class RdcDividerDragPreview : Control {
     }
 
     public void EndPreview() {
+        fadeTimer.Stop();
+        fadeWatch.Reset();
+        completeFadeOut = false;
+        rulerOpacity = 1f;
         DisposeImages();
         Invalidate();
     }
 
     protected override void Dispose(bool disposing) {
-        if (disposing) DisposeImages();
+        if (disposing) {
+            fadeTimer.Stop();
+            fadeTimer.Dispose();
+            fadeWatch.Stop();
+            DisposeImages();
+        }
         base.Dispose(disposing);
     }
 
     protected override void OnPaint(PaintEventArgs e) {
         e.Graphics.Clear(BackColor);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
         int splitY = Math.Max(0,Math.Min(Math.Max(0,Height-7),dividerY));
         int lowerTop = Math.Min(Height,splitY+7);
         int scrollSize = 17;
-        int lowerContentHeight = Math.Max(0,Height-lowerTop-scrollSize);
         int contentWidth = Math.Max(0,Width-scrollSize);
+        int bottomBarTop = Math.Max(0,Height-scrollSize);
+        int lowerContentHeight = Math.Max(0,bottomBarTop-lowerTop);
 
-        if (headerImage != null && splitY > 0) {
+        // Preview only the text portions. The two real vertical scrollbars are
+        // intentionally omitted and replaced with one unified drag ruler.
+        if (headerImage != null && splitY > 0 && contentWidth > 0) {
             Region oldClip = e.Graphics.Clip.Clone();
             try {
-                e.Graphics.SetClip(new Rectangle(0,0,Width,splitY));
+                e.Graphics.SetClip(new Rectangle(0,0,contentWidth,splitY));
                 e.Graphics.DrawImageUnscaled(headerImage,0,0);
             } finally {
                 e.Graphics.Clip = oldClip;
                 oldClip.Dispose();
             }
-        }
-
-        using (Pen purple = new Pen(Color.FromArgb(123,95,162),1f))
-        using (Pen orange = new Pen(Color.FromArgb(191,118,67),1f)) {
-            e.Graphics.DrawLine(purple,0,splitY,Width,splitY);
-            e.Graphics.DrawLine(orange,0,Math.Min(Height-1,splitY+3),Width,Math.Min(Height-1,splitY+3));
-            e.Graphics.DrawLine(purple,0,Math.Min(Height-1,splitY+6),Width,Math.Min(Height-1,splitY+6));
         }
 
         if (logImage != null && lowerContentHeight > 0 && contentWidth > 0) {
@@ -497,18 +693,10 @@ public class RdcDividerDragPreview : Control {
             }
         }
 
-        if (vScrollImage != null && lowerContentHeight > 0) {
-            e.Graphics.DrawImage(
-                vScrollImage,
-                new Rectangle(contentWidth,lowerTop,scrollSize,lowerContentHeight),
-                new Rectangle(0,0,vScrollImage.Width,vScrollImage.Height),
-                GraphicsUnit.Pixel);
-        }
-
         if (hScrollImage != null && contentWidth > 0) {
             e.Graphics.DrawImage(
                 hScrollImage,
-                new Rectangle(0,Math.Max(0,Height-scrollSize),contentWidth,scrollSize),
+                new Rectangle(0,bottomBarTop,contentWidth,scrollSize),
                 new Rectangle(0,0,hScrollImage.Width,hScrollImage.Height),
                 GraphicsUnit.Pixel);
         }
@@ -517,7 +705,296 @@ public class RdcDividerDragPreview : Control {
             e.Graphics.DrawImageUnscaled(
                 cornerImage,
                 Math.Max(0,Width-scrollSize),
-                Math.Max(0,Height-scrollSize));
+                bottomBarTop);
+        }
+
+        // One temporary vertical ruler for both text panes. Keep only the
+        // outer arrows. The entire body is orange and carries a continuous
+        // gray 45-degree hatch so it reads as a neutral resize scale rather
+        // than either pane's actual scroll thumb.
+        Rectangle rightColumn = new Rectangle(contentWidth,0,scrollSize,bottomBarTop);
+        using (SolidBrush trackBack = new SolidBrush(Color.FromArgb(18,20,23)))
+            e.Graphics.FillRectangle(trackBack,rightColumn);
+
+        float realBarsOpacity = Math.Max(0f,Math.Min(1f,1f-rulerOpacity));
+        if (realBarsOpacity > 0f) {
+            DrawImageAlpha(
+                e.Graphics,
+                upperVScrollImage,
+                new Rectangle(contentWidth,0,scrollSize,Math.Max(0,splitY)),
+                realBarsOpacity);
+            DrawImageAlpha(
+                e.Graphics,
+                lowerVScrollImage,
+                new Rectangle(
+                    contentWidth,
+                    lowerTop,
+                    scrollSize,
+                    Math.Max(0,lowerContentHeight)),
+                realBarsOpacity);
+        }
+
+        int rulerAlpha = Math.Max(
+            0,
+            Math.Min(255,(int)Math.Round(255f*rulerOpacity)));
+
+        int arrow = 16;
+        int bodyTop = arrow;
+        int bodyBottom = Math.Max(bodyTop,bottomBarTop-arrow);
+        Rectangle body = new Rectangle(
+            contentWidth+2,
+            bodyTop,
+            Math.Max(1,scrollSize-4),
+            Math.Max(1,bodyBottom-bodyTop));
+
+        int bodyRadius = Math.Min(7,Math.Min(body.Width,body.Height)/2);
+        using (GraphicsPath bodyPath = Rounded(body,bodyRadius))
+        using (SolidBrush orange = new SolidBrush(
+            Color.FromArgb(rulerAlpha,191,118,67))) {
+            e.Graphics.FillPath(orange,bodyPath);
+
+            Region hatchClip = e.Graphics.Clip.Clone();
+            try {
+                e.Graphics.SetClip(bodyPath);
+
+                SmoothingMode oldSmoothing = e.Graphics.SmoothingMode;
+                PixelOffsetMode oldPixelOffset = e.Graphics.PixelOffsetMode;
+                try {
+                    // Full-length pixel-grid hatch: 2 px dark diagonal,
+                    // 2 px orange gap, repeated every 4 px. The strokes are
+                    // deliberately extended beyond both X edges, then clipped
+                    // by the rounded thumb path, so their end caps cannot form
+                    // visible vertical projection bands at the sides.
+                    e.Graphics.SmoothingMode = SmoothingMode.None;
+                    e.Graphics.PixelOffsetMode = PixelOffsetMode.None;
+
+                    using (Pen hatch = new Pen(
+                        Color.FromArgb(rulerAlpha,18,20,23),
+                        2f)) {
+
+                        hatch.StartCap = LineCap.Flat;
+                        hatch.EndCap = LineCap.Flat;
+
+                        const int spacing = 4;
+                        const int overscan = 4;
+                        int diagonal = Math.Max(1,body.Width-1);
+
+                        for (int y = body.Top-diagonal-overscan;
+                             y < body.Bottom+diagonal+overscan;
+                             y += spacing) {
+                            e.Graphics.DrawLine(
+                                hatch,
+                                body.Left-overscan,
+                                y+diagonal+overscan,
+                                body.Right-1+overscan,
+                                y-overscan);
+                        }
+                    }
+                } finally {
+                    e.Graphics.SmoothingMode = oldSmoothing;
+                    e.Graphics.PixelOffsetMode = oldPixelOffset;
+                }
+            } finally {
+                e.Graphics.Clip = hatchClip;
+                hatchClip.Dispose();
+            }
+
+            // Preserve the exact capsule geometry used by the real scrollbar.
+            // Build a 5 px inward fade from independent 1 px capsule contours
+            // instead of one thick pen, so the end caps keep their shape.
+            float[] fadeAlpha = { 1.00f, 0.70f, 0.48f, 0.28f, 0.12f };
+
+            for (int depth = 0; depth < fadeAlpha.Length; depth++) {
+                int alpha = (int)Math.Round(
+                    rulerAlpha * fadeAlpha[depth]);
+
+                if (depth == 0) {
+                    using (Pen outline = new Pen(
+                        Color.FromArgb(alpha,191,118,67),
+                        1f)) {
+                        outline.LineJoin = LineJoin.Round;
+                        e.Graphics.DrawPath(outline,bodyPath);
+                    }
+                    continue;
+                }
+
+                Rectangle layerRect = new Rectangle(
+                    body.X+depth,
+                    body.Y+depth,
+                    Math.Max(1,body.Width-(depth*2)),
+                    Math.Max(1,body.Height-(depth*2)));
+
+                int layerRadius = Math.Max(
+                    1,
+                    Math.Min(
+                        bodyRadius-depth,
+                        Math.Min(layerRect.Width,layerRect.Height)/2));
+
+                using (GraphicsPath layerPath = Rounded(
+                    layerRect,
+                    layerRadius))
+                using (Pen layer = new Pen(
+                    Color.FromArgb(alpha,191,118,67),
+                    1f)) {
+                    layer.LineJoin = LineJoin.Round;
+                    e.Graphics.DrawPath(layer,layerPath);
+                }
+            }
+        }
+
+        // Match the real RdcOverlayScrollBar arrow geometry exactly so the
+        // switch into/out of drag preview does not visibly change scale.
+        using (SolidBrush arrows = new SolidBrush(
+            Color.FromArgb(rulerAlpha,112,115,120))) {
+            int cx = contentWidth + scrollSize/2;
+            Point[] up = {
+                new Point(cx,5),
+                new Point(cx-4,10),
+                new Point(cx+4,10)
+            };
+            Point[] down = {
+                new Point(cx,Math.Max(0,bottomBarTop-5)),
+                new Point(cx-4,Math.Max(0,bottomBarTop-10)),
+                new Point(cx+4,Math.Max(0,bottomBarTop-10))
+            };
+            e.Graphics.FillPolygon(arrows,up);
+            e.Graphics.FillPolygon(arrows,down);
+        }
+
+        // Fade only the temporary pin around the divider crossing. The fade
+        // belongs to the pin layer; the animated divider is painted afterwards
+        // as an independent foreground element.
+        int topPurpleY = splitY;
+        int bottomPurpleY = Math.Min(
+            Height-1,
+            splitY+6);
+        int dividerHeight = Math.Max(
+            0,
+            bottomPurpleY-topPurpleY+1);
+
+        int crossingFade = 15;
+        int crossingCenterExtra = 10;
+        int crossingCenterPad = crossingCenterExtra / 2;
+        Color crossingBack = Color.FromArgb(18,20,23);
+
+        // Three-part pin mask:
+        // 1) a fully hidden center exactly dividerHeight + 10 px tall,
+        //    centered on the visible purple divider;
+        // 2) a 15 px upper fade starting at the center boundary;
+        // 3) a mirrored 15 px lower fade.
+        int crossingCenterTop =
+            topPurpleY-crossingCenterPad;
+        int crossingCenterHeight =
+            dividerHeight+crossingCenterExtra;
+        int crossingCenterBottom =
+            crossingCenterTop+crossingCenterHeight; // exclusive
+
+        // Use a rectangular mask with 1 px horizontal overscan instead of
+        // clipping the mask to the rounded pin path. The previous rounded clip
+        // preserved anti-aliased orange edge pixels at the crossing, which made
+        // the pin appear to touch the purple divider even inside the 100% zone.
+        int maskLeft = Math.Max(0,body.Left-1);
+        int maskRight = Math.Min(Width,body.Right+1);
+        int maskWidth = Math.Max(0,maskRight-maskLeft);
+
+        for (int i = 0; i < crossingFade; i++) {
+            // Linear falloff: keep the center fully hidden, then reveal the
+            // pin at a constant rate across the fade zone.
+            int upperAlpha = (int)Math.Round(
+                255.0 * (i+1) / (crossingFade+1));
+            int lowerAlpha = (int)Math.Round(
+                255.0 * (crossingFade-i) / (crossingFade+1));
+
+            int upperY =
+                crossingCenterTop-crossingFade+i;
+            int lowerY =
+                crossingCenterBottom+i;
+
+            if (upperY >= 0 && upperY < Height && maskWidth > 0) {
+                using (SolidBrush fade = new SolidBrush(
+                    Color.FromArgb(
+                        upperAlpha,
+                        crossingBack.R,
+                        crossingBack.G,
+                        crossingBack.B))) {
+                    e.Graphics.FillRectangle(
+                        fade,
+                        maskLeft,
+                        upperY,
+                        maskWidth,
+                        1);
+                }
+            }
+
+            if (lowerY >= 0 && lowerY < Height && maskWidth > 0) {
+                using (SolidBrush fade = new SolidBrush(
+                    Color.FromArgb(
+                        lowerAlpha,
+                        crossingBack.R,
+                        crossingBack.G,
+                        crossingBack.B))) {
+                    e.Graphics.FillRectangle(
+                        fade,
+                        maskLeft,
+                        lowerY,
+                        maskWidth,
+                        1);
+                }
+            }
+        }
+
+        using (SolidBrush crossingClear = new SolidBrush(crossingBack)) {
+            int centerTop = Math.Max(
+                0,
+                crossingCenterTop);
+            int centerBottom = Math.Min(
+                Height,
+                crossingCenterBottom);
+            int centerHeight = Math.Max(
+                0,
+                centerBottom-centerTop);
+
+            if (centerHeight > 0 && maskWidth > 0) {
+                e.Graphics.FillRectangle(
+                    crossingClear,
+                    maskLeft,
+                    centerTop,
+                    maskWidth,
+                    centerHeight);
+            }
+        }
+
+        // The divider keeps its own opaque textbox-background strip and is
+        // painted after the pin fade, so the fade can never cover the line.
+        using (SolidBrush dividerBack = new SolidBrush(crossingBack)) {
+            e.Graphics.FillRectangle(
+                dividerBack,
+                0,
+                topPurpleY,
+                Width,
+                dividerHeight);
+        }
+
+        using (Pen purple = new Pen(Color.FromArgb(123,95,162),1f))
+        using (Pen orangeLine = new Pen(Color.FromArgb(191,118,67),1f)) {
+            e.Graphics.DrawLine(
+                purple,
+                0,
+                topPurpleY,
+                Width,
+                topPurpleY);
+            e.Graphics.DrawLine(
+                orangeLine,
+                0,
+                Math.Min(Height-1,topPurpleY+3),
+                Width,
+                Math.Min(Height-1,topPurpleY+3));
+            e.Graphics.DrawLine(
+                purple,
+                0,
+                bottomPurpleY,
+                Width,
+                bottomPurpleY);
         }
     }
 }
@@ -1776,7 +2253,7 @@ $top.ColumnCount = 3
 $top.RowCount = 2
 [void]$top.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,38)))
 [void]$top.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent,100)))
-[void]$top.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,325)))
+[void]$top.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,304)))
 [void]$top.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,32)))
 [void]$top.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent,100)))
 $statusDot = New-Object RdcStatusIndicator
@@ -1794,25 +2271,26 @@ $detail.ForeColor = [Drawing.Color]::Silver
 $finish = New-Object RdcRoundedButton
 $finish.Text = 'Остановить'
 $finish.Glyph = [RdcButtonGlyph]::Stop
-$finish.Size = New-Object Drawing.Size(118,36)
-$finish.Margin = New-Object Windows.Forms.Padding(8,0,0,0)
+$finish.Size = New-Object Drawing.Size(120,36)
+$finish.Margin = New-Object Windows.Forms.Padding(16,0,0,0)
 
 $accountButton = New-Object RdcRoundedButton
-$accountButton.Text = 'Аккаунт  ▾'
-$accountButton.Size = New-Object Drawing.Size(116,36)
-$accountButton.Margin = New-Object Windows.Forms.Padding(8,0,0,0)
+$accountButton.Text = 'Аккаунт ▾'
+$accountButton.Tone = [RdcButtonTone]::Neutral
+$accountButton.Size = New-Object Drawing.Size(120,36)
+$accountButton.Margin = New-Object Windows.Forms.Padding(0)
 
 $helpButton = New-Object RdcCircleButton
 $helpButton.Text = '?'
 $helpButton.Size = New-Object Drawing.Size(36,36)
-$helpButton.Margin = New-Object Windows.Forms.Padding(8,0,0,0)
+$helpButton.Margin = New-Object Windows.Forms.Padding(4,0,0,0)
 
 $actions = New-Object Windows.Forms.FlowLayoutPanel
 $actions.Dock = 'Fill'
 $actions.FlowDirection = 'RightToLeft'
 $actions.WrapContents = $false
 $actions.Margin = New-Object Windows.Forms.Padding(0)
-$actions.Padding = New-Object Windows.Forms.Padding(0,12,5,12)
+$actions.Padding = New-Object Windows.Forms.Padding(0,12,0,12)
 $actions.Controls.Add($finish)
 $actions.Controls.Add($helpButton)
 $actions.Controls.Add($accountButton)
@@ -2032,6 +2510,10 @@ if ($gpuDividerAvailable) {
 # Real RichEdit controls keep stable geometry until MouseUp.
 $dividerDragPreview = New-Object RdcDividerDragPreview
 $dividerDragPreview.Visible = $false
+$dividerDragPreview.Add_FadeOutCompleted({
+    $dividerDragPreview.Visible = $false
+    $dividerDragPreview.EndPreview()
+})
 
 $headerLog.Add_ScrollActivity({ $headerVScroll.Invalidate() })
 $headerLog.Add_MouseWheel({
@@ -2216,10 +2698,11 @@ function Complete-DividerDrag {
     if (-not $script:dividerDragging) { return }
 
     $script:dividerDragging = $false
-    $dividerDragPreview.Visible = $false
-    $dividerDragPreview.EndPreview()
     $script:uiInteracting = $false
 
+    # Keep the preview fully covering the panes while the real controls commit
+    # their final layout underneath it.
+    Position-DividerDragPreview $script:dividerPendingHeight
     Start-LogResizeInteraction
     try {
         Set-ActivityPaneHeight $script:dividerPendingHeight
@@ -2229,8 +2712,19 @@ function Complete-DividerDrag {
     }
 
     try { $gpuDivider.SetInteractiveMove($false) } catch {}
+
+    $headerVScroll.Invalidate()
+    $vScroll.Invalidate()
     $contentHost.Invalidate($true)
     $contentHost.Update()
+
+    # DrawToBitmap works even while the preview covers the controls, so the
+    # fade can morph the temporary ruler into the freshly laid out real bars.
+    $dividerDragPreview.CaptureFinalScrollbars($headerVScroll,$vScroll)
+
+    # Give the underlying controls roughly three frames to settle, then fade
+    # the temporary ruler out over a short, non-blocking transition.
+    $dividerDragPreview.FadeOut(50,180)
 }
 
 $headerDivider.Add_MouseDown({
@@ -2248,6 +2742,7 @@ $headerDivider.Add_MouseDown({
         $dividerDragPreview.BeginPreview(
             $headerTextHost,
             $log,
+            $headerVScroll,
             $vScroll,
             $hScroll,
             $scrollCorner,
@@ -2259,6 +2754,7 @@ $headerDivider.Add_MouseDown({
         $headerDivider.Capture = $true
         $dividerDragPreview.Visible = $true
         $dividerDragPreview.BringToFront()
+        $dividerDragPreview.FadeIn(120)
     }
 })
 $headerDivider.Add_MouseMove({

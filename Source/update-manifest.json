@@ -3,7 +3,7 @@
     "files":  [
                   {
                       "name":  "remote-window.ps1",
-                      "sha256":  "FEA6FA5B03FA66329012F3B9F21A891DD97C05946D41F1F099483E0634A9125A"
+                      "sha256":  "4130DF7E8AEF45D8D1E3A723AE25A5FDD11206708DE3C295DDF3B036C905C641"
                   },
                   {
                       "name":  "divider-caustic.ps",
