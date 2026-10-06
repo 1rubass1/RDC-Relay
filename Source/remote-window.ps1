@@ -1,10 +1,34 @@
 ﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$appVersion = '1.5.8'
+$appVersion = '1.5.9'
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
-$iconPath = Join-Path $root 'DesktopCommander.ico'
+$iconPath = Join-Path $root 'RDCRelay.ico'
+
+if (-not ('RdcShellIdentity' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class RdcShellIdentity {
+    [DllImport("shell32.dll", CharSet=CharSet.Unicode)]
+    public static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
+
+    [DllImport("shell32.dll")]
+    public static extern void SHChangeNotify(
+        uint eventId,
+        uint flags,
+        IntPtr item1,
+        IntPtr item2);
+}
+'@
+}
+
+try {
+    [void][RdcShellIdentity]::SetCurrentProcessExplicitAppUserModelID('RDCRelay.App')
+} catch {}
+
 
 # Branding migration cleanup. Keep the legacy install directory/mutex for
 # compatibility, but remove obsolete launchers once the new payload exists.
@@ -44,54 +68,136 @@ if (-not $SelfTest -and -not $Preview -and (Test-Path -LiteralPath (Join-Path $r
         }
     }
 
-    # Keep existing shortcuts synchronized across updater-only releases. Do not
-    # recreate shortcuts the user intentionally removed.
+}
+
+function Sync-RdcShortcuts([string[]]$ShortcutRootsOverride = $null) {
+    if (($SelfTest -or $Preview) -and (-not $ShortcutRootsOverride -or $ShortcutRootsOverride.Count -eq 0)) {
+        return $true
+    }
+    if (-not (Test-Path -LiteralPath $iconPath)) { return $false }
+    if (-not (Test-Path -LiteralPath (Join-Path $root 'RDC Relay.cmd'))) { return $false }
+
     try {
-        if (Test-Path -LiteralPath $iconPath) {
-            $iconHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $iconPath).Hash.Substring(0,8)
-            $shortcutIcon = Join-Path $root ('RDCRelay-v' + $appVersion + '-' + $iconHash + '.ico')
-            if (-not (Test-Path -LiteralPath $shortcutIcon)) {
-                Copy-Item -LiteralPath $iconPath -Destination $shortcutIcon -Force
-            }
+        $shortcutRoots = if ($ShortcutRootsOverride -and $ShortcutRootsOverride.Count -gt 0) {
+            @($ShortcutRootsOverride)
+        } else {
+            @(
+                [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory),
+                [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
+            )
+        }
 
-            $shell = New-Object -ComObject WScript.Shell
-            try {
-                foreach ($shortcutRoot in $shortcutRoots) {
-                    if ([string]::IsNullOrWhiteSpace($shortcutRoot)) { continue }
+        $iconHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $iconPath).Hash.Substring(0,8)
+        $shortcutIcon = Join-Path $root ('RDCRelay-v' + $appVersion + '-' + $iconHash + '.ico')
+        if (-not (Test-Path -LiteralPath $shortcutIcon)) {
+            Copy-Item -LiteralPath $iconPath -Destination $shortcutIcon -Force
+        }
 
-                    $shortcutPath = Join-Path $shortcutRoot 'RDC Relay.lnk'
-                    if (-not (Test-Path -LiteralPath $shortcutPath)) { continue }
+        $powershellDir = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0'
+        $expectedTarget = Join-Path $powershellDir 'powershell.exe'
+        $expectedArgs = '-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "' +
+            (Join-Path $root 'remote-window.ps1') + '"'
+        $expectedIcon = $shortcutIcon + ',0'
 
-                    $shortcut = $shell.CreateShortcut($shortcutPath)
+        $shell = New-Object -ComObject WScript.Shell
+        $hadShortcut = $false
+        $allSynced = $true
+
+        try {
+            foreach ($shortcutRoot in $shortcutRoots) {
+                if ([string]::IsNullOrWhiteSpace($shortcutRoot)) { continue }
+
+                $shortcutPath = Join-Path $shortcutRoot 'RDC Relay.lnk'
+                if (-not (Test-Path -LiteralPath $shortcutPath)) { continue }
+                $hadShortcut = $true
+                $saved = $false
+
+                for ($attempt = 1; $attempt -le 4 -and -not $saved; $attempt++) {
+                    $shortcut = $null
                     try {
-                        $expectedTarget = Join-Path $env:WINDIR 'System32WindowsPowerShell1.0powershell.exe'
-                        $expectedArgs = '-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "' +
-                            (Join-Path $root 'remote-window.ps1') + '"'
-                        $expectedIcon = $shortcutIcon + ',0'
-                        $changed =
-                            $shortcut.TargetPath -ne $expectedTarget -or
-                            $shortcut.Arguments -ne $expectedArgs -or
-                            $shortcut.WorkingDirectory -ne $root -or
-                            $shortcut.IconLocation -ne $expectedIcon -or
-                            $shortcut.Description -ne 'RDC Relay'
-
-                        if ($changed) {
-                            $shortcut.TargetPath = $expectedTarget
-                            $shortcut.Arguments = $expectedArgs
-                            $shortcut.WorkingDirectory = $root
-                            $shortcut.IconLocation = $expectedIcon
-                            $shortcut.Description = 'RDC Relay'
-                            $shortcut.Save()
+                        $shortcut = $shell.CreateShortcut($shortcutPath)
+                        $shortcut.TargetPath = $expectedTarget
+                        $shortcut.Arguments = $expectedArgs
+                        $shortcut.WorkingDirectory = $root
+                        $shortcut.IconLocation = $expectedIcon
+                        $shortcut.Description = 'RDC Relay'
+                        $shortcut.Save()
+                    }
+                    catch {}
+                    finally {
+                        if ($shortcut) {
+                            try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) } catch {}
+                            $shortcut = $null
                         }
-                    } finally {
-                        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
+                    }
+
+                    $verify = $null
+                    try {
+                        $verify = $shell.CreateShortcut($shortcutPath)
+                        $saved =
+                            $verify.TargetPath -eq $expectedTarget -and
+                            $verify.Arguments -eq $expectedArgs -and
+                            $verify.WorkingDirectory -eq $root -and
+                            $verify.IconLocation -eq $expectedIcon -and
+                            $verify.Description -eq 'RDC Relay'
+                    }
+                    catch {
+                        $saved = $false
+                    }
+                    finally {
+                        if ($verify) {
+                            try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($verify) } catch {}
+                            $verify = $null
+                        }
+                    }
+
+                    if (-not $saved -and $attempt -lt 4) {
+                        Start-Sleep -Milliseconds (150 * $attempt)
                     }
                 }
-            } finally {
-                [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
+
+                if (-not $saved) { $allSynced = $false }
             }
         }
-    } catch {}
+        finally {
+            try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) } catch {}
+        }
+
+        if ($allSynced -and $hadShortcut) {
+            try {
+                Get-ChildItem -LiteralPath $root -Filter 'DesktopCommander*.ico' -File -ErrorAction SilentlyContinue |
+                    Remove-Item -Force -ErrorAction SilentlyContinue
+                Get-ChildItem -LiteralPath $root -Filter 'RDCRelay-v*.ico' -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName -ne $shortcutIcon } |
+                    Remove-Item -Force -ErrorAction SilentlyContinue
+            } catch {}
+
+            if (-not $SelfTest) {
+                try {
+                    [RdcShellIdentity]::SHChangeNotify(
+                        0x08000000,
+                        0,
+                        [IntPtr]::Zero,
+                        [IntPtr]::Zero)
+                } catch {}
+
+                try {
+                    $iconRefresh = Join-Path $env:WINDIR 'System32\ie4uinit.exe'
+                    if (Test-Path -LiteralPath $iconRefresh) {
+                        Start-Process -FilePath $iconRefresh -ArgumentList '-show' -WindowStyle Hidden
+                    }
+                } catch {}
+            }
+        }
+
+        return $allSynced
+    }
+    catch {
+        if ($SelfTest) {
+            Write-Host ('SHORTCUT_SYNC_ERROR: ' + $_.Exception.GetType().FullName + ': ' + $_.Exception.Message)
+        }
+        return $false
+    }
 }
 
 function Resolve-NpxPath {
@@ -3983,6 +4089,23 @@ $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 700
 $timer.Add_Tick({ Refresh-Window })
 
+$script:shortcutSyncTimer = $null
+if (-not $SelfTest -and -not $Preview) {
+    $script:shortcutSyncTimer = New-Object Windows.Forms.Timer
+    $script:shortcutSyncTimer.Interval = 800
+    $script:shortcutSyncTimer.Add_Tick({
+        $script:shortcutSyncTimer.Stop()
+        [void](Sync-RdcShortcuts)
+        $script:shortcutSyncTimer.Dispose()
+        $script:shortcutSyncTimer = $null
+    })
+    $form.Add_Shown({
+        if ($script:shortcutSyncTimer) {
+            $script:shortcutSyncTimer.Start()
+        }
+    })
+}
+
 $form.Add_Activated({
     try {
         $headerLog.SetViewPosition(0,0)
@@ -4004,6 +4127,11 @@ $form.Add_FormClosing({
 })
 $form.Add_FormClosed({
     $timer.Stop()
+    if ($script:shortcutSyncTimer) {
+        try { $script:shortcutSyncTimer.Stop() } catch {}
+        try { $script:shortcutSyncTimer.Dispose() } catch {}
+        $script:shortcutSyncTimer = $null
+    }
     if ($script:reader) { $script:reader.Dispose() }
     if ($script:proc) { $script:proc.Dispose() }
 })
@@ -4234,6 +4362,66 @@ if ($SelfTest) {
         Process-RemoteLine 'Received tool call fallback_test: begin'
         Process-RemoteLine 'Tool call fallback_test completed:'
         if ($script:activeToolCalls -ne 0) { throw 'Static divider fallback broke activity state tracking' }
+    }
+
+    $shortcutTestRoot = Join-Path $env:TEMP ('RDCRelay-shortcut-selftest-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $shortcutTestRoot -Force | Out-Null
+    try {
+        $shortcutTestPath = Join-Path $shortcutTestRoot 'RDC Relay.lnk'
+        $testShell = New-Object -ComObject WScript.Shell
+        $testShortcut = $null
+        try {
+            $testShortcut = $testShell.CreateShortcut($shortcutTestPath)
+            $testShortcut.TargetPath = Join-Path $env:WINDIR 'notepad.exe'
+            $testShortcut.Arguments = ''
+            $testShortcut.WorkingDirectory = $shortcutTestRoot
+            $testShortcut.IconLocation = (Join-Path $env:WINDIR 'notepad.exe') + ',0'
+            $testShortcut.Description = 'stale'
+            $testShortcut.Save()
+        }
+        finally {
+            if ($testShortcut) {
+                try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($testShortcut) } catch {}
+            }
+            try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($testShell) } catch {}
+        }
+
+        if (-not (Sync-RdcShortcuts @($shortcutTestRoot))) {
+            throw 'Shortcut synchronization returned failure'
+        }
+
+        $verifyShell = New-Object -ComObject WScript.Shell
+        $verifyShortcut = $null
+        try {
+            $verifyShortcut = $verifyShell.CreateShortcut($shortcutTestPath)
+            $expectedShortcutTarget = Join-Path (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0') 'powershell.exe'
+            $expectedShortcutArgs = '-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "' +
+                (Join-Path $root 'remote-window.ps1') + '"'
+
+            if ($verifyShortcut.TargetPath -ne $expectedShortcutTarget) {
+                throw 'Shortcut synchronization target mismatch'
+            }
+            if ($verifyShortcut.Arguments -ne $expectedShortcutArgs) {
+                throw 'Shortcut synchronization arguments mismatch'
+            }
+            if ($verifyShortcut.IconLocation -notlike ((Join-Path $root ('RDCRelay-v' + $appVersion + '-*.ico')) + ',0')) {
+                throw 'Shortcut synchronization icon mismatch'
+            }
+            if ($verifyShortcut.Description -ne 'RDC Relay') {
+                throw 'Shortcut synchronization description mismatch'
+            }
+        }
+        finally {
+            if ($verifyShortcut) {
+                try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($verifyShortcut) } catch {}
+            }
+            try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($verifyShell) } catch {}
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $shortcutTestRoot -Recurse -Force -ErrorAction SilentlyContinue
+        Get-ChildItem -LiteralPath $root -Filter ('RDCRelay-v' + $appVersion + '-*.ico') -File -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
     }
 
     Write-Output 'GUI SELF TEST PASSED'

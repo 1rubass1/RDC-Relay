@@ -1,9 +1,9 @@
 {
-    "version":  "1.5.8",
+    "version":  "1.5.9",
     "files":  [
                   {
                       "name":  "remote-window.ps1",
-                      "sha256":  "BCAFBA287D12B9D8F9EF9CD10756CCE3FCDECB909A7D95537CC979DB10B5FDAA"
+                      "sha256":  "B0AE49EEEAB7BEB66D2E7E5EC6C9D00CF610A638D8F2400FE898B7AEA5BE8C2E"
                   },
                   {
                       "name":  "divider-caustic.ps",
@@ -14,12 +14,12 @@
                       "sha256":  "A4FC32EBCB141283CF2CA9A2E78A049C412F36519730BEA13A4488DC9C2BAECE"
                   },
                   {
-                      "name":  "DesktopCommander.ico",
-                      "sha256":  "05CD5C1E5742C3868A515D1729B1DEE685B93662F33D7D70A0139679DDF16684"
+                      "name":  "RDCRelay.ico",
+                      "sha256":  "E2A9BDFD18230CCB9E38C37CFB594189D25C41B0D7C4329361FC41FCE1376F76"
                   },
                   {
                       "name":  "version.txt",
-                      "sha256":  "F6D79598472DF80CB52C923E0909C952C4C067BB8BEB68303046CFB63ED7EAD8"
+                      "sha256":  "55C4132C9883C31A2A0D9A5A58D72420A0C98D632907B1FD05565AC2815D5272"
                   },
                   {
                       "name":  "update.ps1",

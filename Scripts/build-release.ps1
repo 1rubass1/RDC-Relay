@@ -43,8 +43,11 @@ foreach ($name in @(
 Write-Host 'Compiling shaders...'
 & (Join-Path $PSScriptRoot 'build-shaders.ps1')
 
-$sourceIcon = Join-Path $assetsDir 'DesktopCommander.ico'
-$runtimeIcon = Join-Path $sourceDir 'DesktopCommander.ico'
+Write-Host 'Building application icon...'
+& (Join-Path $assetsDir 'build-icon.ps1')
+
+$sourceIcon = Join-Path $assetsDir 'RDCRelay.ico'
+$runtimeIcon = Join-Path $sourceDir 'RDCRelay.ico'
 if (-not (Test-Path -LiteralPath $sourceIcon)) {
     throw ('Missing application icon: ' + $sourceIcon)
 }
@@ -54,7 +57,7 @@ $manifestPayload = @(
     'remote-window.ps1',
     'divider-caustic.ps',
     'divider-particles.ps',
-    'DesktopCommander.ico',
+    'RDCRelay.ico',
     'version.txt',
     'update.ps1',
     'RDC Relay.cmd'
@@ -142,7 +145,7 @@ using System.Reflection;
         ('/resource:' + (Join-Path $sourceDir 'remote-window.ps1') + ',RdcPayload.remote-window.ps1'),
         ('/resource:' + (Join-Path $sourceDir 'divider-caustic.ps') + ',RdcPayload.divider-caustic.ps'),
         ('/resource:' + (Join-Path $sourceDir 'divider-particles.ps') + ',RdcPayload.divider-particles.ps'),
-        ('/resource:' + (Join-Path $sourceDir 'DesktopCommander.ico') + ',RdcPayload.DesktopCommander.ico'),
+        ('/resource:' + (Join-Path $sourceDir 'RDCRelay.ico') + ',RdcPayload.RDCRelay.ico'),
         ('/resource:' + (Join-Path $sourceDir 'version.txt') + ',RdcPayload.version.txt'),
         ('/resource:' + (Join-Path $sourceDir 'update.ps1') + ',RdcPayload.update.ps1'),
         ('/resource:' + (Join-Path $sourceDir 'update-manifest.json') + ',RdcPayload.update-manifest.json'),

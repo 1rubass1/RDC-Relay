@@ -25,7 +25,7 @@ internal static class SetupProgram
         new Payload("remote-window.ps1", "RdcPayload.remote-window.ps1"),
         new Payload("divider-caustic.ps", "RdcPayload.divider-caustic.ps"),
         new Payload("divider-particles.ps", "RdcPayload.divider-particles.ps"),
-        new Payload("DesktopCommander.ico", "RdcPayload.DesktopCommander.ico"),
+        new Payload("RDCRelay.ico", "RdcPayload.RDCRelay.ico"),
         new Payload("version.txt", "RdcPayload.version.txt"),
         new Payload("update.ps1", "RdcPayload.update.ps1"),
         new Payload("update-manifest.json", "RdcPayload.update-manifest.json"),
@@ -69,6 +69,7 @@ internal static class SetupProgram
                 CreateShortcuts(installRoot, iconPath);
                 SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
             }
+            CleanupLegacyIcons(installRoot, iconPath);
 
             if (!silent)
             {
@@ -191,7 +192,7 @@ internal static class SetupProgram
 
     private static string CreateVersionedIcon(string installRoot, string version)
     {
-        string source = Path.Combine(installRoot, "DesktopCommander.ico");
+        string source = Path.Combine(installRoot, "RDCRelay.ico");
         string hash;
         using (SHA256 sha = SHA256.Create())
         using (FileStream stream = File.OpenRead(source))
@@ -212,6 +213,27 @@ internal static class SetupProgram
                 File.Delete(path);
         }
         catch { }
+    }
+
+    private static void CleanupLegacyIcons(string installRoot, string currentIconPath)
+    {
+        DeleteIfExists(Path.Combine(installRoot, "DesktopCommander.ico"));
+
+        string[] legacy = Directory.GetFiles(installRoot, "DesktopCommander-v*.ico");
+        for (int i = 0; i < legacy.Length; i++)
+            DeleteIfExists(legacy[i]);
+
+        string[] oldRelay = Directory.GetFiles(installRoot, "RDCRelay-v*.ico");
+        for (int i = 0; i < oldRelay.Length; i++)
+        {
+            if (!String.Equals(
+                Path.GetFullPath(oldRelay[i]),
+                Path.GetFullPath(currentIconPath),
+                StringComparison.OrdinalIgnoreCase))
+            {
+                DeleteIfExists(oldRelay[i]);
+            }
+        }
     }
 
     private static void CreateShortcuts(string installRoot, string iconPath)

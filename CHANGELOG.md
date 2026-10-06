@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.9 (2026-10-06)
+
+- Replaced the recolored upstream-style application icon with an original RDC Relay identity: white rounded badge, relay chip, monitor and overlapping purple/orange windows.
+- Added dedicated low-resolution icon artwork for 16-64 px frames so Explorer, taskbar and system UI remain legible without tiny text.
+- Renamed the runtime icon payload from `DesktopCommander.ico` to `RDCRelay.ico` and updated Setup/Portable resources accordingly.
+- Made shortcut migration verifiable and retryable after the window is shown; fixed the malformed PowerShell target path that prevented the 1.5.8 shortcut icon update.
+- Assign a dedicated `RDCRelay.App` process AppUserModelID so the taskbar treats RDC Relay as its own application instead of a generic PowerShell host.
+- Remove legacy `DesktopCommander*.ico` files only after existing RDC Relay shortcuts have successfully switched to the current versioned icon.
+
 ## 1.5.8 (2026-10-06)
 
 - Pause the decorative GPU divider animation when the window is hidden, minimized or fully occluded by other top-level windows, while leaving status/log polling active.
