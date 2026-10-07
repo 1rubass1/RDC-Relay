@@ -1,7 +1,7 @@
 ﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$appVersion = '1.5.10'
+$appVersion = '1.5.11'
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'RDCRelay.ico'
@@ -200,6 +200,63 @@ function Sync-RdcShortcuts([string[]]$ShortcutRootsOverride = $null) {
     }
 }
 
+function Ensure-InstalledAppRegistration {
+    if ($SelfTest -or $Preview) { return $false }
+
+    $defaultRoot = [IO.Path]::GetFullPath(
+        (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'RemoteDesktopCommanderLauncher')
+    ).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+    $currentRoot = [IO.Path]::GetFullPath($root).TrimEnd(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+    )
+    if (-not [string]::Equals($currentRoot,$defaultRoot,[StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
+
+    $bs = [char]92
+    $keyPath =
+        'Software'+$bs+'Microsoft'+$bs+'Windows'+$bs+'CurrentVersion'+$bs+
+        'Uninstall'+$bs+'RDC Relay'
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($keyPath)
+    if (-not $key) { return $false }
+
+    try {
+        $powershell = Join-Path (Join-Path (Join-Path (Join-Path $env:WINDIR 'System32') 'WindowsPowerShell') 'v1.0') 'powershell.exe'
+        $updater = Join-Path $root 'update.ps1'
+        $quote = [char]34
+        $baseArgs =
+            '-NoProfile -ExecutionPolicy Bypass -File ' + $quote + $updater + $quote +
+            ' -InstallRoot ' + $quote + $root + $quote +
+            ' -CurrentVersion ' + $quote + $appVersion + $quote +
+            ' -Uninstall'
+        $uninstall = $quote + $powershell + $quote + ' ' + $baseArgs
+
+        $bytes = 0L
+        try {
+            Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+                ForEach-Object { $bytes += [long]$_.Length }
+        } catch {}
+        $estimatedKb = [Math]::Max(1,[Math]::Min([int]::MaxValue,[Math]::Ceiling($bytes/1024.0)))
+
+        $key.SetValue('DisplayName','RDC Relay',[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('DisplayVersion',$appVersion,[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('Publisher','UMAS',[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('InstallLocation',$root,[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('DisplayIcon',$iconPath,[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('URLInfoAbout','https://github.com/1rubass1/RDC-Relay',[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('UninstallString',$uninstall,[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('QuietUninstallString',$uninstall+' -Silent',[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('NoModify',1,[Microsoft.Win32.RegistryValueKind]::DWord)
+        $key.SetValue('NoRepair',1,[Microsoft.Win32.RegistryValueKind]::DWord)
+        $key.SetValue('EstimatedSize',[int]$estimatedKb,[Microsoft.Win32.RegistryValueKind]::DWord)
+        return $true
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
 function Resolve-NpxPath {
     $resolved = Get-Command npx.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($resolved -and $resolved.Source) { return [string]$resolved.Source }
@@ -257,6 +314,13 @@ if (-not $SelfTest -and -not $Preview -and -not $SkipUpdate) {
         } catch {}
     }
 }
+
+# Fresh setup registers this immediately. This second path makes an existing
+# installation become a normal Installed Apps entry after an in-place update.
+if (-not $SelfTest -and -not $Preview) {
+    try { [void](Ensure-InstalledAppRegistration) } catch {}
+}
+
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 Add-Type -TypeDefinition @'
 using System;

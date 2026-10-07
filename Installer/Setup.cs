@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 internal static class SetupProgram
 {
@@ -42,6 +43,7 @@ internal static class SetupProgram
     {
         bool silent = HasArgument(args, "--silent");
         bool noShortcuts = HasArgument(args, "--no-shortcuts");
+        bool noRegister = HasArgument(args, "--no-register");
 
         try
         {
@@ -72,6 +74,8 @@ internal static class SetupProgram
                 SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
             }
             CleanupLegacyIcons(installRoot, iconPath);
+            if (!noRegister)
+                RegisterInstalledApp(installRoot, iconPath, newVersion);
 
             if (!silent)
             {
@@ -236,6 +240,63 @@ internal static class SetupProgram
                 DeleteIfExists(oldRelay[i]);
             }
         }
+    }
+
+    private static void RegisterInstalledApp(string installRoot, string iconPath, string version)
+    {
+        string powershell = Path.Combine(
+            Environment.SystemDirectory,
+            "WindowsPowerShell",
+            "v1.0",
+            "powershell.exe");
+        string updateScript = Path.Combine(installRoot, "update.ps1");
+        string baseArgs =
+            "-NoProfile -ExecutionPolicy Bypass -File " + Quote(updateScript) +
+            " -InstallRoot " + Quote(installRoot) +
+            " -CurrentVersion " + Quote(version) +
+            " -Uninstall";
+
+        using (RegistryKey key = Registry.CurrentUser.CreateSubKey(
+            String.Join(((char)92).ToString(), new string[] { "Software", "Microsoft", "Windows", "CurrentVersion", "Uninstall", "RDC Relay" })))
+        {
+            if (key == null)
+                throw new InvalidOperationException("Cannot create Installed Apps registry entry.");
+
+            key.SetValue("DisplayName", "RDC Relay", RegistryValueKind.String);
+            key.SetValue("DisplayVersion", version, RegistryValueKind.String);
+            key.SetValue("Publisher", "UMAS", RegistryValueKind.String);
+            key.SetValue("InstallLocation", installRoot, RegistryValueKind.String);
+            key.SetValue("DisplayIcon", iconPath, RegistryValueKind.String);
+            key.SetValue("URLInfoAbout", "https://github.com/1rubass1/RDC-Relay", RegistryValueKind.String);
+            key.SetValue("UninstallString", Quote(powershell) + " " + baseArgs, RegistryValueKind.String);
+            key.SetValue("QuietUninstallString", Quote(powershell) + " " + baseArgs + " -Silent", RegistryValueKind.String);
+            key.SetValue("NoModify", 1, RegistryValueKind.DWord);
+            key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+            key.SetValue("InstallDate", DateTime.Now.ToString("yyyyMMdd"), RegistryValueKind.String);
+            key.SetValue("EstimatedSize", CalculateEstimatedSizeKb(installRoot), RegistryValueKind.DWord);
+        }
+    }
+
+    private static int CalculateEstimatedSizeKb(string installRoot)
+    {
+        long bytes = 0;
+        try
+        {
+            string[] files = Directory.GetFiles(installRoot, "*", SearchOption.AllDirectories);
+            for (int i = 0; i < files.Length; i++)
+            {
+                try { bytes += new FileInfo(files[i]).Length; } catch { }
+            }
+        }
+        catch { }
+
+        long kb = Math.Max(1L, (bytes + 1023L) / 1024L);
+        return (int)Math.Min(Int32.MaxValue, kb);
+    }
+
+    private static string Quote(string value)
+    {
+        return "\"" + value + "\"";
     }
 
     private static void CreateShortcuts(string installRoot, string iconPath)

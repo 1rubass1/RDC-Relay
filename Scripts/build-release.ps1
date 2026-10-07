@@ -168,6 +168,32 @@ using System.Reflection;
         Copy-Item -LiteralPath (Join-Path $sourceDir $name) -Destination (Join-Path $portableRoot $name) -Force
     }
 
+    $launcherAssemblyInfo = Join-Path $buildTemp 'LauncherAssemblyInfo.cs'
+    $launcherAssemblySource = @"
+using System.Reflection;
+[assembly: AssemblyVersion("$assemblyVersion")]
+[assembly: AssemblyFileVersion("$assemblyVersion")]
+"@
+    [IO.File]::WriteAllText($launcherAssemblyInfo,$launcherAssemblySource,$utf8NoBom)
+
+    $portableLauncher = Join-Path $portableRoot 'RDC Relay.exe'
+    $launcherSource = Join-Path $installerDir 'Launcher.cs'
+    $launcherArgs = @(
+        '/nologo',
+        '/target:winexe',
+        '/optimize+',
+        '/platform:anycpu',
+        '/reference:System.Windows.Forms.dll',
+        ('/win32icon:' + $runtimeIcon),
+        ('/out:' + $portableLauncher),
+        $launcherSource,
+        $launcherAssemblyInfo
+    )
+    & $csc @launcherArgs
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $portableLauncher)) {
+        throw 'Portable launcher compilation failed.'
+    }
+
     $portableZip = Join-Path $outDir ('RDC Relay v' + $version + ' Portable.zip')
     Compress-Archive -LiteralPath $portableRoot -DestinationPath $portableZip -CompressionLevel Optimal -Force
 

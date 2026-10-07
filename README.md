@@ -23,16 +23,23 @@ release.
 
 ## Install
 
-Use the versioned Setup executable from the corresponding GitHub release.
+For a normal Windows installation, open **[GitHub Releases](https://github.com/1rubass1/RDC-Relay/releases/latest)**, download the latest
+`RDC Relay Setup vX.Y.Z.exe` and run it. No source-code files are required.
+
 The installer writes the application to:
 
 `%LOCALAPPDATA%\RemoteDesktopCommanderLauncher`
 
-The legacy directory name is intentionally retained so existing installations
-upgrade in place. The installer creates `RDC Relay` Desktop/Start Menu shortcuts
-for the current user and removes the old `Remote Desktop Commander` shortcuts.
+The fixed per-user location intentionally avoids an administrator/UAC prompt and
+keeps in-place updates predictable. RDC Relay is registered in **Settings -> Apps
+-> Installed apps**, where it can be uninstalled normally. The installer also
+creates `RDC Relay` Desktop/Start Menu shortcuts for the current user and removes
+legacy `Remote Desktop Commander` shortcuts.
 
-A portable ZIP is produced by the release build as well.
+For portable use, download `RDC Relay vX.Y.Z Portable.zip`, extract its single
+folder anywhere (for example to the Desktop), then double-click `RDC Relay.exe`.
+The supporting runtime files remain in the same folder; no installation is
+registered for portable copies.
 
 ## Repository layout
 
@@ -103,3 +110,10 @@ repository.
 The update transport uses HTTPS and payload hashes. Releases are currently not
 code-signed, so SHA256 verification protects against corruption/mismatched
 payloads but is not a substitute for publisher code signing.
+
+Desktop Commander Remote itself may trigger behavior-based antivirus/EDR alerts
+because it can execute user-authorized local commands. Kaspersky has an upstream
+false-positive report for the official `@wonderwhy-er/desktop-commander` npm
+entrypoint used by Remote mode. RDC Relay does not bundle that JavaScript file;
+it is obtained from the official npm package by `npx`. Do not disable antivirus
+or add blanket exclusions solely to run RDC Relay.

@@ -1,13 +1,130 @@
-param(
-    [Parameter(Mandatory=$true)][string]$InstallRoot,
-    [Parameter(Mandatory=$true)][string]$CurrentVersion,
+﻿param(
+    [string]$InstallRoot,
+    [string]$CurrentVersion,
     [string]$Repository = '1rubass1/RDC-Relay',
     [string]$Branch = 'stable',
-    [switch]$Force
+    [switch]$Force,
+    [switch]$Uninstall,
+    [switch]$Silent
 )
 
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
+    $InstallRoot = $PSScriptRoot
+}
+$InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
+
+function Remove-RdcShortcuts {
+    foreach ($shortcutRoot in @(
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory),
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
+    )) {
+        if ([string]::IsNullOrWhiteSpace($shortcutRoot)) { continue }
+        foreach ($name in @(
+            'RDC Relay.lnk',
+            'Remote Desktop Commander.lnk',
+            'CommanderRelay.lnk'
+        )) {
+            try {
+                $path = Join-Path $shortcutRoot $name
+                if (Test-Path -LiteralPath $path) {
+                    Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+                }
+            } catch {}
+        }
+    }
+}
+
+function Stop-RdcInstalledProcesses {
+    try {
+        $rootNeedle = $InstallRoot.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+        $scriptNeedle = Join-Path $rootNeedle 'remote-window.ps1'
+        $logNeedle = Join-Path $rootNeedle 'remote-session.log'
+        $targets = @(
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.ProcessId -ne $PID -and
+                    $_.CommandLine -and
+                    (
+                        $_.CommandLine.IndexOf($scriptNeedle,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                        $_.CommandLine.IndexOf($logNeedle,[StringComparison]::OrdinalIgnoreCase) -ge 0
+                    )
+                } |
+                Sort-Object CreationDate |
+                Select-Object -ExpandProperty ProcessId -Unique
+        )
+
+        foreach ($targetPid in $targets) {
+            try {
+                & taskkill.exe /PID $targetPid /T /F 2>$null | Out-Null
+            } catch {}
+        }
+        if ($targets.Count -gt 0) {
+            Start-Sleep -Milliseconds 500
+        }
+    } catch {}
+}
+
+function Invoke-RdcUninstall {
+    if (-not $Silent) {
+        Add-Type -AssemblyName System.Windows.Forms
+        $choice = [System.Windows.Forms.MessageBox]::Show(
+            'Remove RDC Relay from this computer?',
+            'RDC Relay',
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Question
+        )
+        if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+            return 0
+        }
+    }
+
+    Stop-RdcInstalledProcesses
+    Remove-RdcShortcuts
+
+    try {
+        if (Test-Path -LiteralPath $InstallRoot) {
+            Remove-Item -LiteralPath $InstallRoot -Recurse -Force -ErrorAction Stop
+        }
+    }
+    catch {
+        if (-not $Silent) {
+            [System.Windows.Forms.MessageBox]::Show(
+                'RDC Relay could not be completely removed.' + [Environment]::NewLine + [Environment]::NewLine + $_.Exception.Message,
+                'RDC Relay',
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Error
+            ) | Out-Null
+        }
+        return 1
+    }
+
+    try {
+        $bs = [char]92
+        $keyPath = 'Software'+$bs+'Microsoft'+$bs+'Windows'+$bs+'CurrentVersion'+$bs+'Uninstall'+$bs+'RDC Relay'
+        [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($keyPath,$false)
+    } catch {}
+
+    if (-not $Silent) {
+        [System.Windows.Forms.MessageBox]::Show(
+            'RDC Relay has been removed.',
+            'RDC Relay',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        ) | Out-Null
+    }
+    return 0
+}
+
+if ($Uninstall) {
+    exit (Invoke-RdcUninstall)
+}
+
+if ([string]::IsNullOrWhiteSpace($CurrentVersion)) {
+    throw 'CurrentVersion is required for update mode.'
+}
 
 $statePath = Join-Path $InstallRoot '.update-state.json'
 $logPath = Join-Path $InstallRoot 'update.log'

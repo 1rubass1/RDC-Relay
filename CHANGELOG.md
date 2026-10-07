@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.11 (2026-10-07)
+
+- Register per-user installations in Windows Settings -> Apps -> Installed apps with version, publisher, install location and icon metadata.
+- Add a normal uninstall path through the installed updater script so removal works from Windows Settings and cleans RDC Relay shortcuts, runtime files and the uninstall registry entry.
+- Self-register Installed Apps metadata on startup for existing users upgraded from 1.5.10, while portable copies remain unregistered.
+- Add a small `RDC Relay.exe` portable launcher so the Portable ZIP can be extracted as one folder and started by double-clicking an EXE instead of a CMD/PowerShell script.
+- Keep the default per-user install path under `%LOCALAPPDATA%\RemoteDesktopCommanderLauncher`; no install-path picker is added because the current location avoids elevation and preserves reliable in-place upgrades.
+
 ## 1.5.10 (2026-10-06)
 
 - Added a bounded Remote MCP health supervisor that distinguishes a live `cmd/npx` process from an actually ready remote session, tracks ready/fatal markers, restarts lost sessions with 2/5/10 second backoff, and handles unexpected process exits.

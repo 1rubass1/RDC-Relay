@@ -1,9 +1,9 @@
 {
-    "version":  "1.5.10",
+    "version":  "1.5.11",
     "files":  [
                   {
                       "name":  "remote-window.ps1",
-                      "sha256":  "550CAFA7B0428889F17F5DAE4E98A2B5FAFE546E71740417D53478F75EACC5E2"
+                      "sha256":  "F38EDDD2163A1A3DDA9932C7E9837A193DB6F771AC3B8F2A98FC4E40AB994FED"
                   },
                   {
                       "name":  "divider-caustic.ps",
@@ -27,11 +27,11 @@
                   },
                   {
                       "name":  "version.txt",
-                      "sha256":  "F8870F77108009B2204CEF9D4193A35A90E50A0C4DECDC034FB255A5C2B59D25"
+                      "sha256":  "D8F12E01B675F87AE1C0CCFE741D3AD92F72A043D639B9DE69DAB6B9AE76C08B"
                   },
                   {
                       "name":  "update.ps1",
-                      "sha256":  "8CF7AD8B0FC03BE712A0BC90F882EDF2E849A19B128BE8FBCCCF240948DCC19E"
+                      "sha256":  "98DEC4B0FEF21D2451CB2867061E0B3928D33063106747873D8817EF403C1C10"
                   },
                   {
                       "name":  "RDC Relay.cmd",
