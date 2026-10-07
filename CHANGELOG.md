@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.12 (2026-10-07)
+
+- Make updater writes transactional: journal files before replacement, stage payloads on the target volume, use atomic replacement where available, roll back in reverse order, and keep failed updates immediately retryable.
+- Make Setup transactional as well: stage the complete payload first, coordinate with the running GUI/updater through mutexes, replace files with backups, and restore the previous installation if any replacement fails.
+- Prevent portable copies from hijacking shortcuts that belong to an installed RDC Relay instance by synchronizing only shortcuts owned by the current runtime root.
+- Move stop/restart/logout/reconnect and close-time process waits off the WinForms UI thread so long Remote operations no longer freeze repainting or input.
+- Replace the problematic transparent/ButtonBase action controls with fully opaque owner-drawn controls; eliminate stale-pixel artifacts while preserving mouse, Tab, Space/Enter, focus cues and accessibility push-button semantics.
+- Restrict primary Tab traversal to exactly the three action buttons (Stop, Account and Help); read-only logs, scrollbars and service controls no longer consume invisible Tab stops.
+- Make Account/Help menu selection interiors 50% transparent while keeping their purple outline fully opaque.
+- Harden single-instance recovery: a second launch reactivates the existing window, and a stale GUI process that still owns the mutex but has lost its top-level window is recycled automatically.
+- Split release validation into an explicit GUI logic pass and a separately reported GPU visual check; software-render fallback is now reported as SKIPPED rather than a false GPU success.
+- Expand release gates with full-button paint/keyboard tests, asynchronous UI lifecycle tests, transactional installer/updater rollback tests, exact manifest integrity checks and fresh-Setup testing inside the release build.
+
 ## 1.5.11 (2026-10-07)
 
 - Register per-user installations in Windows Settings -> Apps -> Installed apps with version, publisher, install location and icon metadata.

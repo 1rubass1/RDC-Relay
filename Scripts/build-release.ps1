@@ -94,8 +94,8 @@ if (-not $SkipSelfTest) {
     $selfTestOutput = & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $sourceDir 'remote-window.ps1') -SelfTest -SkipUpdate 2>&1
     $selfTestOutput | ForEach-Object { Write-Host $_ }
     $selfTestText = [string]::Join([Environment]::NewLine,@($selfTestOutput))
-    if ($LASTEXITCODE -ne 0 -or ($selfTestText -notmatch 'GUI SELF TEST PASSED')) {
-        throw 'GUI self-test failed.'
+    if ($LASTEXITCODE -ne 0 -or ($selfTestText -notmatch 'GUI LOGIC SELF TEST PASSED')) {
+        throw 'GUI logic self-test failed.'
     }
 }
 
@@ -160,6 +160,20 @@ using System.Reflection;
     & $csc @compilerArgs
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $setupExe)) {
         throw 'Installer compilation failed.'
+    }
+
+    if (-not $SkipSelfTest) {
+        Write-Host 'Running full button paint test...'
+        & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path (Join-Path $root 'Tests') 'Test-ButtonPaint.ps1')
+        if ($LASTEXITCODE -ne 0) { throw 'Button full-paint test failed.' }
+
+        Write-Host 'Running UI lifecycle tests...'
+        & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path (Join-Path $root 'Tests') 'Test-UiLifecycle.ps1')
+        if ($LASTEXITCODE -ne 0) { throw 'UI lifecycle tests failed.' }
+
+        Write-Host 'Running installer/updater transaction tests...'
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path (Join-Path $root 'Tests') 'Test-Transactions.ps1') -SetupPath $setupExe
+        if ($LASTEXITCODE -ne 0) { throw 'Installer/updater transaction tests failed.' }
     }
 
     $portableRoot = Join-Path $buildTemp ('RDC Relay v' + $version)

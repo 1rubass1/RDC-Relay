@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Windows.Forms;
+using System.Threading;
 using Microsoft.Win32;
 
 internal static class SetupProgram
@@ -45,6 +46,9 @@ internal static class SetupProgram
         bool noShortcuts = HasArgument(args, "--no-shortcuts");
         bool noRegister = HasArgument(args, "--no-register");
 
+        Mutex windowMutex = null, payloadMutex = null;
+        bool ownsWindow = false, ownsPayload = false;
+        PayloadTransaction transaction = null;
         try
         {
             string installRoot = GetOption(args, "--install-root");
@@ -55,6 +59,18 @@ internal static class SetupProgram
                     "RemoteDesktopCommanderLauncher");
             }
             installRoot = Path.GetFullPath(installRoot);
+            installRoot = installRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string key;
+            using (SHA256 sha = SHA256.Create())
+                key = BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(installRoot.ToLowerInvariant()))).Replace("-", "");
+            windowMutex = new Mutex(false, @"Local\RemoteDesktopCommanderWindow-" + key);
+            try { ownsWindow = windowMutex.WaitOne(0); } catch (AbandonedMutexException) { ownsWindow = true; }
+            if (!ownsWindow)
+                throw new InvalidOperationException("Закройте окно RDC Relay перед установкой. Работающая версия не изменена.");
+            payloadMutex = new Mutex(false, @"Local\RDCRelayPayload-" + key);
+            try { ownsPayload = payloadMutex.WaitOne(0); } catch (AbandonedMutexException) { ownsPayload = true; }
+            if (!ownsPayload)
+                throw new InvalidOperationException("Другая установка или обновление RDC Relay уже выполняется.");
             Directory.CreateDirectory(installRoot);
             Directory.CreateDirectory(Path.Combine(installRoot, "backups"));
 
@@ -62,8 +78,8 @@ internal static class SetupProgram
             if (newVersion.Length == 0)
                 throw new InvalidOperationException("Embedded version.txt is empty.");
 
-            BackupExistingPayload(installRoot);
-            ExtractPayload(installRoot);
+            transaction = new PayloadTransaction(installRoot);
+            transaction.Apply();
             DeleteIfExists(Path.Combine(installRoot, "Remote Desktop Commander.cmd"));
             DeleteIfExists(Path.Combine(installRoot, "CommanderRelay.cmd"));
 
@@ -77,6 +93,8 @@ internal static class SetupProgram
             if (!noRegister)
                 RegisterInstalledApp(installRoot, iconPath, newVersion);
 
+            transaction.Commit();
+            DeleteIfExists(Path.Combine(installRoot, ".local-candidate.json"));
             if (!silent)
             {
                 MessageBox.Show(
@@ -91,15 +109,29 @@ internal static class SetupProgram
         }
         catch (Exception ex)
         {
+            string error = ex.Message;
+            if (transaction != null)
+            {
+                try { transaction.Rollback(); }
+                catch (Exception rollbackError) { error += "\r\nRollback: " + rollbackError.Message; }
+            }
             if (!silent)
             {
                 MessageBox.Show(
-                    "Не удалось установить RDC Relay.\r\n\r\n" + ex.Message,
+                    "Не удалось установить RDC Relay.\r\n\r\n" + error,
                     "RDC Relay Setup",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }
             return 1;
+        }
+        finally
+        {
+            if (transaction != null) transaction.Dispose();
+            if (ownsPayload) payloadMutex.ReleaseMutex();
+            if (payloadMutex != null) payloadMutex.Dispose();
+            if (ownsWindow) windowMutex.ReleaseMutex();
+            if (windowMutex != null) windowMutex.Dispose();
         }
     }
 
@@ -135,64 +167,91 @@ internal static class SetupProgram
         }
     }
 
-    private static void BackupExistingPayload(string installRoot)
+    // Keep the complete previous payload until all installation steps succeed.
+    private sealed class PayloadTransaction : IDisposable
     {
-        bool any = false;
-        for (int i = 0; i < Files.Length; i++)
+        private readonly string root, stage, backup;
+        private readonly List<string> attempted = new List<string>();
+        private readonly HashSet<string> existed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private bool committed;
+
+        public PayloadTransaction(string installRoot)
         {
-            if (File.Exists(Path.Combine(installRoot, Files[i].FileName)))
+            root = installRoot;
+            string id = DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N");
+            stage = Path.Combine(root, ".setup-stage-" + id);
+            backup = Path.Combine(root, "backups", "manual-" + id);
+        }
+
+        public void Apply()
+        {
+            Directory.CreateDirectory(stage);
+            Directory.CreateDirectory(backup);
+            Assembly asm = Assembly.GetExecutingAssembly();
+            foreach (Payload payload in Files)
             {
-                any = true;
-                break;
+                using (Stream input = asm.GetManifestResourceStream(payload.ResourceName))
+                {
+                    if (input == null) throw new InvalidOperationException("Missing embedded resource: " + payload.ResourceName);
+                    using (FileStream output = new FileStream(Path.Combine(stage, payload.FileName), FileMode.CreateNew))
+                        input.CopyTo(output);
+                }
+                string destination = Path.Combine(root, payload.FileName);
+                if (File.Exists(destination))
+                {
+                    File.Copy(destination, Path.Combine(backup, payload.FileName), false);
+                    existed.Add(payload.FileName);
+                }
+            }
+            foreach (Payload payload in Files)
+            {
+                string destination = Path.Combine(root, payload.FileName);
+                string source = Path.Combine(stage, payload.FileName);
+                attempted.Add(payload.FileName);
+                if (existed.Contains(payload.FileName)) File.Replace(source, destination, null);
+                else File.Move(source, destination);
             }
         }
-        if (!any) return;
 
-        string oldVersion = "unknown";
-        string oldVersionPath = Path.Combine(installRoot, "version.txt");
-        try
+        public void Commit() { committed = true; }
+
+        public void Rollback()
         {
-            if (File.Exists(oldVersionPath))
+            if (committed) return;
+            List<string> errors = new List<string>();
+            for (int i = attempted.Count - 1; i >= 0; i--)
             {
-                string value = File.ReadAllText(oldVersionPath).Trim();
-                if (value.Length > 0) oldVersion = value;
+                string name = attempted[i];
+                string destination = Path.Combine(root, name);
+                try
+                {
+                    if (existed.Contains(name))
+                    {
+                        if (File.Exists(destination) && SameContent(destination, Path.Combine(backup, name))) continue;
+                        string restore = Path.Combine(stage, "restore-" + name);
+                        File.Copy(Path.Combine(backup, name), restore, true);
+                        if (File.Exists(destination)) File.Replace(restore, destination, null);
+                        else File.Move(restore, destination);
+                    }
+                    else if (File.Exists(destination)) File.Delete(destination);
+                }
+                catch (Exception ex) { errors.Add(name + ": " + ex.Message); }
             }
+            if (errors.Count > 0)
+                throw new IOException(String.Join("; ", errors.ToArray()) + ". Backup: " + backup);
         }
-        catch { }
 
-        string backupRoot = Path.Combine(
-            installRoot,
-            "backups",
-            "manual-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-v" + oldVersion);
-        Directory.CreateDirectory(backupRoot);
-
-        for (int i = 0; i < Files.Length; i++)
+        public void Dispose()
         {
-            string source = Path.Combine(installRoot, Files[i].FileName);
-            if (File.Exists(source))
-                File.Copy(source, Path.Combine(backupRoot, Files[i].FileName), true);
+            try { if (Directory.Exists(stage)) Directory.Delete(stage, true); } catch { }
         }
-    }
 
-    private static void ExtractPayload(string installRoot)
-    {
-        Assembly asm = Assembly.GetExecutingAssembly();
-        for (int i = 0; i < Files.Length; i++)
+        private static bool SameContent(string first, string second)
         {
-            Payload payload = Files[i];
-            string destination = Path.Combine(installRoot, payload.FileName);
-            string staged = destination + ".new";
-
-            using (Stream input = asm.GetManifestResourceStream(payload.ResourceName))
-            {
-                if (input == null)
-                    throw new InvalidOperationException("Missing embedded resource: " + payload.ResourceName);
-                using (FileStream output = new FileStream(staged, FileMode.Create, FileAccess.Write, FileShare.None))
-                    input.CopyTo(output);
-            }
-
-            File.Copy(staged, destination, true);
-            File.Delete(staged);
+            using (SHA256 sha = SHA256.Create())
+            using (FileStream a = File.OpenRead(first))
+            using (FileStream b = File.OpenRead(second))
+                return BitConverter.ToString(sha.ComputeHash(a)) == BitConverter.ToString(sha.ComputeHash(b));
         }
     }
 

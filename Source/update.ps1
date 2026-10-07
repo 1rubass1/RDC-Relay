@@ -131,6 +131,8 @@ $logPath = Join-Path $InstallRoot 'update.log'
 $tempRoot = $null
 $backupRoot = $null
 $applied = $null
+$payloadMutex = $null
+$ownsPayload = $false
 
 function Write-UpdateLog {
     param([string]$Message)
@@ -170,6 +172,21 @@ function Test-InstalledPayload {
 }
 
 try {
+    # A local review build must not be silently repaired back to stable.
+    $candidatePath = Join-Path $InstallRoot '.local-candidate.json'
+    if (-not $Force -and (Test-Path -LiteralPath $candidatePath)) {
+        $candidate = Get-Content -LiteralPath $candidatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $runtimeHash = (Get-FileHash -LiteralPath (Join-Path $InstallRoot 'remote-window.ps1') -Algorithm SHA256).Hash
+        if ($candidate.version -eq $CurrentVersion -and $candidate.runtimeSha256 -eq $runtimeHash) { exit 0 }
+    }
+
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $key = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($InstallRoot.TrimEnd('\','/').ToLowerInvariant()))).Replace('-','') }
+    finally { $sha.Dispose() }
+    $payloadMutex = New-Object Threading.Mutex($false,('Local\RDCRelayPayload-' + $key))
+    try { $ownsPayload = $payloadMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $ownsPayload = $true }
+    if (-not $ownsPayload) { throw 'Another installation or update is already running.' }
+
     if (-not $Force -and (Test-Path -LiteralPath $statePath)) {
         try {
             $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -205,13 +222,14 @@ try {
 
     $remoteVersion = [Version][string]$manifest.version
     $localVersion = [Version]$CurrentVersion
-    Write-UpdateState ([string]$manifest.version)
 
     if ($remoteVersion -lt $localVersion) {
+        Write-UpdateState $CurrentVersion
         exit 0
     }
 
     if ($remoteVersion -eq $localVersion -and (Test-InstalledPayload $manifest)) {
+        Write-UpdateState $CurrentVersion
         exit 0
     }
 
@@ -221,7 +239,8 @@ try {
         Write-UpdateLog ('Updating v' + $CurrentVersion + ' -> v' + [string]$manifest.version + '.')
     }
 
-    $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('RDCRelay-update-' + [Guid]::NewGuid().ToString('N'))
+    # Stage on the destination volume so File.Replace/File.Move stay atomic.
+    $tempRoot = Join-Path $InstallRoot ('.update-stage-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
     foreach ($file in $manifest.files) {
@@ -241,7 +260,7 @@ try {
         }
     }
 
-    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $stamp = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N')
     $backupRoot = Join-Path $InstallRoot ('backups\auto-' + $stamp + '-v' + $CurrentVersion)
     New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
 
@@ -256,34 +275,44 @@ try {
             Copy-Item -LiteralPath $dest -Destination (Join-Path $backupRoot $name) -Force
         }
 
-        Copy-Item -LiteralPath $source -Destination $dest -Force
+        # Journal BEFORE attempting the replacement, including the failing file.
         [void]$applied.Add([pscustomobject]@{ Name=$name; Existed=$existed })
+        if ($existed) { [IO.File]::Replace($source,$dest,[NullString]::Value) }
+        else { [IO.File]::Move($source,$dest) }
     }
 
+    Write-UpdateState ([string]$manifest.version)
     Write-UpdateLog ('Applied v' + [string]$manifest.version + ' from commit ' + $commitSha + '.')
     exit 42
 }
 catch {
     if ($backupRoot -and (Test-Path -LiteralPath $backupRoot) -and $applied) {
-        foreach ($item in $applied) {
+        for ($index = $applied.Count - 1; $index -ge 0; $index--) {
+            $item = $applied[$index]
             try {
                 $dest = Join-Path $InstallRoot $item.Name
                 $backup = Join-Path $backupRoot $item.Name
                 if ($item.Existed -and (Test-Path -LiteralPath $backup)) {
-                    Copy-Item -LiteralPath $backup -Destination $dest -Force
+                    if ((Test-Path -LiteralPath $dest) -and
+                        (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash) { continue }
+                    $restore = Join-Path $tempRoot ('restore-' + $item.Name)
+                    Copy-Item -LiteralPath $backup -Destination $restore -Force
+                    if (Test-Path -LiteralPath $dest) { [IO.File]::Replace($restore,$dest,[NullString]::Value) }
+                    else { [IO.File]::Move($restore,$dest) }
                 } elseif (-not $item.Existed -and (Test-Path -LiteralPath $dest)) {
                     Remove-Item -LiteralPath $dest -Force
                 }
-            } catch {}
+            } catch { Write-UpdateLog ('ROLLBACK FAILED for ' + $item.Name + ': ' + $_.Exception.Message + '; backup: ' + $backupRoot) }
         }
     }
 
     Write-UpdateLog ('Update failed: ' + $_.Exception.Message)
-    Write-UpdateState $CurrentVersion
-    exit 0
+    exit 1
 }
 finally {
     if ($tempRoot -and (Test-Path -LiteralPath $tempRoot)) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
+    if ($ownsPayload) { $payloadMutex.ReleaseMutex() }
+    if ($payloadMutex) { $payloadMutex.Dispose() }
 }

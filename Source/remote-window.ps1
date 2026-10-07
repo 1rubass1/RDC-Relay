@@ -1,7 +1,7 @@
 ﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$appVersion = '1.5.11'
+$appVersion = '1.5.12'
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'RDCRelay.ico'
@@ -21,6 +21,12 @@ public static class RdcShellIdentity {
         uint flags,
         IntPtr item1,
         IntPtr item2);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
 }
 '@
 }
@@ -29,6 +35,26 @@ try {
     [void][RdcShellIdentity]::SetCurrentProcessExplicitAppUserModelID('RDCRelay.App')
 } catch {}
 
+
+function Test-RdcShortcutOwner([string]$Path) {
+    $shell = $null
+    $shortcut = $null
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($Path)
+        $scriptPath = Join-Path $root 'remote-window.ps1'
+        $isPowerShell = [IO.Path]::GetFileName($shortcut.TargetPath) -ieq 'powershell.exe'
+        if ($isPowerShell -and $shortcut.Arguments -match ('(?i)(?:^|\s)-File\s+"' + [regex]::Escape($scriptPath) + '"(?:\s|$)')) { return $true }
+        foreach ($name in @('RDC Relay.exe','RDC Relay.cmd','Remote Desktop Commander.cmd','CommanderRelay.cmd')) {
+            if ([string]::Equals($shortcut.TargetPath,(Join-Path $root $name),[StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+        return $false
+    } catch { return $false }
+    finally {
+        if ($shortcut) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) }
+        if ($shell) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }
+    }
+}
 
 # Branding migration cleanup. Keep the legacy install directory/mutex for
 # compatibility, but remove obsolete launchers once the new payload exists.
@@ -58,6 +84,7 @@ if (-not $SelfTest -and -not $Preview -and (Test-Path -LiteralPath (Join-Path $r
             try {
                 $legacyShortcut = Join-Path $shortcutRoot $legacyShortcutName
                 if (-not (Test-Path -LiteralPath $legacyShortcut)) { continue }
+                if (-not (Test-RdcShortcutOwner $legacyShortcut)) { continue }
 
                 if (Test-Path -LiteralPath $newShortcut) {
                     Remove-Item -LiteralPath $legacyShortcut -Force -ErrorAction Stop
@@ -109,6 +136,7 @@ function Sync-RdcShortcuts([string[]]$ShortcutRootsOverride = $null) {
 
                 $shortcutPath = Join-Path $shortcutRoot 'RDC Relay.lnk'
                 if (-not (Test-Path -LiteralPath $shortcutPath)) { continue }
+                if (-not (Test-RdcShortcutOwner $shortcutPath)) { continue }
                 $hadShortcut = $true
                 $saved = $false
 
@@ -281,39 +309,77 @@ if (-not $SelfTest) {
     $windowMutex = New-Object Threading.Mutex($false,('Local\RemoteDesktopCommanderWindow-'+$key))
     try { $ownsWindow = $windowMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $ownsWindow = $true }
     if (-not $ownsWindow) {
-        # A second launcher must never update files or steal focus from the
-        # already-running instance. It simply exits.
-        $windowMutex.Dispose()
-        exit 0
+        # A second launcher should reactivate the existing GUI. If the mutex
+        # owner has become a stale PowerShell process with no top-level window,
+        # recycle only that GUI process and take over the mutex.
+        $runtimeNeedle = Join-Path $PSScriptRoot 'remote-window.ps1'
+        $peerProcesses = @(
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.ProcessId -ne $PID -and
+                    $_.Name -eq 'powershell.exe' -and
+                    $_.CommandLine -and
+                    $_.CommandLine.IndexOf($runtimeNeedle,[StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+                    $_.CommandLine -notmatch '(?i)-SelfTest|-Preview'
+                }
+        )
+
+        $reactivated = $false
+        $reactivateDeadline = (Get-Date).AddSeconds(1.5)
+        do {
+            foreach ($peer in $peerProcesses) {
+                try {
+                    $peerProcess = Get-Process -Id $peer.ProcessId -ErrorAction Stop
+                    if ($peerProcess.MainWindowHandle -ne [IntPtr]::Zero) {
+                        [void][RdcShellIdentity]::ShowWindow($peerProcess.MainWindowHandle,9)
+                        [void][RdcShellIdentity]::SetForegroundWindow($peerProcess.MainWindowHandle)
+                        $reactivated = $true
+                        break
+                    }
+                } catch {}
+            }
+            if (-not $reactivated) { Start-Sleep -Milliseconds 100 }
+        } while (-not $reactivated -and (Get-Date) -lt $reactivateDeadline)
+
+        if ($reactivated) {
+            $windowMutex.Dispose()
+            exit 0
+        }
+
+        $staleStopped = $false
+        foreach ($peer in $peerProcesses) {
+            try {
+                $peerProcess = Get-Process -Id $peer.ProcessId -ErrorAction Stop
+                $ageSeconds = ((Get-Date) - $peerProcess.StartTime).TotalSeconds
+                if ($peerProcess.MainWindowHandle -eq [IntPtr]::Zero -and $ageSeconds -ge 5.0) {
+                    Stop-Process -Id $peer.ProcessId -Force -ErrorAction Stop
+                    $staleStopped = $true
+                }
+            } catch {}
+        }
+
+        if ($staleStopped) {
+            Start-Sleep -Milliseconds 350
+            try {
+                $ownsWindow = $windowMutex.WaitOne(1500)
+            } catch [Threading.AbandonedMutexException] {
+                $ownsWindow = $true
+            }
+        }
+
+        if (-not $ownsWindow) {
+            $windowMutex.Dispose()
+            exit 0
+        }
     }
 }
 
-# Update only after this instance owns the single-instance mutex. This prevents
-# a second launcher from replacing files under a live RDC window.
-if (-not $SelfTest -and -not $Preview -and -not $SkipUpdate) {
-    $updaterPath = Join-Path $root 'update.ps1'
-    if (Test-Path -LiteralPath $updaterPath) {
-        try {
-            $updateArgs = @(
-                '-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $updaterPath + '"'),
-                '-InstallRoot',('"' + $root + '"'),'-CurrentVersion',$appVersion
-            )
-            $updateProc = Start-Process -FilePath 'powershell.exe' -ArgumentList $updateArgs -WindowStyle Hidden -Wait -PassThru
-            if ($updateProc.ExitCode -eq 42) {
-                if ($windowMutex) {
-                    try { $windowMutex.ReleaseMutex() } catch {}
-                    $windowMutex.Dispose()
-                    $windowMutex = $null
-                }
-                Start-Process -FilePath 'powershell.exe' -ArgumentList @(
-                    '-NoProfile','-STA','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
-                    '-File',('"' + (Join-Path $root 'remote-window.ps1') + '"'),'-SkipUpdate'
-                ) -WindowStyle Hidden
-                exit 0
-            }
-        } catch {}
-    }
-}
+# The updater is launched from Shown, after the window owns its mutex.
+$script:updateProc = $null
+$script:initializing = $false
+$script:remoteOperation = $null
+$script:allowClose = $false
+$script:closeRequested = $false
 
 # Fresh setup registers this immediately. This second path makes an existing
 # installation become a normal Installed Apps entry after an in-place update.
@@ -359,28 +425,39 @@ public class RdcMenuColorTable : ProfessionalColorTable {
     public override Color CheckPressedBackground { get { return accentSoft; } }
     public override Color CheckSelectedBackground { get { return accent; } }
 
-    public override Color MenuItemSelected { get { return Color.FromArgb(91,67,126); } }
+    // Keep the selection outline fully opaque, but let the menu surface show
+    // through the purple interior at exactly half alpha.
+    public override Color MenuItemSelected { get { return Color.FromArgb(128,91,67,126); } }
     public override Color MenuItemBorder { get { return Color.FromArgb(123,95,162); } }
-    public override Color MenuItemPressedGradientBegin { get { return Color.FromArgb(74,55,103); } }
-    public override Color MenuItemPressedGradientMiddle { get { return Color.FromArgb(74,55,103); } }
-    public override Color MenuItemPressedGradientEnd { get { return Color.FromArgb(74,55,103); } }
+    public override Color MenuItemPressedGradientBegin { get { return Color.FromArgb(128,74,55,103); } }
+    public override Color MenuItemPressedGradientMiddle { get { return Color.FromArgb(128,74,55,103); } }
+    public override Color MenuItemPressedGradientEnd { get { return Color.FromArgb(128,74,55,103); } }
 }
 
 public class RdcCircleButton : Control {
     private bool hovered;
     private bool pressed;
 
+    protected override void OnPaintBackground(PaintEventArgs e) {
+        // This control is intentionally opaque. Transparent ButtonBase
+        // composition can sample neighbouring controls into rounded corners.
+        e.Graphics.Clear(BackColor);
+    }
+
     public RdcCircleButton() {
         SetStyle(ControlStyles.UserPaint |
                  ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.OptimizedDoubleBuffer |
                  ControlStyles.ResizeRedraw |
-                 ControlStyles.SupportsTransparentBackColor, true);
-        BackColor = Color.Transparent;
+                 ControlStyles.Opaque, true);
+        SetStyle(ControlStyles.SupportsTransparentBackColor, false);
+        SetStyle(ControlStyles.Selectable, true);
+        BackColor = Color.FromArgb(29,32,36);
         ForeColor = Color.FromArgb(248,248,248);
         Font = new Font("Segoe UI", 11f, FontStyle.Bold);
         Cursor = Cursors.Hand;
-        TabStop = false;
+        TabStop = true;
+        AccessibleRole = AccessibleRole.PushButton;
         Size = new Size(36,36);
     }
 
@@ -390,14 +467,59 @@ public class RdcCircleButton : Control {
     protected override void OnMouseLeave(EventArgs e) {
         hovered = false; pressed = false; Invalidate(); base.OnMouseLeave(e);
     }
+    private static bool IsActivationKey(Keys key) {
+        return key == Keys.Space || key == Keys.Enter;
+    }
+    protected override bool IsInputKey(Keys keyData) {
+        if (IsActivationKey(keyData & Keys.KeyCode)) return true;
+        return base.IsInputKey(keyData);
+    }
+    protected override void OnKeyDown(KeyEventArgs e) {
+        if (Enabled && IsActivationKey(e.KeyCode)) {
+            pressed = true;
+            Invalidate();
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
+        base.OnKeyDown(e);
+    }
+    protected override void OnKeyUp(KeyEventArgs e) {
+        if (IsActivationKey(e.KeyCode)) {
+            bool click = Enabled && pressed;
+            pressed = false;
+            Invalidate();
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            if (click) OnClick(EventArgs.Empty);
+            return;
+        }
+        base.OnKeyUp(e);
+    }
+    protected override void OnGotFocus(EventArgs e) {
+        base.OnGotFocus(e);
+        Invalidate();
+    }
+    protected override void OnLostFocus(EventArgs e) {
+        pressed = false;
+        base.OnLostFocus(e);
+        Invalidate();
+    }
     protected override void OnMouseDown(MouseEventArgs e) {
-        if (e.Button == MouseButtons.Left) { pressed = true; Invalidate(); }
+        if (e.Button == MouseButtons.Left) {
+            Focus();
+            pressed = true;
+            Invalidate();
+        }
         base.OnMouseDown(e);
     }
     protected override void OnMouseUp(MouseEventArgs e) {
         pressed = false; Invalidate(); base.OnMouseUp(e);
     }
     protected override void OnPaint(PaintEventArgs e) {
+        // Opaque controls do not receive the normal background paint pass.
+        // Clear the complete client area here so no stale sibling pixels can survive.
+        e.Graphics.Clear(BackColor);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
         Color fill = pressed ? Color.FromArgb(61,44,87)
@@ -422,6 +544,8 @@ public class RdcCircleButton : Control {
             e.Graphics, Text, Font, ClientRectangle, ForeColor,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
             TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+        if (Focused && ShowFocusCues)
+            ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle,-5,-5), ForeColor, BackColor);
     }
 }
 
@@ -440,6 +564,8 @@ public class RdcAccentCheckBox : CheckBox {
         ForeColor = textColor;
         BackColor = Color.Transparent;
         Cursor = Cursors.Hand;
+        // This control is mouse-operable, but primary keyboard traversal is
+        // deliberately reserved for the three action buttons.
         TabStop = false;
     }
 
@@ -468,7 +594,12 @@ public class RdcAccentCheckBox : CheckBox {
             e.Graphics, Text, Font, textRect, ForeColor,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
             TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+        if (Focused && ShowFocusCues)
+            ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle,-1,-1), ForeColor, BackColor);
     }
+
+    protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
+    protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
 
     protected override void OnCheckedChanged(EventArgs e) {
         Invalidate();
@@ -490,6 +621,12 @@ public enum RdcButtonTone {
 public class RdcRoundedButton : Control {
     private bool hovered;
     private bool pressed;
+
+    protected override void OnPaintBackground(PaintEventArgs e) {
+        // Own every background pixel. The rounded foreground is painted on an
+        // opaque host-colored surface, never through ButtonBase transparency.
+        e.Graphics.Clear(BackColor);
+    }
     private RdcButtonGlyph glyph = RdcButtonGlyph.None;
     private RdcButtonTone tone = RdcButtonTone.Accent;
 
@@ -508,12 +645,15 @@ public class RdcRoundedButton : Control {
                  ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.OptimizedDoubleBuffer |
                  ControlStyles.ResizeRedraw |
-                 ControlStyles.SupportsTransparentBackColor, true);
-        BackColor = Color.Transparent;
+                 ControlStyles.Opaque, true);
+        SetStyle(ControlStyles.SupportsTransparentBackColor, false);
+        SetStyle(ControlStyles.Selectable, true);
+        BackColor = Color.FromArgb(29,32,36);
         ForeColor = Color.FromArgb(238,238,238);
         Font = new Font("Segoe UI Semibold", 10f, FontStyle.Regular);
         Cursor = Cursors.Hand;
-        TabStop = false;
+        TabStop = true;
+        AccessibleRole = AccessibleRole.PushButton;
     }
 
     protected override void OnEnabledChanged(EventArgs e) {
@@ -529,8 +669,50 @@ public class RdcRoundedButton : Control {
     protected override void OnMouseLeave(EventArgs e) {
         hovered = false; pressed = false; Invalidate(); base.OnMouseLeave(e);
     }
+    private static bool IsActivationKey(Keys key) {
+        return key == Keys.Space || key == Keys.Enter;
+    }
+    protected override bool IsInputKey(Keys keyData) {
+        if (IsActivationKey(keyData & Keys.KeyCode)) return true;
+        return base.IsInputKey(keyData);
+    }
+    protected override void OnKeyDown(KeyEventArgs e) {
+        if (Enabled && IsActivationKey(e.KeyCode)) {
+            pressed = true;
+            Invalidate();
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
+        base.OnKeyDown(e);
+    }
+    protected override void OnKeyUp(KeyEventArgs e) {
+        if (IsActivationKey(e.KeyCode)) {
+            bool click = Enabled && pressed;
+            pressed = false;
+            Invalidate();
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            if (click) OnClick(EventArgs.Empty);
+            return;
+        }
+        base.OnKeyUp(e);
+    }
+    protected override void OnGotFocus(EventArgs e) {
+        base.OnGotFocus(e);
+        Invalidate();
+    }
+    protected override void OnLostFocus(EventArgs e) {
+        pressed = false;
+        base.OnLostFocus(e);
+        Invalidate();
+    }
     protected override void OnMouseDown(MouseEventArgs e) {
-        if (Enabled && e.Button == MouseButtons.Left) { pressed = true; Invalidate(); }
+        if (Enabled && e.Button == MouseButtons.Left) {
+            Focus();
+            pressed = true;
+            Invalidate();
+        }
         base.OnMouseDown(e);
     }
     protected override void OnMouseUp(MouseEventArgs e) {
@@ -568,6 +750,9 @@ public class RdcRoundedButton : Control {
     }
 
     protected override void OnPaint(PaintEventArgs e) {
+        // Opaque controls do not receive the normal background paint pass.
+        // Clear the complete client area here so no stale sibling pixels can survive.
+        e.Graphics.Clear(BackColor);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
@@ -617,6 +802,8 @@ public class RdcRoundedButton : Control {
             TextRenderer.DrawText(
                 e.Graphics,Text,Font,ClientRectangle,content,
                 flags | TextFormatFlags.HorizontalCenter);
+            if (Focused && ShowFocusCues)
+                ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle,-5,-5), ForeColor, BackColor);
             return;
         }
 
@@ -639,6 +826,8 @@ public class RdcRoundedButton : Control {
         TextRenderer.DrawText(
             e.Graphics,Text,Font,textRect,content,
             flags | TextFormatFlags.Left);
+        if (Focused && ShowFocusCues)
+            ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle,-5,-5), ForeColor, BackColor);
     }
 }
 
@@ -3237,24 +3426,32 @@ $statusDetail.Dock = 'Fill'
 $statusDetail.TextAlign = 'MiddleLeft'
 $statusDetail.ForeColor = [Drawing.Color]::Silver
 $finish = New-Object RdcRoundedButton
+$finish.BackColor = $form.BackColor
 $finish.Text = 'Остановить'
 $finish.Glyph = [RdcButtonGlyph]::Stop
 $finish.Size = New-Object Drawing.Size(120,36)
 $finish.Margin = New-Object Windows.Forms.Padding(16,0,0,0)
 
 $accountButton = New-Object RdcRoundedButton
+$accountButton.BackColor = $form.BackColor
 $accountButton.Text = 'Аккаунт ▾'
 $accountButton.Tone = [RdcButtonTone]::Neutral
 $accountButton.Size = New-Object Drawing.Size(120,36)
 $accountButton.Margin = New-Object Windows.Forms.Padding(0)
 
 $helpButton = New-Object RdcCircleButton
+$helpButton.BackColor = $form.BackColor
 $helpButton.Text = '?'
+$helpButton.AccessibleName = 'Справка и журнал'
+$finish.TabIndex = 0
+$accountButton.TabIndex = 1
+$helpButton.TabIndex = 2
 $helpButton.Size = New-Object Drawing.Size(36,36)
 $helpButton.Margin = New-Object Windows.Forms.Padding(4,0,0,0)
 
 $actions = New-Object Windows.Forms.FlowLayoutPanel
 $actions.Dock = 'Fill'
+$actions.BackColor = $form.BackColor
 $actions.FlowDirection = 'RightToLeft'
 $actions.WrapContents = $false
 $actions.Margin = New-Object Windows.Forms.Padding(0)
@@ -3424,6 +3621,7 @@ $headerTextHost.RowCount = 1
 $headerLog = New-Object RdcLogBox
 $headerLog.Dock = 'Fill'
 $headerLog.ReadOnly = $true
+$headerLog.TabStop = $false
 $headerLog.BackColor = [Drawing.Color]::FromArgb(18,20,23)
 $headerLog.ForeColor = [Drawing.Color]::Gainsboro
 $headerLog.Font = New-Object Drawing.Font('Consolas',9)
@@ -3527,6 +3725,7 @@ $log = New-Object RdcLogBox
 $log.Dock = 'None'
 $log.Margin = New-Object Windows.Forms.Padding(0)
 $log.ReadOnly = $true
+$log.TabStop = $false
 $log.BackColor = [Drawing.Color]::FromArgb(18,20,23)
 $log.ForeColor = [Drawing.Color]::Gainsboro
 $log.Font = New-Object Drawing.Font('Consolas',10)
@@ -3792,6 +3991,40 @@ $form.Controls.Add($dividerDragPreview)
 $form.PerformLayout()
 Set-ActivityPaneHeight (Get-EffectivePaneMinHeight)
 $dividerDragPreview.BringToFront()
+
+function Get-TabStopControls {
+    param([Windows.Forms.Control]$Root)
+    $result = @()
+    foreach ($child in @($Root.Controls)) {
+        if ($child.TabStop) { $result += $child }
+        $result += @(Get-TabStopControls $child)
+    }
+    return $result
+}
+
+function Set-PrimaryActionTabTraversal {
+    param([Windows.Forms.Control]$Root)
+
+    function Disable-TabStopRecursive {
+        param([Windows.Forms.Control]$Control)
+        foreach ($child in @($Control.Controls)) {
+            $child.TabStop = $false
+            Disable-TabStopRecursive $child
+        }
+    }
+
+    Disable-TabStopRecursive $Root
+
+    $finish.TabStop = $true
+    $accountButton.TabStop = $true
+    $helpButton.TabStop = $true
+
+    $finish.TabIndex = 0
+    $accountButton.TabIndex = 1
+    $helpButton.TabIndex = 2
+}
+
+Set-PrimaryActionTabTraversal $form
 $script:proc = $null
 $script:reader = $null
 $script:bannerStyled = $false
@@ -3891,7 +4124,7 @@ function Set-FinishButtonMode([bool]$running) {
         $finish.Text = 'Запустить'
         $finish.Glyph = [RdcButtonGlyph]::Play
     }
-    $finish.Enabled = $true
+    $finish.Enabled = -not ($script:remoteOperation -or $script:initializing)
 }
 function Set-RuntimeDisplay([string]$left,[string]$right = '',[bool]$showSeparator = $false) {
     $runtimeLeft.Text = $left
@@ -4847,13 +5080,9 @@ function Stop-Remote {
         $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
         $killCmd = '""' + $taskkill + '" /PID ' + $script:proc.Id + ' /T /F"'
         $killer = Start-NoWindowCmd $killCmd
-        if ($killer) {
-            [void]$killer.WaitForExit(5000)
-            $killer.Dispose()
-        }
-    } catch {
-        try { Stop-Process -Id $script:proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-    }
+        if (-not $killer) { throw 'Не удалось запустить остановку remote-процесса.' }
+        $script:remoteOperation.Process = $killer
+    } catch { throw }
 }
 function Reset-RemoteHandle {
     if ($script:reader) {
@@ -4867,166 +5096,189 @@ function Reset-RemoteHandle {
     $script:stopping = $false
     $script:exitHandled = $false
 }
-function Wait-RemoteStopped([int]$timeoutMs = 5000) {
-    $watch = [Diagnostics.Stopwatch]::StartNew()
-    while ($watch.ElapsedMilliseconds -lt $timeoutMs) {
-        if (-not (Find-ExistingRemote)) {
-            $watch.Stop()
-            return $true
-        }
-        Start-Sleep -Milliseconds 200
-    }
-    $watch.Stop()
-    return $false
+function Set-RemoteActionsEnabled([bool]$enabled) {
+    $finish.Enabled = $enabled
+    $accountButton.Enabled = $enabled
+    $switchAccountItem.Enabled = $enabled
+    $reconnectItem.Enabled = $enabled
 }
-function Invoke-AutoReconnect {
-    if ($SelfTest -or $Preview) { return }
-    if (-not $script:autoReconnectAt) { return }
-    if ((Get-Date) -lt $script:autoReconnectAt) { return }
-    if ($script:supervisorRestarting) { return }
 
-    if ($script:autoReconnectAttempt -ge $remoteReconnectDelaysSeconds.Count) {
+function Begin-RemoteOperation([string]$action) {
+    if ($script:remoteOperation -or $script:initializing) { return }
+    $script:remoteOperation = [pscustomobject]@{
+        Action = $action; Stage = 'stopping'; Process = $null
+        Deadline = (Get-Date).AddSeconds(10); Failure = ''
+    }
+    Set-RemoteActionsEnabled $false
+    try { Stop-Remote }
+    catch { Complete-RemoteOperation $_.Exception.Message }
+}
+
+function Complete-RemoteOperation([string]$errorText = '') {
+    $op = $script:remoteOperation
+    if (-not $op) { return }
+    if ($op.Process) { $op.Process.Dispose() }
+    $script:remoteOperation = $null
+    $script:supervisorRestarting = $false
+    $script:preserveFaultOnStop = $false
+    Set-RemoteActionsEnabled $true
+    if ($errorText) {
+        $script:closeRequested = $false
+        $script:stopping = $false
         $script:autoReconnectAt = $null
-        $script:remoteFaultReason =
-            'Автовосстановление не удалось после ' +
-            $remoteReconnectDelaysSeconds.Count +
-            ' попыток. Используйте «Переподключить».'
+        Set-RemoteFault 'operation-failed' $errorText $false
+        Set-State 'Действие не выполнено' $errorText ([Drawing.Color]::LightCoral)
+        Add-Log ($errorText + $nl)
         return
     }
-
-    $script:autoReconnectAt = $null
-    $script:autoReconnectAttempt++
-    $attempt = $script:autoReconnectAttempt
-    $script:supervisorRestarting = $true
-
-    Add-Log (
-        '[' + (Get-Date -Format 'HH:mm:ss') +
-        '] Автовосстановление: попытка ' + $attempt +
-        ' из ' + $remoteReconnectDelaysSeconds.Count + '.' + $nl
-    )
-
-    try {
-        if ($script:proc -and -not $script:proc.HasExited) {
-            Stop-Remote
-            if (-not (Wait-RemoteStopped 5000)) {
-                throw 'Старый remote-процесс не завершился полностью.'
-            }
-        }
-
-        Reset-RemoteHandle
-        $script:remoteReady = $false
-        $script:remoteInteractiveAuth = $false
-        $script:remoteConnectDeadline = $null
-        Start-Remote
-
+    if ($op.Action -eq 'close' -or $script:closeRequested) {
+        $script:allowClose = $true
+        $form.Close()
+        return
+    }
+    if ($op.Action -eq 'stop') {
+        Set-FinishButtonMode $false
+        Set-State 'Остановлен' 'Remote-процесс остановлен.' ([Drawing.Color]::Silver)
+    }
+    elseif ($op.Action -in @('restart','logout','reconnect')) {
+        $script:supervisorRestarting = $op.Action -eq 'reconnect'
+        try { Start-Remote }
+        finally { $script:supervisorRestarting = $false }
         if (-not $script:proc -or $script:proc.HasExited) {
-            throw 'Новый remote-процесс не запустился.'
+            Schedule-AutoReconnect 'Новый remote-процесс не запустился.'
         }
-    }
-    catch {
-        Set-RemoteFault 'reconnect-failed' (
-            'Попытка автопереподключения ' + $attempt +
-            ' не удалась: ' + $_.Exception.Message
-        ) $false
-    }
-    finally {
-        $script:supervisorRestarting = $false
-    }
-
-    if (-not $script:proc -or $script:proc.HasExited) {
-        Schedule-AutoReconnect 'Новый remote-процесс не вышел в рабочее состояние.'
     }
 }
+
+function Update-RemoteOperation {
+    $op = $script:remoteOperation
+    if (-not $op) { return }
+    try {
+        if ($op.Process -and -not $op.Process.HasExited) {
+            if ((Get-Date) -lt $op.Deadline) { return }
+            if ($op.Stage -eq 'logout') {
+                $logoutPid = $op.Process.Id
+                $op.Process.Dispose()
+                $op.Process = $null
+                $killCmd = '""' + (Join-Path $env:SystemRoot 'System32\taskkill.exe') + '" /PID ' + $logoutPid + ' /T /F"'
+                $op.Process = Start-NoWindowCmd $killCmd
+                $op.Stage = 'logout-timeout'
+                $op.Deadline = (Get-Date).AddSeconds(10)
+                $op.Failure = 'Выход из аккаунта не завершился за 30 секунд. Повторите действие.'
+                return
+            }
+            throw 'Операция остановки не завершилась вовремя. Remote-процесс требует проверки.'
+        }
+        if ($op.Stage -eq 'logout-timeout') { throw $op.Failure }
+        if ($op.Process -and $op.Process.ExitCode -ne 0) {
+            throw ('Операция ' + $op.Stage + ' завершилась с кодом ' + $op.Process.ExitCode + '.')
+        }
+        if ($op.Process) { $op.Process.Dispose(); $op.Process = $null }
+        if ($op.Stage -eq 'stopping') {
+            if ($script:proc -and -not $script:proc.HasExited) {
+                if ((Get-Date) -ge $op.Deadline) { throw 'Remote-процесс не остановлен.' }
+                return
+            }
+            Read-LiveLog
+            Reset-RemoteHandle
+            if ($op.Action -eq 'logout' -and -not $script:closeRequested) {
+                Set-State 'Выход из аккаунта…' 'Удаляю авторизацию; окно остаётся доступным.' ([Drawing.Color]::Khaki)
+                $logoutFile = Join-Path $root 'logout-session.log'
+                $logoutCmd = '""' + (Resolve-NpxPath) + '" --yes ' + $desktopCommanderPackage + ' remote --logout > "' + $logoutFile + '" 2>&1"'
+                $op.Process = Start-NoWindowCmd $logoutCmd
+                if (-not $op.Process) { throw 'Не удалось запустить выход из аккаунта.' }
+                $op.Stage = 'logout'
+                $op.Deadline = (Get-Date).AddSeconds(30)
+                return
+            }
+        }
+        elseif ($op.Stage -eq 'logout') {
+            Set-AccountDisplay $null
+            Add-Log ('Авторизация сброшена. Запускаю новый вход.' + $nl)
+        }
+        Complete-RemoteOperation
+    } catch { Complete-RemoteOperation $_.Exception.Message }
+}
+
+function Invoke-AutoReconnect {
+    if ($SelfTest -or $Preview -or $script:remoteOperation -or $script:supervisorRestarting) { return }
+    if (-not $script:autoReconnectAt -or (Get-Date) -lt $script:autoReconnectAt) { return }
+    $script:autoReconnectAt = $null
+    if ($script:autoReconnectAttempt -ge $remoteReconnectDelaysSeconds.Count) { return }
+    $script:autoReconnectAttempt++
+    $script:supervisorRestarting = $true
+    Add-Log ('Автовосстановление: попытка ' + $script:autoReconnectAttempt + '.' + $nl)
+    Begin-RemoteOperation 'reconnect'
+}
+
 function Restart-Remote {
     $answer = [Windows.Forms.MessageBox]::Show(
         'RDC Relay будет кратковременно отключён и запущен снова под текущим аккаунтом.',
-        'Переподключить RDC Relay',
-        [Windows.Forms.MessageBoxButtons]::YesNo,
-        [Windows.Forms.MessageBoxIcon]::Question
-    )
+        'Переподключить RDC Relay', [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)
     if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
-    $timer.Stop()
     $script:autoReconnectAttempt = 0
     $script:autoReconnectAt = $null
     $script:preserveFaultOnStop = $script:remoteFaultLatched
-    try {
-        Stop-Remote
-        if (-not (Wait-RemoteStopped 5000)) { throw 'Старый remote-процесс не завершился полностью.' }
-        Reset-RemoteHandle
-        Add-Log ($nl + '[' + (Get-Date -Format 'HH:mm:ss') + '] Переподключение…' + $nl)
-        Start-Remote
-        Refresh-Window
-    } finally {
-        $script:preserveFaultOnStop = $false
-        $timer.Start()
-    }
+    Begin-RemoteOperation 'restart'
 }
+
 function Switch-RemoteAccount {
     $message = 'Смена аккаунта разорвёт текущее удалённое соединение.' + $nl + $nl +
-        'После выхода RDC Relay запустится снова и попросит авторизоваться в браузере.' + $nl + $nl +
-        'ВАЖНО: после входа под другим аккаунтом переподключите Desktop Commander в ChatGPT к ЭТОМУ ЖЕ аккаунту. ' +
-        'Если аккаунты на компьютере и в ChatGPT различаются, устройство не появится.' + $nl + $nl +
-        'Продолжить?'
-    $answer = [Windows.Forms.MessageBox]::Show(
-        $message,
-        'Сменить аккаунт Desktop Commander',
-        [Windows.Forms.MessageBoxButtons]::YesNo,
-        [Windows.Forms.MessageBoxIcon]::Warning
-    )
+        'После выхода RDC Relay запустится снова и предложит авторизоваться в браузере.' + $nl + $nl +
+        'Войдите в тот же аккаунт Desktop Commander, который подключён в ChatGPT.' + $nl + $nl + 'Продолжить?'
+    $answer = [Windows.Forms.MessageBox]::Show($message,'Сменить аккаунт Desktop Commander',
+        [Windows.Forms.MessageBoxButtons]::YesNo,[Windows.Forms.MessageBoxIcon]::Warning)
     if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
-
-    $timer.Stop()
-    $accountButton.Enabled = $false
-    try {
-        Stop-Remote
-        if (-not (Wait-RemoteStopped 5000)) { throw 'Старый remote-процесс не завершился полностью.' }
-        Reset-RemoteHandle
-        Set-AccountDisplay $null
-        Set-State 'Выход из аккаунта…' 'Удаляю текущую авторизацию Desktop Commander.' ([Drawing.Color]::Khaki)
-        Add-Log ($nl + '[' + (Get-Date -Format 'HH:mm:ss') + '] Выход из текущего аккаунта…' + $nl)
-
-        $npxPath = Resolve-NpxPath
-        $logoutFile = Join-Path $root 'logout-session.log'
-        if (Test-Path $logoutFile) { Remove-Item -LiteralPath $logoutFile -Force -ErrorAction SilentlyContinue }
-        $logoutCmd = '""' + $npxPath + '" --yes ' + $desktopCommanderPackage + ' remote --logout > "' + $logoutFile + '" 2>&1"'
-        $logout = Start-NoWindowCmd $logoutCmd
-        if (-not $logout) { throw 'Не удалось запустить команду выхода без консольного окна.' }
-        if (-not $logout.WaitForExit(30000)) {
-            try {
-                $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
-                $killCmd = '""' + $taskkill + '" /PID ' + $logout.Id + ' /T /F"'
-                $killer = Start-NoWindowCmd $killCmd
-                if ($killer) { [void]$killer.WaitForExit(5000); $killer.Dispose() }
-            } catch {}
-            throw 'Команда выхода не завершилась за 30 секунд.'
-        }
-        if (Test-Path $logoutFile) {
-            $logoutText = Get-Content -LiteralPath $logoutFile -Raw -ErrorAction SilentlyContinue
-            if ($logoutText) { Add-Log ($logoutText + $nl) }
-        }
-        if ($logout.ExitCode -ne 0) { throw ('Команда выхода завершилась с кодом ' + $logout.ExitCode) }
-        $logout.Dispose()
-
-        Set-State 'Ожидание авторизации…' 'Запускаю RDC Relay для входа в другой аккаунт.' ([Drawing.Color]::Khaki)
-        Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Авторизация сброшена. Запускаю новый вход…' + $nl)
-        Start-Remote
-        Refresh-Window
-    } catch {
-        Set-State 'Ошибка смены аккаунта' $_.Exception.Message ([Drawing.Color]::LightCoral)
-        Add-Log ('Ошибка смены аккаунта: ' + $_.Exception.Message + $nl)
-        try {
-            Reset-RemoteHandle
-            Start-Remote
-            Refresh-Window
-        } catch {}
-    } finally {
-        $accountButton.Enabled = $true
-        $timer.Start()
-    }
+    Begin-RemoteOperation 'logout'
 }
+
+function Start-RuntimeInitialization {
+    $script:initializing = $true
+    Set-RemoteActionsEnabled $false
+    $updaterPath = Join-Path $root 'update.ps1'
+    if (-not $SkipUpdate -and (Test-Path -LiteralPath $updaterPath)) {
+        try {
+            Set-State 'Проверка обновлений…' 'Проверяю установленную версию; окно остаётся доступным.' ([Drawing.Color]::Khaki)
+            $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $updaterPath + '"'),'-InstallRoot',('"' + $root + '"'),'-CurrentVersion',$appVersion)
+            $script:updateProc = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $args -WindowStyle Hidden -PassThru
+            return
+        } catch { Add-Log ('Проверка обновления не запущена: ' + $_.Exception.Message + $nl) }
+    }
+    Complete-RuntimeInitialization
+}
+
+function Complete-RuntimeInitialization {
+    if ($script:updateProc) {
+        if (-not $script:updateProc.HasExited) { return }
+        $code = $script:updateProc.ExitCode
+        $script:updateProc.Dispose()
+        $script:updateProc = $null
+        if ($code -eq 42) {
+            if ($windowMutex) {
+                $windowMutex.ReleaseMutex(); $windowMutex.Dispose(); $script:windowMutex = $null
+            }
+            if (-not $script:closeRequested) {
+                Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
+                    '-NoProfile','-STA','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
+                    '-File',('"' + (Join-Path $root 'remote-window.ps1') + '"'),'-SkipUpdate') -WindowStyle Hidden
+            }
+            $script:allowClose = $true
+            $form.Close()
+            return
+        }
+        if ($code -ne 0) { Add-Log ('Обновление не установлено. Подробности: update.log.' + $nl) }
+    }
+    $script:initializing = $false
+    Set-RemoteActionsEnabled $true
+    if ($script:closeRequested) { $script:allowClose = $true; $form.Close(); return }
+    Hide-LegacyRemoteTerminal
+    Start-Remote
+}
+
 $finish.Add_Click({
+    if ($script:remoteOperation -or $script:initializing) { return }
     if ($script:proc -and -not $script:proc.HasExited) {
-        Stop-Remote
+        Begin-RemoteOperation 'stop'
         return
     }
 
@@ -5112,6 +5364,8 @@ $openLogItem.Add_Click({
     }
 })
 function Refresh-Window {
+    if ($script:initializing) { Complete-RuntimeInitialization; return }
+    if ($script:remoteOperation) { Update-RemoteOperation; return }
     Apply-SystemFrameTheme
 
     if ($script:uiInteracting -or $vScroll.IsDragging -or $hScroll.IsDragging) {
@@ -5141,6 +5395,7 @@ function Refresh-Window {
 
     if ($script:autoReconnectAt -and $now -ge $script:autoReconnectAt) {
         Invoke-AutoReconnect
+        if ($script:remoteOperation) { return }
         Read-LiveLog
     }
 
@@ -5282,7 +5537,18 @@ $form.Add_ResizeEnd({
 })
 
 $form.Add_FormClosing({
-    if ($script:proc -and -not $script:proc.HasExited) { Stop-Remote }
+    param($sender,$e)
+    if ($script:allowClose -or $SelfTest -or $Preview) { return }
+    if ($script:initializing -or $script:remoteOperation) {
+        $e.Cancel = $true
+        $script:closeRequested = $true
+        return
+    }
+    if ($script:proc -and -not $script:proc.HasExited) {
+        $e.Cancel = $true
+        $script:closeRequested = $true
+        Begin-RemoteOperation 'close'
+    }
 })
 $form.Add_FormClosed({
     $timer.Stop()
@@ -5295,6 +5561,39 @@ $form.Add_FormClosed({
     if ($script:proc) { $script:proc.Dispose() }
 })
 if ($SelfTest) {
+    foreach ($button in @($finish,$accountButton,$helpButton)) {
+        if (-not $button.TabStop -or $button.AccessibleRole -ne [Windows.Forms.AccessibleRole]::PushButton) {
+            throw 'Primary action is not keyboard/accessibility enabled'
+        }
+        if ($button.BackColor.A -ne 255) {
+            throw 'Primary action button background must be opaque'
+        }
+    }
+    if ($headerLog.TabStop -or $log.TabStop) {
+        throw 'Read-only log surfaces must not participate in primary Tab navigation'
+    }
+
+    $tabTargets = @(Get-TabStopControls $form)
+    $unexpectedTabTargets = @(
+        $tabTargets | Where-Object {
+            $_ -ne $finish -and
+            $_ -ne $accountButton -and
+            $_ -ne $helpButton
+        }
+    )
+    if ($tabTargets.Count -ne 3 -or $unexpectedTabTargets.Count -ne 0) {
+        $tabNames = @($tabTargets | ForEach-Object { $_.GetType().Name + ':' + $_.Name }) -join ', '
+        throw ('Unexpected Tab traversal targets: ' + $tabNames)
+    }
+
+    if ($menuColors.MenuItemSelected.A -ne 128 -or
+        $menuColors.MenuItemPressedGradientBegin.A -ne 128 -or
+        $menuColors.MenuItemPressedGradientMiddle.A -ne 128 -or
+        $menuColors.MenuItemPressedGradientEnd.A -ne 128 -or
+        $menuColors.MenuItemBorder.A -ne 255) {
+        throw 'Account/help menu selection alpha contract is invalid'
+    }
+
     Set-State 'Тест' 'Проверка интерфейса без запуска remote.' ([Drawing.Color]::LightBlue)
     Add-Log ('SELF TEST OK' + $nl)
 
@@ -5878,7 +6177,11 @@ if ($SelfTest) {
         if ($gpuDivider.GetType().Name -ne 'RdcGpuDividerHost') { throw 'Unexpected GPU divider control type' }
         if (-not $gpuDivider.PassConfigurationValid) { throw 'GPU particle pass configuration is coupled or invalid' }
         $visualMetrics = $gpuDivider.RunVisualSelfTest()
-        Write-Output ('GPU VISUAL SELF TEST: ' + $visualMetrics)
+        if ($visualMetrics.StartsWith('offscreen-software-fallback;',[StringComparison]::Ordinal)) {
+            Write-Output ('GPU VISUAL SELF TEST SKIPPED: ' + $visualMetrics)
+        } else {
+            Write-Output ('GPU VISUAL SELF TEST PASSED: ' + $visualMetrics)
+        }
         $gpuDivider.SetActivity($false)
         $gpuDivider.SetInteractiveMove($true)
         $gpuDivider.SetInteractiveMove($false)
@@ -5928,8 +6231,8 @@ if ($SelfTest) {
         $testShortcut = $null
         try {
             $testShortcut = $testShell.CreateShortcut($shortcutTestPath)
-            $testShortcut.TargetPath = Join-Path $env:WINDIR 'notepad.exe'
-            $testShortcut.Arguments = ''
+            $testShortcut.TargetPath = Join-Path $PSHOME 'powershell.exe'
+            $testShortcut.Arguments = '-File "' + (Join-Path $root 'remote-window.ps1') + '"'
             $testShortcut.WorkingDirectory = $shortcutTestRoot
             $testShortcut.IconLocation = (Join-Path $env:WINDIR 'notepad.exe') + ',0'
             $testShortcut.Description = 'stale'
@@ -5966,6 +6269,14 @@ if ($SelfTest) {
             if ($verifyShortcut.Description -ne 'RDC Relay') {
                 throw 'Shortcut synchronization description mismatch'
             }
+            # A portable copy must leave another installation's shortcut intact.
+            $verifyShortcut.Arguments = '-File "C:\OtherRdcInstallation\remote-window.ps1"'
+            $verifyShortcut.Save()
+            $foreignHash = (Get-FileHash -LiteralPath $shortcutTestPath -Algorithm SHA256).Hash
+            if (-not (Sync-RdcShortcuts @($shortcutTestRoot))) { throw 'Foreign shortcut check failed' }
+            if ((Get-FileHash -LiteralPath $shortcutTestPath -Algorithm SHA256).Hash -ne $foreignHash) {
+                throw 'Foreign installation shortcut was modified'
+            }
         }
         finally {
             if ($verifyShortcut) {
@@ -5980,7 +6291,7 @@ if ($SelfTest) {
             Remove-Item -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Output 'GUI SELF TEST PASSED'
+    Write-Output 'GUI LOGIC SELF TEST PASSED'
     $form.Dispose()
     if ($windowMutex) { $windowMutex.ReleaseMutex(); $windowMutex.Dispose() }
     exit 0
@@ -6031,9 +6342,7 @@ if ($Preview) {
     }
     exit 0
 }
-Hide-LegacyRemoteTerminal
-Start-Remote
-Refresh-Window
+$form.Add_Shown({ Start-RuntimeInitialization })
 $timer.Start()
 try {
     [Windows.Forms.Application]::Run($form)

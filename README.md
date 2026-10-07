@@ -101,6 +101,30 @@ reach GitHub.
   fully covered by other top-level windows; status and log polling continue.
 - During pane resizing the overflow GPU popup is suspended to avoid layered
   window trails and layout updates are coalesced to display-frame cadence.
+- Update checks and remote stop/restart/logout operations are polled without
+  blocking the window. Closing waits for an in-progress operation to finish.
+- Portable copies only refresh shortcuts already pointing to that same copy.
+- The installer refuses to replace an active GUI, serializes payload writes
+  with the updater, and restores the previous payload after a failed install.
+
+## Local release candidates
+
+A locally installed review candidate can use `.local-candidate.json` containing
+`version` and `runtimeSha256` (the SHA256 of its `remote-window.ps1`). Matching
+candidates skip automatic updates so same-version stable repair cannot overwrite
+unpublished changes. Remove this marker after accepting/publishing the candidate
+to return to the normal stable channel. A normal successful Setup installation
+also removes it; `update.ps1 -Force` explicitly overrides it.
+
+Run the focused regression checks after building a release:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Tests\Test-Transactions.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Tests\Test-UiLifecycle.ps1
+```
+
+They use isolated payloads and fake process handles, without stopping the live
+Desktop Commander server or logging out of the user's account.
 
 ## Security
 
