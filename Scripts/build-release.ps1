@@ -56,7 +56,9 @@ Copy-Item -LiteralPath $sourceIcon -Destination $runtimeIcon -Force
 $manifestPayload = @(
     'remote-window.ps1',
     'divider-caustic.ps',
+    'divider-caustic-detail.ps',
     'divider-particles.ps',
+    'divider-particles-core.ps',
     'RDCRelay.ico',
     'version.txt',
     'update.ps1',
@@ -89,9 +91,10 @@ $utf8NoBom = New-Object Text.UTF8Encoding($false)
 
 if (-not $SkipSelfTest) {
     Write-Host 'Running GUI self-test...'
-    $selfTestOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $sourceDir 'remote-window.ps1') -SelfTest -SkipUpdate 2>&1
+    $selfTestOutput = & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $sourceDir 'remote-window.ps1') -SelfTest -SkipUpdate 2>&1
     $selfTestOutput | ForEach-Object { Write-Host $_ }
-    if ($LASTEXITCODE -ne 0 -or ($selfTestOutput -notmatch 'GUI SELF TEST PASSED')) {
+    $selfTestText = [string]::Join([Environment]::NewLine,@($selfTestOutput))
+    if ($LASTEXITCODE -ne 0 -or ($selfTestText -notmatch 'GUI SELF TEST PASSED')) {
         throw 'GUI self-test failed.'
     }
 }
@@ -144,7 +147,9 @@ using System.Reflection;
         $assemblyInfo,
         ('/resource:' + (Join-Path $sourceDir 'remote-window.ps1') + ',RdcPayload.remote-window.ps1'),
         ('/resource:' + (Join-Path $sourceDir 'divider-caustic.ps') + ',RdcPayload.divider-caustic.ps'),
+        ('/resource:' + (Join-Path $sourceDir 'divider-caustic-detail.ps') + ',RdcPayload.divider-caustic-detail.ps'),
         ('/resource:' + (Join-Path $sourceDir 'divider-particles.ps') + ',RdcPayload.divider-particles.ps'),
+        ('/resource:' + (Join-Path $sourceDir 'divider-particles-core.ps') + ',RdcPayload.divider-particles-core.ps'),
         ('/resource:' + (Join-Path $sourceDir 'RDCRelay.ico') + ',RdcPayload.RDCRelay.ico'),
         ('/resource:' + (Join-Path $sourceDir 'version.txt') + ',RdcPayload.version.txt'),
         ('/resource:' + (Join-Path $sourceDir 'update.ps1') + ',RdcPayload.update.ps1'),

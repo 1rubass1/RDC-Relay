@@ -1,7 +1,7 @@
 ﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$appVersion = '1.5.9'
+$appVersion = '1.5.10'
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'RDCRelay.ico'
@@ -1067,19 +1067,24 @@ public class RdcDividerDragPreview : Control {
             bottomPurpleY-topPurpleY+1);
 
         int crossingFade = 15;
-        int crossingCenterExtra = 10;
+        // Narrow blackout around the divider. The final center geometry below
+        // keeps 3 px of full cover above and 2 px below the 7 px divider.
+        int crossingCenterExtra = 6;
         int crossingCenterPad = crossingCenterExtra / 2;
         Color crossingBack = Color.FromArgb(18,20,23);
 
         // Three-part pin mask:
-        // 1) a fully hidden center exactly dividerHeight + 10 px tall,
-        //    centered on the visible purple divider;
-        // 2) a 15 px upper fade starting at the center boundary;
-        // 3) a mirrored 15 px lower fade.
+        // 1) a fully hidden center with 3 px above and 2 px below the
+        //    visible 7 px divider;
+        // 2) a 15 px upper linear alpha fade from 0 to 250;
+        // 3) a mirrored 15 px lower fade from 250 to 0.
         int crossingCenterTop =
             topPurpleY-crossingCenterPad;
+        // Keep 3 px of full cover above the 7 px divider, but only
+        // 2 px below it; the previous symmetric arithmetic looked one pixel
+        // heavier on the lower side in the rendered drag overlay.
         int crossingCenterHeight =
-            dividerHeight+crossingCenterExtra;
+            dividerHeight+crossingCenterExtra-1;
         int crossingCenterBottom =
             crossingCenterTop+crossingCenterHeight; // exclusive
 
@@ -1091,13 +1096,16 @@ public class RdcDividerDragPreview : Control {
         int maskRight = Math.Min(Width,body.Right+1);
         int maskWidth = Math.Max(0,maskRight-maskLeft);
 
+        int fadeDenominator = Math.Max(1,crossingFade-1);
         for (int i = 0; i < crossingFade; i++) {
-            // Linear falloff: keep the center fully hidden, then reveal the
-            // pin at a constant rate across the fade zone.
+            // Simple linear mask requested for the scrollbar crossing:
+            // outer edge = 0 alpha, inner edge = 250 alpha. The fully opaque
+            // center is painted separately, so there is no dark rectangular
+            // plateau across the fade itself.
             int upperAlpha = (int)Math.Round(
-                255.0 * (i+1) / (crossingFade+1));
+                250.0 * i / fadeDenominator);
             int lowerAlpha = (int)Math.Round(
-                255.0 * (crossingFade-i) / (crossingFade+1));
+                250.0 * (crossingFade-1-i) / fadeDenominator);
 
             int upperY =
                 crossingCenterTop-crossingFade+i;
@@ -1334,6 +1342,10 @@ public class RdcLogBox : RichTextBox {
         }
     }
 
+    public void ApplyCompactLineSpacing() {
+        ApplyExactLineSpacing(0,TextLength,1.0f);
+    }
+
     public static string ReadChunk(TextReader reader, int maxChars) {
         if (reader == null || maxChars <= 0) return String.Empty;
         char[] buffer = new char[maxChars];
@@ -1361,6 +1373,19 @@ public class RdcLogBox : RichTextBox {
         pt.X = Math.Max(0,x);
         pt.Y = Math.Max(0,y);
         SendMessage(Handle,EM_SETSCROLLPOS,IntPtr.Zero,ref pt);
+    }
+
+    public void RefreshViewport() {
+        if (IsDisposed || !IsHandleCreated) return;
+        Invalidate();
+        Update();
+        try {
+            BeginInvoke((MethodInvoker)delegate {
+                if (IsDisposed || !IsHandleCreated) return;
+                Invalidate();
+                Update();
+            });
+        } catch { }
     }
 
     public void SetSelectionHidden(bool hidden) {
@@ -2016,12 +2041,28 @@ public sealed class RdcDividerGlowEffect : ShaderEffect {
     public static readonly DependencyProperty ActivityProperty =
         DependencyProperty.Register("Activity", typeof(double), typeof(RdcDividerGlowEffect),
             new UIPropertyMetadata(0.0, PixelShaderConstantCallback(3)));
+    public static readonly DependencyProperty FaultProperty =
+        DependencyProperty.Register("Fault", typeof(double), typeof(RdcDividerGlowEffect),
+            new UIPropertyMetadata(0.0, PixelShaderConstantCallback(4)));
+    public static readonly DependencyProperty RecoveryProperty =
+        DependencyProperty.Register("Recovery", typeof(double), typeof(RdcDividerGlowEffect),
+            new UIPropertyMetadata(0.0, PixelShaderConstantCallback(5)));
+    public static readonly DependencyProperty StartupProperty =
+        DependencyProperty.Register("Startup", typeof(double), typeof(RdcDividerGlowEffect),
+            new UIPropertyMetadata(0.0, PixelShaderConstantCallback(6)));
+    public static readonly DependencyProperty PassIndexProperty =
+        DependencyProperty.Register("PassIndex", typeof(double), typeof(RdcDividerGlowEffect),
+            new UIPropertyMetadata(0.0, PixelShaderConstantCallback(7)));
 
     public Brush Input { get { return (Brush)GetValue(InputProperty); } set { SetValue(InputProperty,value); } }
     public double Time { get { return (double)GetValue(TimeProperty); } set { SetValue(TimeProperty,value); } }
     public double ViewportWidth { get { return (double)GetValue(ViewportWidthProperty); } set { SetValue(ViewportWidthProperty,value); } }
     public double Intensity { get { return (double)GetValue(IntensityProperty); } set { SetValue(IntensityProperty,value); } }
     public double Activity { get { return (double)GetValue(ActivityProperty); } set { SetValue(ActivityProperty,value); } }
+    public double Fault { get { return (double)GetValue(FaultProperty); } set { SetValue(FaultProperty,value); } }
+    public double Recovery { get { return (double)GetValue(RecoveryProperty); } set { SetValue(RecoveryProperty,value); } }
+    public double Startup { get { return (double)GetValue(StartupProperty); } set { SetValue(StartupProperty,value); } }
+    public double PassIndex { get { return (double)GetValue(PassIndexProperty); } set { SetValue(PassIndexProperty,value); } }
 
     public RdcDividerGlowEffect(string shaderPath) {
         PixelShader ps = new PixelShader();
@@ -2032,6 +2073,10 @@ public sealed class RdcDividerGlowEffect : ShaderEffect {
         UpdateShaderValue(ViewportWidthProperty);
         UpdateShaderValue(IntensityProperty);
         UpdateShaderValue(ActivityProperty);
+        UpdateShaderValue(FaultProperty);
+        UpdateShaderValue(RecoveryProperty);
+        UpdateShaderValue(StartupProperty);
+        UpdateShaderValue(PassIndexProperty);
     }
 }
 
@@ -2041,18 +2086,34 @@ public sealed class RdcGpuDividerHost : ElementHost {
     private readonly System.Windows.Forms.Timer visibilityTimer;
     private readonly RdcDividerGlowEffect causticEffect;
     private readonly RdcDividerGlowEffect popupCausticEffect;
+    private readonly RdcDividerGlowEffect detailCausticEffect;
     private readonly RdcDividerGlowEffect particleEffect;
     private readonly RdcDividerGlowEffect particleEffectB;
+    private readonly RdcDividerGlowEffect particleEffectC;
+    private readonly RdcDividerGlowEffect particleEffectD;
+    private readonly RdcDividerGlowEffect coreEffect;
+    private readonly RdcDividerGlowEffect coreEffectB;
+    private readonly RdcDividerGlowEffect coreEffectC;
+    private readonly RdcDividerGlowEffect coreEffectD;
     private readonly Popup particlePopup;
     private readonly Rectangle particleSurface;
     private readonly System.Windows.Controls.Grid particleLayer;
+    private readonly System.Windows.Controls.Grid popupRoot;
     private readonly System.Windows.Controls.Grid root;
+    private readonly SolidColorBrush stateRailBrush;
     private double activity;
     private double targetActivity;
     private double lastFrameSeconds;
     private double animationTime;
+    private double faultBlend;
+    private double startupBlend;
+    private double recoveryBlend;
+    private double recoveryAge;
+    private bool recoveryActive;
     private bool interactiveMove;
     private bool renderPaused;
+    private bool faultMode;
+    private bool startupMode;
     private IntPtr particlePopupHwnd = IntPtr.Zero;
     private int lastPopupX = Int32.MinValue;
     private int lastPopupY = Int32.MinValue;
@@ -2075,6 +2136,7 @@ public sealed class RdcGpuDividerHost : ElementHost {
     const uint SWP_NOZORDER = 0x0004;
     const uint SWP_NOACTIVATE = 0x0010;
     const uint SWP_SHOWWINDOW = 0x0040;
+    static readonly IntPtr HWND_TOP = IntPtr.Zero;
     static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
 
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hWnd,int nIndex);
@@ -2188,21 +2250,106 @@ public sealed class RdcGpuDividerHost : ElementHost {
         return IsFullyOccluded(ownerForm.Handle);
     }
 
+    private static System.Windows.Media.Color BlendColor(
+        System.Windows.Media.Color a,
+        System.Windows.Media.Color b,
+        double amount
+    ) {
+        float t=(float)Math.Min(1.0,Math.Max(0.0,amount));
+        return System.Windows.Media.Color.FromScRgb(
+            1.0f,
+            a.ScR+(b.ScR-a.ScR)*t,
+            a.ScG+(b.ScG-a.ScG)*t,
+            a.ScB+(b.ScB-a.ScB)*t
+        );
+    }
+
     private void ApplyCurrentFrame() {
         causticEffect.Time = animationTime;
         popupCausticEffect.Time = animationTime;
+        detailCausticEffect.Time = animationTime;
         particleEffect.Time = animationTime;
         particleEffectB.Time = animationTime + 11.37;
+        particleEffectC.Time = animationTime + 23.71;
+        particleEffectD.Time = animationTime + 35.08;
+        coreEffect.Time = animationTime;
+        coreEffectB.Time = animationTime + 11.37;
+        coreEffectC.Time = animationTime + 23.71;
+        coreEffectD.Time = animationTime + 35.08;
+
+        causticEffect.Fault = faultBlend;
+        popupCausticEffect.Fault = faultBlend;
+        detailCausticEffect.Fault = faultBlend;
+        causticEffect.Recovery = recoveryBlend;
+        popupCausticEffect.Recovery = recoveryBlend;
+        detailCausticEffect.Recovery = recoveryBlend;
+        causticEffect.Startup = startupBlend;
+        popupCausticEffect.Startup = startupBlend;
+        detailCausticEffect.Startup = startupBlend;
+
         particleEffect.Activity = activity;
         particleEffectB.Activity = activity;
+        particleEffectC.Activity = activity;
+        particleEffectD.Activity = activity;
+        coreEffect.Activity = activity;
+        coreEffectB.Activity = activity;
+        coreEffectC.Activity = activity;
+        coreEffectD.Activity = activity;
+
+        particleEffect.Fault = faultBlend;
+        particleEffectB.Fault = faultBlend;
+        particleEffectC.Fault = faultBlend;
+        particleEffectD.Fault = faultBlend;
+        coreEffect.Fault = faultBlend;
+        coreEffectB.Fault = faultBlend;
+        coreEffectC.Fault = faultBlend;
+        coreEffectD.Fault = faultBlend;
+
+        particleEffect.Recovery = recoveryBlend;
+        particleEffectB.Recovery = recoveryBlend;
+        particleEffectC.Recovery = recoveryBlend;
+        particleEffectD.Recovery = recoveryBlend;
+        coreEffect.Recovery = recoveryBlend;
+        coreEffectB.Recovery = recoveryBlend;
+        coreEffectC.Recovery = recoveryBlend;
+        coreEffectD.Recovery = recoveryBlend;
+
+        particleEffect.Startup = startupBlend;
+        particleEffectB.Startup = startupBlend;
+        particleEffectC.Startup = startupBlend;
+        particleEffectD.Startup = startupBlend;
+        coreEffect.Startup = startupBlend;
+        coreEffectB.Startup = startupBlend;
+        coreEffectC.Startup = startupBlend;
+        coreEffectD.Startup = startupBlend;
+
+        System.Windows.Media.Color rail = BlendColor(
+            System.Windows.Media.Color.FromRgb(123,95,162),
+            System.Windows.Media.Color.FromRgb(255,199,41),
+            startupBlend
+        );
+        rail = BlendColor(
+            rail,
+            System.Windows.Media.Color.FromRgb(242,36,51),
+            faultBlend
+        );
+        rail = BlendColor(
+            rail,
+            System.Windows.Media.Color.FromRgb(46,235,89),
+            recoveryBlend
+        );
+        stateRailBrush.Color=rail;
 
         if (renderPaused || interactiveMove) {
-            particleLayer.Opacity = 0.0;
+            popupRoot.Opacity = 0.0;
             return;
         }
 
-        particleLayer.Opacity =
-            (targetActivity > 0.0 || activity > 0.002)
+        double effectiveTarget = (startupMode || faultMode || recoveryActive || recoveryBlend > 0.002)
+            ? 1.0
+            : targetActivity;
+        popupRoot.Opacity =
+            (effectiveTarget > 0.0 || activity > 0.002)
             ? Math.Min(1.0,Math.Max(0.0,activity*1.15))
             : 0.0;
     }
@@ -2215,14 +2362,16 @@ public sealed class RdcGpuDividerHost : ElementHost {
 
         if (paused) {
             animationTimer.Stop();
-            particleLayer.Opacity = 0.0;
+            popupRoot.Opacity = 0.0;
             return;
         }
 
         // Do not replay a stale fade after the window was hidden for a while.
         // Resume the frozen animation phase, but snap activity to the current
         // requested state.
-        activity = targetActivity;
+        activity = (startupMode || faultMode || recoveryActive || recoveryBlend > 0.002)
+            ? 1.0
+            : targetActivity;
         lastFrameSeconds = watch.Elapsed.TotalSeconds;
 
         if (!interactiveMove) {
@@ -2241,20 +2390,59 @@ public sealed class RdcGpuDividerHost : ElementHost {
     }
 
     private void VisibilityTimer_Tick(object sender,EventArgs e) {
+        // Repair sandwich ownership/order only while RDC Relay is the active
+        // application. Never raise the popups while another app owns focus.
+        if (ownerForm != null &&
+            !ownerForm.IsDisposed &&
+            System.Windows.Forms.Form.ActiveForm == ownerForm) {
+            NormalizePopupZOrder();
+        }
         UpdateRenderingVisibility();
+    }
+
+    private void NormalizePopupWindow(IntPtr hwnd) {
+        if (hwnd == IntPtr.Zero) return;
+
+        if (ownerForm != null &&
+            !ownerForm.IsDisposed &&
+            ownerForm.Handle != IntPtr.Zero) {
+            SetWindowLongPtr(hwnd,GWLP_HWNDPARENT,ownerForm.Handle);
+        }
+
+        int exStyle = GetWindowLong(hwnd,GWL_EXSTYLE);
+        if ((exStyle & WS_EX_TOPMOST) != 0) {
+            SetWindowLong(hwnd,GWL_EXSTYLE,exStyle & ~WS_EX_TOPMOST);
+            SetWindowPos(
+                hwnd,
+                HWND_NOTOPMOST,
+                0,0,0,0,
+                SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        }
     }
 
     private void NormalizePopupZOrder() {
         if (particlePopupHwnd == IntPtr.Zero) return;
-        int exStyle = GetWindowLong(particlePopupHwnd,GWL_EXSTYLE);
-        if ((exStyle & WS_EX_TOPMOST) != 0)
-            SetWindowLong(particlePopupHwnd,GWL_EXSTYLE,exStyle & ~WS_EX_TOPMOST);
-        SetWindowPos(particlePopupHwnd,HWND_NOTOPMOST,0,0,0,0,
-            SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+
+        NormalizePopupWindow(particlePopupHwnd);
+
+        if (ownerForm == null ||
+            ownerForm.IsDisposed ||
+            ownerForm.Handle == IntPtr.Zero)
+            return;
+
+        // One owned non-topmost HWND contains the whole sandwich. This avoids
+        // cross-popup ShaderEffect failures while keeping the popup above the
+        // RDC Relay owner and below unrelated applications.
+        SetWindowPos(
+            particlePopupHwnd,
+            HWND_TOP,
+            0,0,0,0,
+            SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_SHOWWINDOW);
     }
 
     private void PositionPopup() {
         if (!particlePopup.IsOpen || particlePopupHwnd == IntPtr.Zero || !IsHandleCreated) return;
+
         RECT rect;
         if (!GetWindowRect(Handle,out rect)) return;
         int w = Math.Max(1,rect.Right-rect.Left);
@@ -2263,20 +2451,28 @@ public sealed class RdcGpuDividerHost : ElementHost {
         int y = rect.Top - 13;
         if (x==lastPopupX && y==lastPopupY && w==lastPopupW && h==lastPopupH) return;
         lastPopupX=x; lastPopupY=y; lastPopupW=w; lastPopupH=h;
-        SetWindowPos(particlePopupHwnd,IntPtr.Zero,x,y,w,h,
+        SetWindowPos(
+            particlePopupHwnd,
+            IntPtr.Zero,
+            x,y,w,h,
             SWP_NOZORDER|SWP_NOACTIVATE|SWP_SHOWWINDOW);
     }
 
     private void EnsurePopupOpen() {
-        if (particlePopup.IsOpen) return;
-        particlePopup.Width = Math.Max(1.0,root.ActualWidth);
-        particlePopup.IsOpen = true;
+        particlePopup.Width=Math.Max(1.0,root.ActualWidth);
+
+        if (!particlePopup.IsOpen)
+            particlePopup.IsOpen=true;
+
+        NormalizePopupZOrder();
+        lastPopupX=Int32.MinValue;
+        PositionPopup();
     }
 
     private void ClosePopup() {
-        if (!particlePopup.IsOpen) return;
-        particlePopup.IsOpen = false;
-        particlePopupHwnd = IntPtr.Zero;
+        if (particlePopup.IsOpen) particlePopup.IsOpen=false;
+        particlePopupHwnd=IntPtr.Zero;
+
         lastPopupX=Int32.MinValue; lastPopupY=Int32.MinValue;
         lastPopupW=-1; lastPopupH=-1;
     }
@@ -2307,10 +2503,9 @@ public sealed class RdcGpuDividerHost : ElementHost {
     }
 
     private void OwnerDeactivated(object sender,EventArgs e) {
-        NormalizePopupZOrder();
-        // Z-order can still be settling during Deactivate. The 1 Hz visibility
-        // probe will detect full occlusion without treating mere focus loss as
-        // a reason to stop rendering.
+        // Do not raise the popup while another application is taking focus.
+        // Native ownership keeps it above RDC Relay inside the owner's Z group;
+        // the 1 Hz visibility probe handles genuine occlusion independently.
     }
 
     private void Animate(object sender,EventArgs e) {
@@ -2324,11 +2519,54 @@ public sealed class RdcGpuDividerHost : ElementHost {
         lastFrameSeconds = realNow;
         animationTime += dt;
 
-        double rate = targetActivity > activity ? 5.6 : 3.3;
+        double effectiveTarget = (startupMode || faultMode || recoveryActive || recoveryBlend > 0.002)
+            ? 1.0
+            : targetActivity;
+        double rate = effectiveTarget > activity ? 5.6 : 3.3;
         double blend = 1.0 - Math.Exp(-rate*dt);
-        activity += (targetActivity-activity)*blend;
-        if (activity < 0.001 && targetActivity <= 0.0) activity=0.0;
-        if (activity > 0.999 && targetActivity >= 1.0) activity=1.0;
+        activity += (effectiveTarget-activity)*blend;
+        if (activity < 0.001 && effectiveTarget <= 0.0) activity=0.0;
+        if (activity > 0.999 && effectiveTarget >= 1.0) activity=1.0;
+
+        // Startup uses the same smooth palette language as the other states.
+        double startupTarget = startupMode ? 1.0 : 0.0;
+        double startupRate = startupTarget > startupBlend ? 4.4 : 3.0;
+        double startupMix = 1.0 - Math.Exp(-startupRate*dt);
+        startupBlend += (startupTarget-startupBlend)*startupMix;
+        if (startupBlend < 0.001 && startupTarget <= 0.0) startupBlend=0.0;
+        if (startupBlend > 0.999 && startupTarget >= 1.0) startupBlend=1.0;
+
+        // Palette transitions are intentionally softer than activity changes:
+        // fault enters and clears as a visible crossfade instead of a hard snap.
+        double faultTarget = faultMode ? 1.0 : 0.0;
+        double faultRate = faultTarget > faultBlend ? 5.0 : 3.6;
+        double faultMix = 1.0 - Math.Exp(-faultRate*dt);
+        faultBlend += (faultTarget-faultBlend)*faultMix;
+        if (faultBlend < 0.001 && faultTarget <= 0.0) faultBlend=0.0;
+        if (faultBlend > 0.999 && faultTarget >= 1.0) faultBlend=1.0;
+
+        // One strong recovery flash: fast recognition, then a deliberately
+        // gentle return to the normal palette. No repeated blinking.
+        if (recoveryActive) {
+            recoveryAge += dt;
+            if (recoveryAge < 0.16) {
+                double t = recoveryAge / 0.16;
+                recoveryBlend = t*t*(3.0-2.0*t);
+            } else if (recoveryAge < 0.36) {
+                recoveryBlend = 1.0;
+            } else if (recoveryAge < 2.76) {
+                double t = (recoveryAge-0.36) / 2.40;
+                double smooth = t*t*t*(t*(t*6.0-15.0)+10.0);
+                recoveryBlend = 1.0-smooth;
+            } else {
+                recoveryBlend = 0.0;
+                recoveryActive = false;
+            }
+        } else if (recoveryBlend > 0.0) {
+            double recoveryMix = 1.0-Math.Exp(-7.0*dt);
+            recoveryBlend += (0.0-recoveryBlend)*recoveryMix;
+            if (recoveryBlend < 0.001) recoveryBlend=0.0;
+        }
 
         ApplyCurrentFrame();
 
@@ -2339,14 +2577,21 @@ public sealed class RdcGpuDividerHost : ElementHost {
             return;
         }
 
-        if (targetActivity > 0.0 || activity > 0.002) {
+        if (startupMode || startupBlend > 0.002 ||
+            faultMode || recoveryActive || recoveryBlend > 0.002 ||
+            targetActivity > 0.0 || activity > 0.002) {
             if (!particlePopup.IsOpen)
                 EnsurePopupOpen();
             PositionPopup();
         }
     }
 
-    public RdcGpuDividerHost(string causticShaderPath,string particleShaderPath) {
+    public RdcGpuDividerHost(
+        string causticShaderPath,
+        string particleShaderPath,
+        string causticDetailShaderPath,
+        string particleCoreShaderPath
+    ) {
         BackColor = System.Drawing.Color.FromArgb(18,20,23);
         TabStop = false;
 
@@ -2356,15 +2601,52 @@ public sealed class RdcGpuDividerHost : ElementHost {
         popupCausticEffect = new RdcDividerGlowEffect(causticShaderPath);
         popupCausticEffect.Intensity=1.0;
 
+        detailCausticEffect = new RdcDividerGlowEffect(causticDetailShaderPath);
+        detailCausticEffect.Intensity=1.0;
+
         particleEffect = new RdcDividerGlowEffect(particleShaderPath);
         particleEffect.Intensity=0.58;
+        particleEffect.PassIndex=0.0;
 
         particleEffectB = new RdcDividerGlowEffect(particleShaderPath);
-        particleEffectB.Intensity=0.581;
+        particleEffectB.Intensity=0.58;
+        particleEffectB.PassIndex=1.0;
+
+        // A second A/B pair doubles visible particle density without making the
+        // ps_3_0 bytecode heavier. Time offsets keep the trajectories independent.
+        particleEffectC = new RdcDividerGlowEffect(particleShaderPath);
+        particleEffectC.Intensity=0.58;
+        particleEffectC.PassIndex=1.0;
+
+        particleEffectD = new RdcDividerGlowEffect(particleShaderPath);
+        particleEffectD.Intensity=0.58;
+        particleEffectD.PassIndex=1.0;
+
+        coreEffect = new RdcDividerGlowEffect(particleCoreShaderPath);
+        coreEffect.Intensity=0.58;
+        coreEffect.Activity=1.0;
+        coreEffect.PassIndex=0.0;
+
+        coreEffectB = new RdcDividerGlowEffect(particleCoreShaderPath);
+        coreEffectB.Intensity=0.58;
+        coreEffectB.Activity=1.0;
+        coreEffectB.PassIndex=1.0;
+
+        coreEffectC = new RdcDividerGlowEffect(particleCoreShaderPath);
+        coreEffectC.Intensity=0.58;
+        coreEffectC.Activity=1.0;
+        coreEffectC.PassIndex=1.0;
+
+        coreEffectD = new RdcDividerGlowEffect(particleCoreShaderPath);
+        coreEffectD.Intensity=0.58;
+        coreEffectD.Activity=1.0;
+        coreEffectD.PassIndex=1.0;
 
         root = new System.Windows.Controls.Grid();
         root.Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(18,20,23));
         root.IsHitTestVisible=false;
+
+        stateRailBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(123,95,162));
         root.SnapsToDevicePixels=true;
         root.UseLayoutRounding=true;
 
@@ -2378,14 +2660,14 @@ public sealed class RdcGpuDividerHost : ElementHost {
         Rectangle topRail = new Rectangle();
         topRail.Height=1.0;
         topRail.VerticalAlignment=VerticalAlignment.Top;
-        topRail.Fill=new SolidColorBrush(System.Windows.Media.Color.FromRgb(123,95,162));
+        topRail.Fill=stateRailBrush;
         topRail.IsHitTestVisible=false;
         root.Children.Add(topRail);
 
         Rectangle bottomRail = new Rectangle();
         bottomRail.Height=1.0;
         bottomRail.VerticalAlignment=VerticalAlignment.Bottom;
-        bottomRail.Fill=new SolidColorBrush(System.Windows.Media.Color.FromRgb(123,95,162));
+        bottomRail.Fill=stateRailBrush;
         bottomRail.IsHitTestVisible=false;
         root.Children.Add(bottomRail);
 
@@ -2407,33 +2689,76 @@ public sealed class RdcGpuDividerHost : ElementHost {
         popupBand.Children.Add(particleSurface);
         particleSource.Children.Add(popupBand);
 
-        System.Windows.Controls.Grid popupRails = new System.Windows.Controls.Grid();
-        popupRails.Height=7.0;
-        popupRails.VerticalAlignment=VerticalAlignment.Center;
-        popupRails.Background=Brushes.Transparent;
-        popupRails.IsHitTestVisible=false;
-
-        Rectangle popupTopRail = new Rectangle();
-        popupTopRail.Height=1.0;
-        popupTopRail.VerticalAlignment=VerticalAlignment.Top;
-        popupTopRail.Fill=new SolidColorBrush(System.Windows.Media.Color.FromRgb(123,95,162));
-        popupRails.Children.Add(popupTopRail);
-
-        Rectangle popupBottomRail = new Rectangle();
-        popupBottomRail.Height=1.0;
-        popupBottomRail.VerticalAlignment=VerticalAlignment.Bottom;
-        popupBottomRail.Fill=new SolidColorBrush(System.Windows.Media.Color.FromRgb(123,95,162));
-        popupRails.Children.Add(popupBottomRail);
-
-        particleSource.Children.Add(popupRails);
+        // The halo must sit above the static rails but below the caustic-detail
+        // and white-core layers. Do not put rails inside the particle shader
+        // input: that was one source of the grey-film look.
         particleSource.Effect=particleEffect;
 
         particleLayer = new System.Windows.Controls.Grid();
         particleLayer.Background=Brushes.Transparent;
         particleLayer.IsHitTestVisible=false;
-        particleLayer.Opacity=0.0;
         particleLayer.Children.Add(particleSource);
         particleLayer.Effect=particleEffectB;
+
+        System.Windows.Controls.Grid particleLayerC = new System.Windows.Controls.Grid();
+        particleLayerC.Background=Brushes.Transparent;
+        particleLayerC.IsHitTestVisible=false;
+        particleLayerC.Children.Add(particleLayer);
+        particleLayerC.Effect=particleEffectC;
+
+        System.Windows.Controls.Grid particleLayerD = new System.Windows.Controls.Grid();
+        particleLayerD.Background=Brushes.Transparent;
+        particleLayerD.IsHitTestVisible=false;
+        particleLayerD.Children.Add(particleLayerC);
+        particleLayerD.Effect=particleEffectD;
+
+        popupRoot = new System.Windows.Controls.Grid();
+        popupRoot.Background=Brushes.Transparent;
+        popupRoot.IsHitTestVisible=false;
+        popupRoot.Opacity=0.0;
+        popupRoot.Children.Add(particleLayerD);
+
+        // Same visual sandwich as the selected lab variant, but all three
+        // layers live inside one native popup HWND:
+        // halo -> transparent caustic detail -> white soft core.
+        System.Windows.Controls.Grid detailBand = new System.Windows.Controls.Grid();
+        detailBand.Height=7.0;
+        detailBand.VerticalAlignment=VerticalAlignment.Center;
+        detailBand.Background=Brushes.Transparent;
+        detailBand.IsHitTestVisible=false;
+
+        Rectangle detailSurface = new Rectangle();
+        detailSurface.Fill=Brushes.White;
+        detailSurface.Stretch=Stretch.Fill;
+        detailSurface.Effect=detailCausticEffect;
+        detailSurface.IsHitTestVisible=false;
+        detailBand.Children.Add(detailSurface);
+        popupRoot.Children.Add(detailBand);
+
+        Rectangle coreSeed = new Rectangle();
+        coreSeed.Fill=Brushes.White;
+        coreSeed.Stretch=Stretch.Fill;
+        coreSeed.Effect=coreEffect;
+        coreSeed.IsHitTestVisible=false;
+
+        System.Windows.Controls.Grid coreLayer = new System.Windows.Controls.Grid();
+        coreLayer.Background=Brushes.Transparent;
+        coreLayer.IsHitTestVisible=false;
+        coreLayer.Children.Add(coreSeed);
+        coreLayer.Effect=coreEffectB;
+
+        System.Windows.Controls.Grid coreLayerC = new System.Windows.Controls.Grid();
+        coreLayerC.Background=Brushes.Transparent;
+        coreLayerC.IsHitTestVisible=false;
+        coreLayerC.Children.Add(coreLayer);
+        coreLayerC.Effect=coreEffectC;
+
+        System.Windows.Controls.Grid coreLayerD = new System.Windows.Controls.Grid();
+        coreLayerD.Background=Brushes.Transparent;
+        coreLayerD.IsHitTestVisible=false;
+        coreLayerD.Children.Add(coreLayerC);
+        coreLayerD.Effect=coreEffectD;
+        popupRoot.Children.Add(coreLayerD);
 
         particlePopup = new Popup();
         particlePopup.AllowsTransparency=true;
@@ -2442,7 +2767,7 @@ public sealed class RdcGpuDividerHost : ElementHost {
         particlePopup.PlacementTarget=null;
         particlePopup.Placement=PlacementMode.AbsolutePoint;
         particlePopup.Height=33.0;
-        particlePopup.Child=particleLayer;
+        particlePopup.Child=popupRoot;
         particlePopup.IsHitTestVisible=false;
         particlePopup.Focusable=false;
 
@@ -2454,10 +2779,8 @@ public sealed class RdcGpuDividerHost : ElementHost {
                 int exStyle=GetWindowLong(particlePopupHwnd,GWL_EXSTYLE);
                 exStyle=(exStyle|WS_EX_TRANSPARENT|WS_EX_NOACTIVATE)&~WS_EX_TOPMOST;
                 SetWindowLong(particlePopupHwnd,GWL_EXSTYLE,exStyle);
-                if (ownerForm!=null && ownerForm.Handle!=IntPtr.Zero)
-                    SetWindowLongPtr(particlePopupHwnd,GWLP_HWNDPARENT,ownerForm.Handle);
-                NormalizePopupZOrder();
                 lastPopupX=Int32.MinValue; lastPopupY=Int32.MinValue;
+                NormalizePopupZOrder();
                 PositionPopup();
             }
         };
@@ -2480,6 +2803,8 @@ public sealed class RdcGpuDividerHost : ElementHost {
             // HWND alive for the lifetime of the window. Activity only changes
             // opacity/shader constants and therefore cannot steal foreground.
             EnsurePopupOpen();
+            NormalizePopupZOrder();
+            PositionPopup();
             visibilityTimer.Start();
             UpdateRenderingVisibility();
         };
@@ -2487,8 +2812,15 @@ public sealed class RdcGpuDividerHost : ElementHost {
         root.SizeChanged += delegate(object sender,SizeChangedEventArgs e) {
             double w=Math.Max(1.0,root.ActualWidth);
             popupCausticEffect.ViewportWidth=w;
+            detailCausticEffect.ViewportWidth=w;
             particleEffect.ViewportWidth=w;
             particleEffectB.ViewportWidth=w;
+            particleEffectC.ViewportWidth=w;
+            particleEffectD.ViewportWidth=w;
+            coreEffect.ViewportWidth=w;
+            coreEffectB.ViewportWidth=w;
+            coreEffectC.ViewportWidth=w;
+            coreEffectD.ViewportWidth=w;
             if (particlePopup.IsOpen) particlePopup.Width=w;
         };
 
@@ -2497,8 +2829,15 @@ public sealed class RdcGpuDividerHost : ElementHost {
         targetActivity=0.0;
         lastFrameSeconds=0.0;
         animationTime=0.0;
+        faultBlend=0.0;
+        startupBlend=0.0;
+        recoveryBlend=0.0;
+        recoveryAge=0.0;
+        recoveryActive=false;
         interactiveMove=false;
         renderPaused=false;
+        faultMode=false;
+        startupMode=false;
 
         watch=Stopwatch.StartNew();
 
@@ -2515,10 +2854,193 @@ public sealed class RdcGpuDividerHost : ElementHost {
     public int RenderTier { get { return RenderCapability.Tier; } }
     public double ActivityLevel { get { return activity; } }
     public bool ActivityRequested { get { return targetActivity > 0.5; } }
+    public bool FaultRequested { get { return faultMode; } }
+    public double FaultBlend { get { return faultBlend; } }
+    public bool StartupRequested { get { return startupMode; } }
+    public double StartupBlend { get { return startupBlend; } }
+    public double RecoveryBlend { get { return recoveryBlend; } }
+    public bool RecoveryActive { get { return recoveryActive; } }
     public bool RenderingPaused { get { return renderPaused; } }
+    public bool PassConfigurationValid {
+        get {
+            return
+                particleEffect.PassIndex < 0.5 &&
+                particleEffectB.PassIndex > 0.5 &&
+                particleEffectC.PassIndex > 0.5 &&
+                particleEffectD.PassIndex > 0.5 &&
+                coreEffect.PassIndex < 0.5 &&
+                coreEffectB.PassIndex > 0.5 &&
+                coreEffectC.PassIndex > 0.5 &&
+                coreEffectD.PassIndex > 0.5 &&
+                Math.Abs(particleEffect.Intensity-particleEffectB.Intensity) < 0.000001 &&
+                Math.Abs(particleEffect.Intensity-particleEffectC.Intensity) < 0.000001 &&
+                Math.Abs(particleEffect.Intensity-particleEffectD.Intensity) < 0.000001 &&
+                Math.Abs(coreEffect.Intensity-coreEffectB.Intensity) < 0.000001 &&
+                Math.Abs(coreEffect.Intensity-coreEffectC.Intensity) < 0.000001 &&
+                Math.Abs(coreEffect.Intensity-coreEffectD.Intensity) < 0.000001;
+        }
+    }
+
+    public string RunVisualSelfTest() {
+        const int width=640;
+        const int height=33;
+
+        // ShaderEffect rendering needs a real PresentationSource. Keep the
+        // transparent popup alive off-screen during the probe so WPF executes
+        // the same layered-window shader path used by the live divider.
+        particlePopup.Width=width;
+        particlePopup.Height=height;
+        particlePopup.HorizontalOffset=-10000.0;
+        particlePopup.VerticalOffset=-10000.0;
+        if (!particlePopup.IsOpen)
+            particlePopup.IsOpen=true;
+
+        activity=1.0;
+        targetActivity=1.0;
+        animationTime=7.25;
+        startupMode=false;
+        startupBlend=0.0;
+        faultMode=false;
+        faultBlend=0.0;
+        recoveryActive=false;
+        recoveryBlend=0.0;
+        renderPaused=false;
+        interactiveMove=false;
+        ApplyCurrentFrame();
+
+        popupRoot.Width=width;
+        popupRoot.Height=height;
+        popupRoot.Measure(new System.Windows.Size(width,height));
+        popupRoot.Arrange(new System.Windows.Rect(0,0,width,height));
+        popupRoot.UpdateLayout();
+        System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
+            System.Windows.Threading.DispatcherPriority.Render,
+            new Action(delegate { }));
+
+        System.Windows.Media.Imaging.RenderTargetBitmap bitmap =
+            new System.Windows.Media.Imaging.RenderTargetBitmap(
+                width,height,96.0,96.0,
+                System.Windows.Media.PixelFormats.Pbgra32);
+        bitmap.Render(popupRoot);
+
+        int stride=width*4;
+        byte[] pixels=new byte[stride*height];
+        bitmap.CopyPixels(pixels,stride,0);
+
+        int transparent=0;
+        int visible=0;
+        int chromatic=0;
+        long alphaSum=0;
+        long edgeAlphaSum=0;
+        int edgePixels=0;
+
+        for (int y=0;y<height;y++) {
+            for (int x=0;x<width;x++) {
+                int i=y*stride+x*4;
+                int b=pixels[i+0];
+                int g=pixels[i+1];
+                int r=pixels[i+2];
+                int a=pixels[i+3];
+                alphaSum+=a;
+
+                if (a<=8) transparent++;
+                if (a>=24) visible++;
+
+                int hi=Math.Max(r,Math.Max(g,b));
+                int lo=Math.Min(r,Math.Min(g,b));
+                if (a>=32 && (hi-lo)>=8) chromatic++;
+
+                if (y<4 || y>=height-4) {
+                    edgeAlphaSum+=a;
+                    edgePixels++;
+                }
+            }
+        }
+
+        int total=width*height;
+        double transparentRatio=(double)transparent/total;
+        double visibleRatio=(double)visible/total;
+        double chromaticRatio=(double)chromatic/total;
+        double meanAlpha=(double)alphaSum/total;
+        double edgeMeanAlpha=edgePixels>0 ? (double)edgeAlphaSum/edgePixels : 255.0;
+
+        string metrics=String.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            "transparent={0:F3}; visible={1:F3}; chromatic={2:F3}; meanAlpha={3:F1}; edgeMeanAlpha={4:F1}",
+            transparentRatio,visibleRatio,chromaticRatio,meanAlpha,edgeMeanAlpha);
+
+        bool softwareFallback =
+            transparentRatio<0.001 &&
+            visibleRatio>0.999 &&
+            chromaticRatio<0.001 &&
+            meanAlpha>254.0 &&
+            edgeMeanAlpha>254.0;
+
+        if (!softwareFallback) {
+            if (visibleRatio<0.005)
+                throw new InvalidOperationException("GPU divider rendered no visible particle/detail energy: "+metrics);
+            if (transparentRatio<0.05)
+                throw new InvalidOperationException("GPU divider lost transparent background (grey-film risk): "+metrics);
+            if (chromaticRatio<0.001)
+                throw new InvalidOperationException("GPU divider lost chromatic particle output: "+metrics);
+            if (edgeMeanAlpha>96.0)
+                throw new InvalidOperationException("GPU divider edge alpha is too high (grey-film risk): "+metrics);
+        }
+
+        particlePopup.IsOpen=false;
+        particlePopupHwnd=IntPtr.Zero;
+        particlePopup.HorizontalOffset=0.0;
+        particlePopup.VerticalOffset=0.0;
+        return (softwareFallback ? "offscreen-software-fallback; " : "gpu-rendered; ")+metrics;
+    }
 
     public void SetActivity(bool active) {
         targetActivity=active ? 1.0 : 0.0;
+    }
+
+    public void SetStartup(bool active) {
+        if (startupMode == active) return;
+        startupMode=active;
+
+        if (active) {
+            activity=Math.Max(activity,0.74);
+        }
+
+        if (!renderPaused) {
+            EnsurePopupOpen();
+            PositionPopup();
+            ApplyCurrentFrame();
+        }
+    }
+
+    public void SetFault(bool active) {
+        if (active) startupMode=false;
+        if (faultMode == active) return;
+        faultMode=active;
+
+        if (active) {
+            activity=Math.Max(activity,0.72);
+        }
+
+        if (!renderPaused) {
+            EnsurePopupOpen();
+            PositionPopup();
+            ApplyCurrentFrame();
+        }
+    }
+
+    public void BeginRecoveryFlash() {
+        startupMode=false;
+        faultMode=false;
+        recoveryActive=true;
+        recoveryAge=0.0;
+        activity=Math.Max(activity,0.88);
+
+        if (!renderPaused) {
+            EnsurePopupOpen();
+            PositionPopup();
+            ApplyCurrentFrame();
+        }
     }
 
     public void SetInteractiveMove(bool active) {
@@ -2534,7 +3056,7 @@ public sealed class RdcGpuDividerHost : ElementHost {
             PositionPopup();
             ApplyCurrentFrame();
         } else {
-            particleLayer.Opacity=0.0;
+            popupRoot.Opacity=0.0;
         }
     }
 
@@ -2543,8 +3065,15 @@ public sealed class RdcGpuDividerHost : ElementHost {
         double w=Math.Max(1.0,ClientSize.Width);
         causticEffect.ViewportWidth=w;
         popupCausticEffect.ViewportWidth=w;
+        detailCausticEffect.ViewportWidth=w;
         particleEffect.ViewportWidth=w;
         particleEffectB.ViewportWidth=w;
+        particleEffectC.ViewportWidth=w;
+        particleEffectD.ViewportWidth=w;
+        coreEffect.ViewportWidth=w;
+        coreEffectB.ViewportWidth=w;
+        coreEffectC.ViewportWidth=w;
+        coreEffectD.ViewportWidth=w;
         if (particlePopup.IsOpen) particlePopup.Width=w;
     }
 
@@ -2574,10 +3103,14 @@ public sealed class RdcGpuDividerHost : ElementHost {
     'WindowsBase','PresentationCore','PresentationFramework','WindowsFormsIntegration','System.Xaml'
 )
 $causticShaderPath = Join-Path $root 'divider-caustic.ps'
+$causticDetailShaderPath = Join-Path $root 'divider-caustic-detail.ps'
 $particleShaderPath = Join-Path $root 'divider-particles.ps'
+$particleCoreShaderPath = Join-Path $root 'divider-particles-core.ps'
 $gpuDividerAvailable =
     (Test-Path -LiteralPath $causticShaderPath) -and
-    (Test-Path -LiteralPath $particleShaderPath)
+    (Test-Path -LiteralPath $causticDetailShaderPath) -and
+    (Test-Path -LiteralPath $particleShaderPath) -and
+    (Test-Path -LiteralPath $particleCoreShaderPath)
 
 [Windows.Forms.Application]::EnableVisualStyles()
 $form = New-Object Windows.Forms.Form
@@ -2635,10 +3168,10 @@ $title.Text = 'RDC Relay'
 $title.Dock = 'Fill'
 $title.TextAlign = 'MiddleLeft'
 $title.Font = New-Object Drawing.Font('Segoe UI',13,[Drawing.FontStyle]::Bold)
-$detail = New-Object Windows.Forms.Label
-$detail.Dock = 'Fill'
-$detail.TextAlign = 'MiddleLeft'
-$detail.ForeColor = [Drawing.Color]::Silver
+$statusDetail = New-Object Windows.Forms.Label
+$statusDetail.Dock = 'Fill'
+$statusDetail.TextAlign = 'MiddleLeft'
+$statusDetail.ForeColor = [Drawing.Color]::Silver
 $finish = New-Object RdcRoundedButton
 $finish.Text = 'Остановить'
 $finish.Glyph = [RdcButtonGlyph]::Stop
@@ -2691,7 +3224,7 @@ $devicesItem.Text = 'Управление устройствами…'
 $top.Controls.Add($statusDot,0,0)
 $top.SetRowSpan($statusDot,2)
 $top.Controls.Add($title,1,0)
-$top.Controls.Add($detail,1,1)
+$top.Controls.Add($statusDetail,1,1)
 $top.Controls.Add($actions,2,0)
 $top.SetRowSpan($actions,2)
 $bottom = New-Object Windows.Forms.TableLayoutPanel
@@ -2861,11 +3394,18 @@ $headerDivider.Add_Paint({
 })
 
 # GPU is decorative only. If shader bytecode or WPF shader initialization is
-# unavailable, the normal painted divider remains fully functional.
+# unavailable, the normal painted divider remains fully functional. Initialization
+# failures are recorded instead of being silently swallowed.
 $gpuDivider = $null
+$script:gpuDividerInitError = ''
 if ($gpuDividerAvailable) {
     try {
-        $gpuDivider = New-Object RdcGpuDividerHost -ArgumentList @($causticShaderPath,$particleShaderPath)
+        $gpuDivider = New-Object RdcGpuDividerHost -ArgumentList @(
+            $causticShaderPath,
+            $particleShaderPath,
+            $causticDetailShaderPath,
+            $particleCoreShaderPath
+        )
         $gpuDivider.Dock = 'Fill'
         $gpuDivider.Margin = New-Object Windows.Forms.Padding(0)
         $gpuDivider.TabStop = $false
@@ -2873,7 +3413,21 @@ if ($gpuDividerAvailable) {
         $headerDivider.Controls.Add($gpuDivider)
         $gpuDivider.BringToFront()
     } catch {
+        $script:gpuDividerInitError = $_.Exception.ToString()
         $gpuDivider = $null
+        if ($SelfTest) { throw }
+        try {
+            $gpuErrorPath = Join-Path $root 'rdc-relay-ui-errors.log'
+            $gpuEntry =
+                '[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') +
+                '] GPU divider initialization failed: ' +
+                $script:gpuDividerInitError + $nl
+            [IO.File]::AppendAllText(
+                $gpuErrorPath,
+                $gpuEntry,
+                (New-Object Text.UTF8Encoding($false))
+            )
+        } catch {}
     }
 }
 
@@ -2996,6 +3550,7 @@ function Stop-LogResizeInteraction {
         $script:logRedrawFrozen = $false
     }
     $logHost.Invalidate($true)
+    try { $log.RefreshViewport() } catch {}
 }
 function Get-EffectivePaneMinHeight {
     $available = [Math]::Max(1,$contentHost.ClientSize.Height)
@@ -3197,15 +3752,29 @@ $script:currentEventTruncated = $false
 $script:remoteLineBuffer = ''
 $script:seenFirstRemoteEvent = $false
 $script:tailNeedsMarker = $false
+$script:startupComplete = $false
 $script:activeToolCalls = 0
 $script:lastToolCompletedAt = $null
 $script:lastToolMarkerAt = $null
 $activityMinHoldSeconds = 10.0
 $activityMaxHoldSeconds = 30.0
 $activityInterruptedTimeoutSeconds = 60.0
+$remoteConnectGraceSeconds = 30.0
+$remoteReconnectDelaysSeconds = @(2.0,5.0,10.0)
 $script:activityHoldUntil = $null
 $script:activityGapEwmaSeconds = 3.0
 $script:activityHoldSeconds = $activityMinHoldSeconds
+$script:remoteReady = $false
+$script:remoteFaultLatched = $false
+$script:remoteFaultKind = ''
+$script:remoteFaultReason = ''
+$script:remoteFaultAt = $null
+$script:remoteConnectDeadline = $null
+$script:remoteInteractiveAuth = $false
+$script:autoReconnectAttempt = 0
+$script:autoReconnectAt = $null
+$script:supervisorRestarting = $false
+$script:preserveFaultOnStop = $false
 $uiStartupMaxChars = 30000
 $uiEventMaxChars = 8000
 $uiLogInitialTailBytes = 524288
@@ -3248,7 +3817,7 @@ function Apply-SystemFrameTheme {
 function Set-State([string]$name,[string]$message,[Drawing.Color]$color) {
     $statusDot.IndicatorColor = $color
     $title.Text = 'RDC Relay  —  ' + $name
-    $detail.Text = $message
+    $statusDetail.Text = $message
 }
 function Set-FinishButtonMode([bool]$running) {
     if ($running) {
@@ -3303,14 +3872,202 @@ function Set-DividerWorkState([bool]$working) {
         $gpuDivider.SetActivity($working)
     }
 }
+function Set-DividerStartupState([bool]$startup) {
+    if ($gpuDivider -and -not $gpuDivider.IsDisposed) {
+        $gpuDivider.SetStartup($startup)
+    }
+}
+function Set-DividerFaultState([bool]$fault) {
+    if ($gpuDivider -and -not $gpuDivider.IsDisposed) {
+        $gpuDivider.SetFault($fault)
+    }
+}
+function Start-DividerRecoveryFlash {
+    if ($gpuDivider -and -not $gpuDivider.IsDisposed) {
+        $gpuDivider.BeginRecoveryFlash()
+    }
+}
+function Schedule-AutoReconnect([string]$reason) {
+    if ($SelfTest -or $Preview -or $script:supervisorRestarting) { return }
+    if ($script:autoReconnectAt) { return }
+
+    $maxAttempts = $remoteReconnectDelaysSeconds.Count
+    if ($script:autoReconnectAttempt -ge $maxAttempts) {
+        $script:remoteFaultReason =
+            'Автовосстановление не удалось после ' + $maxAttempts +
+            ' попыток. Используйте «Переподключить».'
+        return
+    }
+
+    $delay = [double]$remoteReconnectDelaysSeconds[$script:autoReconnectAttempt]
+    $script:autoReconnectAt = (Get-Date).AddSeconds($delay)
+    Add-Log (
+        '[' + (Get-Date -Format 'HH:mm:ss') +
+        '] Автовосстановление: повтор через ' +
+        $delay.ToString('0.#',[Globalization.CultureInfo]::InvariantCulture) +
+        ' с. Причина: ' + $reason + $nl
+    )
+}
+function Set-RemoteFault(
+    [string]$kind,
+    [string]$reason,
+    [bool]$scheduleRestart = $false
+) {
+    $changed =
+        (-not $script:remoteFaultLatched) -or
+        ($script:remoteFaultKind -ne $kind) -or
+        ($script:remoteFaultReason -ne $reason)
+
+    $script:remoteFaultLatched = $true
+    $script:remoteFaultKind = $kind
+    $script:remoteFaultReason = $reason
+    if (-not $script:remoteFaultAt) { $script:remoteFaultAt = Get-Date }
+
+    if ($kind -ne 'tool-timeout') {
+        $script:remoteReady = $false
+    }
+
+    Set-DividerFaultState $true
+
+    if ($changed) {
+        Add-Log (
+            '[' + (Get-Date -Format 'HH:mm:ss') +
+            '] ПРОБЛЕМА: ' + $reason + $nl
+        )
+    }
+
+    if ($scheduleRestart) {
+        Schedule-AutoReconnect $reason
+    }
+}
+function Clear-RemoteFault {
+    $script:remoteFaultLatched = $false
+    $script:remoteFaultKind = ''
+    $script:remoteFaultReason = ''
+    $script:remoteFaultAt = $null
+    $script:autoReconnectAt = $null
+    Set-DividerFaultState $false
+}
+function Mark-RemoteReady([string]$marker = '') {
+    $wasReady = $script:remoteReady
+    $wasFault = $script:remoteFaultLatched
+    $preserveToolFault =
+        $script:remoteFaultLatched -and
+        $script:remoteFaultKind -in @('tool-failed','tool-timeout')
+
+    $script:remoteReady = $true
+    $script:remoteInteractiveAuth = $false
+    $script:remoteConnectDeadline = $null
+    $script:autoReconnectAttempt = 0
+    $script:autoReconnectAt = $null
+
+    # Presence/realtime readiness proves transport health, not successful tool
+    # execution. Keep an explicit tool failure latched red until a later tool
+    # call succeeds; transport/session faults may clear on verified readiness.
+    if (-not $preserveToolFault) {
+        Clear-RemoteFault
+    }
+
+    # Green is confirmation of a real Remote MCP ready transition, not merely
+    # proof that cmd/npx is alive. Do not flash green over a still-latched tool
+    # failure, and do not retrigger on duplicate ready markers.
+    if (-not $wasReady -and -not $preserveToolFault) {
+        Start-DividerRecoveryFlash
+        Add-Log (
+            '[' + (Get-Date -Format 'HH:mm:ss') +
+            $(if ($wasFault) { '] Remote MCP восстановлен.' } else { '] Remote MCP подключен и готов.' }) +
+            $nl
+        )
+    }
+}
+function Update-RemoteHealthFromLine([string]$line) {
+    if ([string]::IsNullOrWhiteSpace($line)) { return }
+
+    if (
+        $line.IndexOf('Desktop Commander Remote is connected',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('Presence tracked (device ',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        (
+            $script:remoteFaultKind -eq 'local-mcp' -and
+            $line.IndexOf('Local Desktop Commander MCP restarted; device is online again',[StringComparison]::OrdinalIgnoreCase) -ge 0
+        )
+    ) {
+        # A joined realtime channel is only half-ready. Upstream considers the
+        # device reachable only after Presence/capability publication succeeds
+        # and the local executor is healthy.
+        Mark-RemoteReady $line
+        return
+    }
+
+    if (
+        $line.IndexOf('Authenticating with Remote MCP server',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('waiting for authentication',[StringComparison]::OrdinalIgnoreCase) -ge 0
+    ) {
+        $script:remoteInteractiveAuth = $true
+        $script:remoteConnectDeadline = $null
+        return
+    }
+
+    if (
+        $line.IndexOf('Remote session expired and could not be renewed',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('Restart the terminal running Desktop Commander to reconnect',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('This device is now offline for remote calls',[StringComparison]::OrdinalIgnoreCase) -ge 0
+    ) {
+        Set-RemoteFault 'session-lost' 'Remote MCP потерял сессию и требует перезапуска.' $true
+        return
+    }
+
+    if ($line.IndexOf('Device startup failed:',[StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        Set-RemoteFault 'startup-failed' 'Desktop Commander не смог завершить запуск Remote MCP.' $true
+        return
+    }
+
+    if (
+        $line.IndexOf('Local Desktop Commander MCP went away (',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('Could not restart local Desktop Commander MCP:',[StringComparison]::OrdinalIgnoreCase) -ge 0
+    ) {
+        Set-RemoteFault 'local-mcp' 'Локальный Desktop Commander MCP потерял соединение; ожидаю встроенный перезапуск executor.' $false
+        $script:remoteConnectDeadline = $null
+        return
+    }
+
+    if (
+        -not $script:stopping -and (
+            $line.IndexOf('Channel error:',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('Channel closed',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('Device marked as offline',[StringComparison]::OrdinalIgnoreCase) -ge 0
+        )
+    ) {
+        # Realtime transport faults are recoverable inside Desktop Commander.
+        # Keep the process alive and stay red until Presence is published again.
+        Set-RemoteFault 'transport-offline' 'Сетевой канал Remote MCP потерян; ожидаю встроенное восстановление.' $false
+        $script:remoteConnectDeadline = $null
+        return
+    }
+
+    if (
+        $line.IndexOf('Device registered, but NOT reachable',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('Realtime channel is not open',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('Channel subscription timed out',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('Presence track remained unavailable',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('Presence published but the device row could not be updated',[StringComparison]::OrdinalIgnoreCase) -ge 0
+    ) {
+        Set-RemoteFault 'remote-unreachable' 'Remote MCP временно недоступен; ожидаю встроенное восстановление.' $false
+        $script:remoteConnectDeadline = $null
+        return
+    }
+}
 function Refresh-DividerActivitySession {
     $now = Get-Date
 
     if ($script:activeToolCalls -gt 0 -and $script:lastToolMarkerAt) {
-        if (($now - $script:lastToolMarkerAt).TotalSeconds -gt $activityInterruptedTimeoutSeconds) {
-            # Missing completion marker: keep the strip alive for up to 60 s,
-            # then treat the tool call as interrupted and return to idle.
+        $silentSeconds = ($now - $script:lastToolMarkerAt).TotalSeconds
+
+        if ($silentSeconds -gt $activityInterruptedTimeoutSeconds) {
+            # Silence is not a health failure. Completion markers may be delayed
+            # or lost, and a genuinely long tool call can be healthy. Retire the
+            # stale activity session back to idle without touching Remote health.
             $script:activeToolCalls = 0
+            $script:lastToolMarkerAt = $null
             $script:activityHoldUntil = $null
         }
     }
@@ -3347,6 +4104,7 @@ function Reset-CompactLogSession {
     $script:remoteLineBuffer = ''
     $script:seenFirstRemoteEvent = $false
     $script:tailNeedsMarker = $false
+    $script:startupComplete = $false
     $script:bannerStyled = $false
     Render-CompactLog
 }
@@ -3381,20 +4139,46 @@ function Append-CurrentEvent([string]$text) {
     $script:currentEvent += $note
     $script:currentEventTruncated = $true
 }
+function Test-StartupBoundaryLine([string]$line) {
+    if ([string]::IsNullOrWhiteSpace($line)) { return $false }
+    return (
+        $line.IndexOf(
+            'Run these in a new Terminal, or after disconnecting.',
+            [StringComparison]::OrdinalIgnoreCase
+        ) -ge 0 -or
+        $line.IndexOf(
+            'Retrying in the background; commands start working once you see',
+            [StringComparison]::OrdinalIgnoreCase
+        ) -ge 0
+    )
+}
 function Set-StartupFromProbe([string]$text) {
     $clean = Convert-ToCleanLogText $text
     if ([string]::IsNullOrWhiteSpace($clean)) { return }
     Update-AccountFromLog $clean
 
-    $markerPos = $clean.IndexOf('Received tool call ',[StringComparison]::Ordinal)
-    if ($markerPos -ge 0) {
-        $lineStart = $clean.LastIndexOf("`n",$markerPos)
-        if ($lineStart -lt 0) { $lineStart = 0 } else { $lineStart++ }
-        $clean = $clean.Substring(0,$lineStart)
+    $normalized = $clean.Replace("`r`n","`n").Replace("`r","`n")
+    $lines = $normalized -split "`n",-1
+    $headerLines = New-Object System.Collections.Generic.List[string]
+    $boundaryFound = $false
+
+    foreach ($line in $lines) {
+        if ($line.IndexOf('Received tool call ',[StringComparison]::Ordinal) -ge 0) {
+            $boundaryFound = $true
+            break
+        }
+
+        [void]$headerLines.Add($line)
+        if (Test-StartupBoundaryLine $line) {
+            $boundaryFound = $true
+            break
+        }
     }
 
-    if ($clean.Length -gt $uiStartupMaxChars) { $clean = $clean.Substring(0,$uiStartupMaxChars) }
-    $script:startupBlock = $clean.TrimEnd()
+    $header = [string]::Join($nl,$headerLines)
+    if ($header.Length -gt $uiStartupMaxChars) { $header = $header.Substring(0,$uiStartupMaxChars) }
+    $script:startupBlock = $header.TrimEnd()
+    if ($boundaryFound) { $script:startupComplete = $true }
 }
 function Color-LogToken([RdcLogBox]$target,[string]$token,[Drawing.Color]$color) {
     if (-not $target -or [string]::IsNullOrEmpty($token) -or $target.TextLength -eq 0) { return }
@@ -3457,6 +4241,10 @@ function Render-CompactLog {
                     $accentOrange
                 )
             }
+            # Apply the same 1 px RichEdit paragraph tightening that removed the
+            # horizontal seams in the startup banner to the entire header text,
+            # including Unicode box-drawing blocks such as Next / Commands.
+            $headerLog.ApplyCompactLineSpacing()
             Color-HeaderSemantics $headerLog $headerLog.TextLength
             Color-LogToken $headerLog '🔧' $accentOrange
             Color-LogToken $headerLog '🚀' $accentOrange
@@ -3500,6 +4288,10 @@ function Render-CompactLog {
     }
     $display = [string]::Join(($nl+$nl),$parts)
     if ($script:lastRenderedText -ceq $display) {
+        # RichEdit can defer repaint/reflow after a hidden/redraw-frozen update.
+        # Keep the viewport visually honest even when the logical text did not
+        # change between two render requests.
+        try { $log.RefreshViewport() } catch {}
         $vScroll.Invalidate()
         $hScroll.Invalidate()
         return
@@ -3531,9 +4323,13 @@ function Render-CompactLog {
             $log.Select(0,$log.TextLength)
             $log.SelectionColor = [Drawing.Color]::Gainsboro
         }
+        # Keep line-art glyphs visually joined in every RdcLogBox, not only the
+        # startup banner.
+        $log.ApplyCompactLineSpacing()
         Color-LogToken $log '🔧' $accentOrange
         Color-LogToken $log '🚀' $accentOrange
         Color-LogToken $log '✅' $accentPurple
+        Color-LogToken $log '❌' ([Drawing.Color]::LightCoral)
         Color-LogToken $log '🔌' $statusGreen
         Color-LogToken $log '⏳' $accentWait
         Color-LogToken $log '🌐' $accentNetwork
@@ -3549,18 +4345,23 @@ function Render-CompactLog {
             $log.SelectionColor = $log.ForeColor
         }
 
-        if ($shouldFollow) {
-            $vScroll.ScrollToEnd()
-            try { $finalY = $log.GetViewPosition().Y } catch {}
-        }
-        try { $log.SetViewPosition($finalX,$finalY) } catch {}
         $script:lastRenderedText = $display
     } finally {
         $log.EndUpdate()
         try { $log.SetSelectionHidden($false) } catch {}
     }
 
+    # Scroll only after redraw is re-enabled. RichEdit may not have completed
+    # line layout while WM_SETREDRAW is disabled, which can leave a one-line
+    # stale viewport until the user touches the scrollbar.
+    if ($shouldFollow) {
+        try {
+            $vScroll.ScrollToEnd()
+            $finalY = $log.GetViewPosition().Y
+        } catch {}
+    }
     try { $log.SetViewPosition($finalX,$finalY) } catch {}
+    try { $log.RefreshViewport() } catch {}
     $vScroll.Invalidate()
     $hScroll.Invalidate()
 }
@@ -3573,11 +4374,38 @@ function Add-Log([string]$text) {
 }
 function Process-RemoteLine([string]$line) {
     $text = $line.TrimEnd([char]13) + $nl
-    $receivedPos = $line.IndexOf('Received tool call ',[StringComparison]::Ordinal)
-    $toolPos = $line.IndexOf('Tool call ',[StringComparison]::Ordinal)
-    $isReceived = ($receivedPos -ge 0 -and $receivedPos -le 4)
-    $isCompleted = ($toolPos -ge 0 -and $toolPos -le 4 -and $line.IndexOf(' completed:',[StringComparison]::Ordinal) -gt $toolPos)
-    $isMarker = $isReceived -or $isCompleted
+
+    # Desktop Commander emits stable Unicode transport markers:
+    #   🔧 start, ✅ success, ❌ failure.
+    # Use the marker as the primary classifier; validate the adjacent text so
+    # marker-looking content inside JSON/tool output cannot trigger activity.
+    $receivedPrefix = '🔧 '
+    $completedPrefix = '✅ '
+    $failedPrefix = '❌ '
+    $isReceived =
+        $line.StartsWith($receivedPrefix,[StringComparison]::Ordinal) -and
+        $line.IndexOf('Received tool call ',[StringComparison]::Ordinal) -eq $receivedPrefix.Length
+    $isCompleted =
+        $line.StartsWith($completedPrefix,[StringComparison]::Ordinal) -and
+        $line.IndexOf('Tool call ',[StringComparison]::Ordinal) -eq $completedPrefix.Length -and
+        $line.IndexOf(' completed:',[StringComparison]::Ordinal) -gt $completedPrefix.Length
+    $isFailed =
+        $line.StartsWith($failedPrefix,[StringComparison]::Ordinal) -and
+        $line.IndexOf('Tool call ',[StringComparison]::Ordinal) -eq $failedPrefix.Length -and
+        $line.IndexOf(' failed:',[StringComparison]::Ordinal) -gt $failedPrefix.Length
+    $isMarker = $isReceived -or $isCompleted -or $isFailed
+
+    # Health markers must come from Desktop Commander's own lifecycle stream.
+    # Tool request envelopes and serialized tool results can legitimately contain
+    # strings such as "Channel error:" while inspecting source/logs. Treating
+    # those payloads as transport telemetry leaves the UI falsely latched red.
+    $healthProbe = $line.TrimStart()
+    $isSerializedToolPayload =
+        $healthProbe.StartsWith('{',[StringComparison]::Ordinal) -or
+        $healthProbe.StartsWith('[',[StringComparison]::Ordinal)
+    if (-not $isMarker -and -not $isSerializedToolPayload) {
+        Update-RemoteHealthFromLine $line
+    }
 
     if ($isReceived) {
         $now = Get-Date
@@ -3609,13 +4437,44 @@ function Process-RemoteLine([string]$line) {
         } else {
             $script:lastToolCompletedAt = $now
             $script:activityHoldUntil = $now.AddSeconds([double]$script:activityHoldSeconds)
+            if ($script:remoteFaultLatched -and $script:remoteFaultKind -in @('tool-timeout','tool-failed')) {
+                $recoveredKind = $script:remoteFaultKind
+                Clear-RemoteFault
+                $script:remoteReady = $true
+                Start-DividerRecoveryFlash
+                Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Успешный вызов подтвердил восстановление после ' + $recoveredKind + '.' + $nl)
+            }
+            elseif ($script:remoteFaultLatched -and $script:remoteFaultKind -in @(
+                'transport-offline',
+                'remote-unreachable',
+                'connection-timeout',
+                'local-mcp'
+            )) {
+                # A completed remote tool call is an end-to-end reachability
+                # proof even if Presence recovery was not emitted again.
+                Mark-RemoteReady ('successful tool call after ' + $script:remoteFaultKind)
+            }
+            elseif (-not $script:remoteReady -and -not $script:remoteFaultLatched) {
+                # The shell can restart while an already-running Remote MCP has
+                # published Presence in the past. A successful call proves that
+                # adopted session is ready even without replaying old markers.
+                Mark-RemoteReady 'successful tool call'
+            }
             Set-DividerWorkState $true
         }
+    } elseif ($isFailed) {
+        $now = Get-Date
+        $script:activeToolCalls = [Math]::Max(0,([int]$script:activeToolCalls - 1))
+        $script:lastToolMarkerAt = $now
+        $script:activityHoldUntil = $null
+        Set-RemoteFault 'tool-failed' 'Вызов инструмента завершился ошибкой. Красный режим сохранится до следующего успешного вызова или восстановления Remote MCP.' $false
+        Set-DividerWorkState ($script:activeToolCalls -gt 0)
     }
 
     if ($isMarker) {
         if ($script:tailNeedsMarker) { $script:tailNeedsMarker = $false }
         if (-not [string]::IsNullOrWhiteSpace($script:currentEvent)) { Commit-CurrentEvent }
+        $script:startupComplete = $true
         $script:seenFirstRemoteEvent = $true
         $script:currentEvent = ''
         $script:currentEventTruncated = $false
@@ -3623,19 +4482,57 @@ function Process-RemoteLine([string]$line) {
         return
     }
 
-    if ($script:tailNeedsMarker) { return }
-
-    if ($script:seenFirstRemoteEvent) {
-        if (-not [string]::IsNullOrWhiteSpace($script:currentEvent)) {
-            Append-CurrentEvent $text
+    # The upper pane is startup/reference information. Freeze it once upstream
+    # prints the Commands footer (or the equivalent initial-unreachable footer).
+    # Everything after that is live operational output and belongs below.
+    if (-not $script:startupComplete) {
+        if ($script:startupBlock.Length -lt $uiStartupMaxChars) {
+            $remaining = $uiStartupMaxChars - $script:startupBlock.Length
+            if ($text.Length -le $remaining) { $script:startupBlock += $text }
+            elseif ($remaining -gt 0) { $script:startupBlock += $text.Substring(0,$remaining) }
+        }
+        if (Test-StartupBoundaryLine $line) {
+            $script:startupComplete = $true
         }
         return
     }
 
-    if ($script:startupBlock.Length -lt $uiStartupMaxChars) {
-        $remaining = $uiStartupMaxChars - $script:startupBlock.Length
-        if ($text.Length -le $remaining) { $script:startupBlock += $text }
-        elseif ($remaining -gt 0) { $script:startupBlock += $text.Substring(0,$remaining) }
+    # Once startup is complete, do not wait for a tool marker before surfacing
+    # network/session lifecycle messages. This is what keeps Channel error /
+    # reconnect / online / presence transitions in the lower activity pane.
+    if ($script:tailNeedsMarker) { $script:tailNeedsMarker = $false }
+    $script:seenFirstRemoteEvent = $true
+
+    $runtimeEpisodeStart = (
+        $line.IndexOf('Channel error:',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('Channel closed',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('Device marked as offline',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('Recreating channel...',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('Local Desktop Commander MCP went away (',[StringComparison]::OrdinalIgnoreCase) -ge 0
+    )
+    if ($runtimeEpisodeStart -and -not [string]::IsNullOrWhiteSpace($script:currentEvent)) {
+        $trimmedEvent = $script:currentEvent.TrimStart()
+        if (
+            $trimmedEvent.StartsWith($receivedPrefix,[StringComparison]::Ordinal) -or
+            $trimmedEvent.StartsWith($completedPrefix,[StringComparison]::Ordinal) -or
+            $trimmedEvent.StartsWith($failedPrefix,[StringComparison]::Ordinal)
+        ) {
+            Commit-CurrentEvent
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($line)) {
+        Append-CurrentEvent $text
+    } elseif (-not [string]::IsNullOrWhiteSpace($script:currentEvent)) {
+        Append-CurrentEvent $text
+    }
+
+    $runtimeEpisodeEnd = (
+        $line.IndexOf('Presence tracked (device ',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $line.IndexOf('Local Desktop Commander MCP restarted; device is online again',[StringComparison]::OrdinalIgnoreCase) -ge 0
+    )
+    if ($runtimeEpisodeEnd -and -not [string]::IsNullOrWhiteSpace($script:currentEvent)) {
+        Commit-CurrentEvent
     }
 }
 function Add-RemoteChunk([string]$text) {
@@ -3679,6 +4576,7 @@ function Open-Reader {
             $script:currentEvent = ''
             $script:currentEventTruncated = $false
             $script:remoteLineBuffer = ''
+            $script:startupComplete = $false
 
             if ($length -le $uiLogInitialTailBytes) {
                 $script:startupBlock = ''
@@ -3693,8 +4591,8 @@ function Open-Reader {
                 }
             } else {
                 Set-StartupFromProbe $probeText
-                $script:seenFirstRemoteEvent = $true
-                $script:tailNeedsMarker = $true
+                $script:seenFirstRemoteEvent = $script:startupComplete
+                $script:tailNeedsMarker = -not $script:startupComplete
                 $tailLen = [int][Math]::Min($uiLogInitialTailBytes,$length)
                 $target = $length - $tailLen
                 $tail = New-Object byte[] $tailLen
@@ -3738,8 +4636,8 @@ function Move-ReaderToRecentTailIfBehind {
         $script:currentEvent = ''
         $script:currentEventTruncated = $false
         $script:remoteLineBuffer = ''
-        $script:seenFirstRemoteEvent = $true
-        $script:tailNeedsMarker = $true
+        $script:seenFirstRemoteEvent = $script:startupComplete
+        $script:tailNeedsMarker = -not $script:startupComplete
 
         if ($tailRead -gt 0) {
             $firstLf = -1
@@ -3793,6 +4691,10 @@ function Start-NoWindowCmd([string]$commandLine) {
 function Start-Remote {
     try {
         if ($script:proc -and -not $script:proc.HasExited) { return }
+        if (-not $script:supervisorRestarting) {
+            $script:autoReconnectAttempt = 0
+            $script:autoReconnectAt = $null
+        }
         $existing = Find-ExistingRemote
         if ($existing) {
             Reset-CompactLogSession
@@ -3800,19 +4702,37 @@ function Start-Remote {
             $script:startTime = $existing.StartTime
             $script:stopping = $false
             $script:exitHandled = $false
+            $script:remoteReady = $false
+            $script:remoteInteractiveAuth = $false
+            $script:remoteConnectDeadline = (Get-Date).AddSeconds($remoteConnectGraceSeconds)
+            if (-not $script:remoteFaultLatched) {
+                Set-DividerStartupState $true
+            }
             Set-FinishButtonMode $true
-            Set-State 'Работает' 'Подхвачен уже запущенный RDC Relay.' ([Drawing.Color]::LightGreen)
-            Set-RuntimeDisplay ('PID ' + $existing.Id) 'Подхвачен существующий процесс' $true
-            Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Найден уже работающий remote-процесс. Перезапуск не требуется.' + $nl)
+            Set-State 'Проверка связи…' 'Подхвачен существующий remote-процесс; проверяю Remote MCP.' ([Drawing.Color]::Khaki)
+            Set-RuntimeDisplay ('PID ' + $existing.Id) 'Проверяю существующий процесс' $true
+            Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Найден уже работающий remote-процесс. Проверяю его Remote MCP-сессию.' + $nl)
             return
         }
         $npxPath = Resolve-NpxPath
         if ($script:reader) { $script:reader.Dispose(); $script:reader = $null }
         Reset-CompactLogSession
-        if (Test-Path $logPath) { Remove-Item -LiteralPath $logPath -Force }
+        if (Test-Path $logPath) {
+            try {
+                $previousLogPath = Join-Path $root 'remote-session.previous.log'
+                Copy-Item -LiteralPath $logPath -Destination $previousLogPath -Force -ErrorAction Stop
+            } catch {}
+            Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue
+        }
         $script:stopping = $false
         $script:exitHandled = $false
+        $script:remoteReady = $false
+        $script:remoteInteractiveAuth = $false
+        $script:remoteConnectDeadline = (Get-Date).AddSeconds($remoteConnectGraceSeconds)
         $script:startTime = Get-Date
+        if (-not $script:remoteFaultLatched) {
+            Set-DividerStartupState $true
+        }
         Set-FinishButtonMode $true
         Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Запуск remote-процесса...' + $nl)
         Set-State 'Запускается…' ('Запускаю npx ' + $desktopCommanderPackage + ' remote') ([Drawing.Color]::Khaki)
@@ -3825,6 +4745,7 @@ function Start-Remote {
         Add-Log ('Ошибка запуска: ' + $_.Exception.Message + $nl)
         Set-FinishButtonMode $false
         $script:exitHandled = $true
+        Set-RemoteFault 'startup-error' ('Ошибка запуска remote-процесса: ' + $_.Exception.Message) $true
     }
 }
 function Stop-Remote {
@@ -3840,9 +4761,24 @@ function Stop-Remote {
     $script:smartFollow = $false
     $script:freezeViewport = $true
     $script:stopping = $true
+    if (-not $script:preserveFaultOnStop) {
+        Set-DividerStartupState $false
+    }
+    if (-not $script:supervisorRestarting -and -not $script:preserveFaultOnStop) {
+        $script:remoteReady = $false
+        $script:remoteConnectDeadline = $null
+        $script:autoReconnectAttempt = 0
+        $script:autoReconnectAt = $null
+        Clear-RemoteFault
+    }
     $finish.Enabled = $false
-    Set-State 'Завершается…' 'Останавливаю remote-процесс и его дочерние процессы.' ([Drawing.Color]::Khaki)
-    Add-Log ($nl + '[' + (Get-Date -Format 'HH:mm:ss') + '] Завершение по команде пользователя…' + $nl)
+    if ($script:supervisorRestarting) {
+        Set-State 'Переподключение…' 'Перезапускаю remote-процесс для восстановления связи.' ([Drawing.Color]::Khaki)
+        Add-Log ($nl + '[' + (Get-Date -Format 'HH:mm:ss') + '] Автовосстановление: останавливаю старый remote-процесс…' + $nl)
+    } else {
+        Set-State 'Завершается…' 'Останавливаю remote-процесс и его дочерние процессы.' ([Drawing.Color]::Khaki)
+        Add-Log ($nl + '[' + (Get-Date -Format 'HH:mm:ss') + '] Завершение по команде пользователя…' + $nl)
+    }
     try {
         $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
         $killCmd = '""' + $taskkill + '" /PID ' + $script:proc.Id + ' /T /F"'
@@ -3879,6 +4815,64 @@ function Wait-RemoteStopped([int]$timeoutMs = 5000) {
     $watch.Stop()
     return $false
 }
+function Invoke-AutoReconnect {
+    if ($SelfTest -or $Preview) { return }
+    if (-not $script:autoReconnectAt) { return }
+    if ((Get-Date) -lt $script:autoReconnectAt) { return }
+    if ($script:supervisorRestarting) { return }
+
+    if ($script:autoReconnectAttempt -ge $remoteReconnectDelaysSeconds.Count) {
+        $script:autoReconnectAt = $null
+        $script:remoteFaultReason =
+            'Автовосстановление не удалось после ' +
+            $remoteReconnectDelaysSeconds.Count +
+            ' попыток. Используйте «Переподключить».'
+        return
+    }
+
+    $script:autoReconnectAt = $null
+    $script:autoReconnectAttempt++
+    $attempt = $script:autoReconnectAttempt
+    $script:supervisorRestarting = $true
+
+    Add-Log (
+        '[' + (Get-Date -Format 'HH:mm:ss') +
+        '] Автовосстановление: попытка ' + $attempt +
+        ' из ' + $remoteReconnectDelaysSeconds.Count + '.' + $nl
+    )
+
+    try {
+        if ($script:proc -and -not $script:proc.HasExited) {
+            Stop-Remote
+            if (-not (Wait-RemoteStopped 5000)) {
+                throw 'Старый remote-процесс не завершился полностью.'
+            }
+        }
+
+        Reset-RemoteHandle
+        $script:remoteReady = $false
+        $script:remoteInteractiveAuth = $false
+        $script:remoteConnectDeadline = $null
+        Start-Remote
+
+        if (-not $script:proc -or $script:proc.HasExited) {
+            throw 'Новый remote-процесс не запустился.'
+        }
+    }
+    catch {
+        Set-RemoteFault 'reconnect-failed' (
+            'Попытка автопереподключения ' + $attempt +
+            ' не удалась: ' + $_.Exception.Message
+        ) $false
+    }
+    finally {
+        $script:supervisorRestarting = $false
+    }
+
+    if (-not $script:proc -or $script:proc.HasExited) {
+        Schedule-AutoReconnect 'Новый remote-процесс не вышел в рабочее состояние.'
+    }
+}
 function Restart-Remote {
     $answer = [Windows.Forms.MessageBox]::Show(
         'RDC Relay будет кратковременно отключён и запущен снова под текущим аккаунтом.',
@@ -3888,6 +4882,9 @@ function Restart-Remote {
     )
     if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
     $timer.Stop()
+    $script:autoReconnectAttempt = 0
+    $script:autoReconnectAt = $null
+    $script:preserveFaultOnStop = $script:remoteFaultLatched
     try {
         Stop-Remote
         if (-not (Wait-RemoteStopped 5000)) { throw 'Старый remote-процесс не завершился полностью.' }
@@ -3896,6 +4893,7 @@ function Restart-Remote {
         Start-Remote
         Refresh-Window
     } finally {
+        $script:preserveFaultOnStop = $false
         $timer.Start()
     }
 }
@@ -4059,35 +5057,131 @@ function Refresh-Window {
     Read-LiveLog
     Refresh-DividerActivitySession
 
+    $now = Get-Date
+
+    if (
+        $script:proc -and
+        -not $script:proc.HasExited -and
+        -not $script:remoteReady -and
+        -not $script:remoteInteractiveAuth -and
+        $script:remoteConnectDeadline -and
+        $now -ge $script:remoteConnectDeadline
+    ) {
+        $script:remoteConnectDeadline = $null
+        Set-RemoteFault 'connection-timeout' (
+            'Remote MCP не подтвердил готовность за ' +
+            [int]$remoteConnectGraceSeconds +
+            ' секунд; продолжаю ждать встроенное восстановление канала.'
+        ) $false
+    }
+
+    if ($script:autoReconnectAt -and $now -ge $script:autoReconnectAt) {
+        Invoke-AutoReconnect
+        Read-LiveLog
+    }
+
     if ($script:proc) {
         $script:proc.Refresh()
+
         if (-not $script:proc.HasExited) {
-            $elapsed = (Get-Date) - $script:startTime
-            Set-RuntimeDisplay ('PID ' + $script:proc.Id) ('Время работы {0:hh\:mm\:ss}' -f $elapsed) $true
+            $elapsed = $now - $script:startTime
+            Set-RuntimeDisplay (
+                'PID ' + $script:proc.Id
+            ) (
+                'Время работы {0:hh\:mm\:ss}' -f $elapsed
+            ) $true
+
             if (-not $script:stopping) {
-                Set-State 'Работает' 'RDC Relay запущен и готов принимать задачи.' ([Drawing.Color]::LightGreen)
+                if ($script:remoteFaultLatched) {
+                    $faultDetail = $script:remoteFaultReason
+                    if ($script:autoReconnectAt) {
+                        $left = [Math]::Max(
+                            0.0,
+                            ($script:autoReconnectAt - $now).TotalSeconds
+                        )
+                        $faultDetail += ' Повтор через ' +
+                            [Math]::Ceiling($left) + ' с.'
+                    }
+                    Set-State 'Проблема связи' $faultDetail ([Drawing.Color]::LightCoral)
+                }
+                elseif ($script:remoteInteractiveAuth) {
+                    Set-State (
+                        'Ожидание авторизации…'
+                    ) (
+                        'Завершите вход в браузере; автоматический таймаут приостановлен.'
+                    ) ([Drawing.Color]::Khaki)
+                }
+                elseif ($script:remoteReady) {
+                    Set-State (
+                        'Работает'
+                    ) (
+                        'Remote MCP подключён и готов принимать задачи.'
+                    ) ([Drawing.Color]::LightGreen)
+                }
+                else {
+                    Set-State (
+                        'Подключается…'
+                    ) (
+                        'Remote-процесс запущен; ожидаю подтверждение Remote MCP.'
+                    ) ([Drawing.Color]::Khaki)
+                }
             }
-        } elseif (-not $script:exitHandled) {
+        }
+        elseif (-not $script:exitHandled) {
             Read-LiveLog
             $code = $script:proc.ExitCode
             $script:exitHandled = $true
             Set-FinishButtonMode $false
+
             if ($script:stopping) {
                 Set-State 'Завершён' 'Remote-процесс остановлен.' ([Drawing.Color]::Silver)
-            } elseif ($code -eq 0) {
-                Set-State 'Завершён' 'Remote-процесс завершился штатно.' ([Drawing.Color]::Silver)
-            } else {
-                Set-State 'Ошибка' ('Remote-процесс завершился с кодом ' + $code + '.') ([Drawing.Color]::LightCoral)
             }
+            else {
+                Set-RemoteFault 'process-exit' (
+                    'Remote-процесс неожиданно завершился с кодом ' + $code + '.'
+                ) $true
+                Set-State 'Проблема связи' $script:remoteFaultReason ([Drawing.Color]::LightCoral)
+            }
+
             Set-RuntimeDisplay ('Код завершения: ' + $code)
-            Add-Log ($nl + '[' + (Get-Date -Format 'HH:mm:ss') + '] Процесс завершён. Код: ' + $code + $nl)
+            Add-Log (
+                $nl + '[' + (Get-Date -Format 'HH:mm:ss') +
+                '] Процесс завершён. Код: ' + $code + $nl
+            )
             $script:freezeViewport = $false
         }
     }
 }
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 700
-$timer.Add_Tick({ Refresh-Window })
+$script:lastRefreshException = ''
+$timer.Add_Tick({
+    try {
+        Refresh-Window
+        $script:lastRefreshException = ''
+    }
+    catch {
+        # A background health/UI refresh must never surface as a modal WinForms
+        # exception dialog. Record each distinct failure once and keep the event
+        # loop alive so Remote MCP recovery can continue in the background.
+        $refreshError = $_.Exception.Message
+        if ($script:lastRefreshException -ne $refreshError) {
+            $script:lastRefreshException = $refreshError
+            try {
+                $uiErrorPath = Join-Path $root 'rdc-relay-ui-errors.log'
+                $entry =
+                    '[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') +
+                    '] Refresh-Window: ' + $refreshError + $nl +
+                    $_.ScriptStackTrace + $nl
+                [IO.File]::AppendAllText(
+                    $uiErrorPath,
+                    $entry,
+                    (New-Object Text.UTF8Encoding($false))
+                )
+            } catch {}
+        }
+    }
+})
 
 $script:shortcutSyncTimer = $null
 if (-not $SelfTest -and -not $Preview) {
@@ -4119,6 +5213,7 @@ $form.Add_ResizeBegin({
 $form.Add_ResizeEnd({
     $script:uiInteracting = $false
     Layout-LogScrollbars
+    try { $log.RefreshViewport() } catch {}
     Refresh-Window
 })
 
@@ -4138,6 +5233,156 @@ $form.Add_FormClosed({
 if ($SelfTest) {
     Set-State 'Тест' 'Проверка интерфейса без запуска remote.' ([Drawing.Color]::LightBlue)
     Add-Log ('SELF TEST OK' + $nl)
+
+    # Release/runtime integrity: the version, manifest and payload must describe
+    # one exact build. This catches the split-brain 1.5.10 state where Source,
+    # dist and the installed payload could carry different files under one version.
+    $selfVersionPath = Join-Path $root 'version.txt'
+    if (-not (Test-Path -LiteralPath $selfVersionPath)) { throw 'version.txt missing' }
+    $selfVersion = (Get-Content -LiteralPath $selfVersionPath -Raw -Encoding UTF8).Trim()
+    if ($selfVersion -ne $appVersion) { throw ('Runtime version mismatch: script=' + $appVersion + ', file=' + $selfVersion) }
+
+    $selfManifestPath = Join-Path $root 'update-manifest.json'
+    if (-not (Test-Path -LiteralPath $selfManifestPath)) { throw 'update-manifest.json missing' }
+    $selfManifest = Get-Content -LiteralPath $selfManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([string]$selfManifest.version -ne $appVersion) { throw 'Update manifest version mismatch' }
+
+    $requiredPayload = @(
+        'remote-window.ps1',
+        'divider-caustic.ps',
+        'divider-caustic-detail.ps',
+        'divider-particles.ps',
+        'divider-particles-core.ps',
+        'RDCRelay.ico',
+        'version.txt',
+        'update.ps1',
+        'RDC Relay.cmd'
+    )
+    $manifestNames = @($selfManifest.files | ForEach-Object { [string]$_.name })
+    if ($manifestNames.Count -ne $requiredPayload.Count) {
+        throw ('Update manifest payload count mismatch: expected ' + $requiredPayload.Count + ', got ' + $manifestNames.Count)
+    }
+    if (@($manifestNames | Sort-Object -Unique).Count -ne $manifestNames.Count) {
+        throw 'Update manifest contains duplicate payload names'
+    }
+    foreach ($manifestName in $manifestNames) {
+        if ($requiredPayload -notcontains $manifestName) {
+            throw ('Update manifest contains unexpected payload: ' + $manifestName)
+        }
+    }
+    foreach ($requiredName in $requiredPayload) {
+        if ($manifestNames -notcontains $requiredName) {
+            throw ('Update manifest missing payload: ' + $requiredName)
+        }
+    }
+    foreach ($manifestFile in $selfManifest.files) {
+        $payloadName = [string]$manifestFile.name
+        $payloadPath = Join-Path $root $payloadName
+        if (-not (Test-Path -LiteralPath $payloadPath)) {
+            throw ('Manifest payload file missing: ' + $payloadName)
+        }
+        $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $payloadPath).Hash.ToUpperInvariant()
+        $expectedHash = ([string]$manifestFile.sha256).ToUpperInvariant()
+        if ($actualHash -ne $expectedHash) {
+            throw ('Manifest SHA256 mismatch: ' + $payloadName)
+        }
+    }
+
+    # Development checkout checks. Installed releases intentionally do not ship
+    # HLSL/build scripts, so these run only when the repository files are present.
+    $selfRepoRoot = Split-Path -Parent $root
+    $selfShaderBuild = Join-Path $selfRepoRoot 'Scripts\build-shaders.ps1'
+    if (Test-Path -LiteralPath $selfShaderBuild) {
+        $shaderBuildText = Get-Content -LiteralPath $selfShaderBuild -Raw -Encoding UTF8
+        foreach ($shaderSourceName in @(
+            'divider-caustic.hlsl',
+            'divider-caustic-detail.hlsl',
+            'divider-particles.hlsl',
+            'divider-particles-core.hlsl'
+        )) {
+            if ($shaderBuildText.IndexOf($shaderSourceName,[StringComparison]::Ordinal) -lt 0) {
+                throw ('Shader build does not compile source: ' + $shaderSourceName)
+            }
+        }
+
+        foreach ($particleSourceName in @('divider-particles.hlsl','divider-particles-core.hlsl')) {
+            $particleSourcePath = Join-Path $root $particleSourceName
+            $particleSourceText = Get-Content -LiteralPath $particleSourcePath -Raw -Encoding UTF8
+            if ($particleSourceText -notmatch 'PassIndex\s*:\s*register\(c7\)') {
+                throw ('Explicit particle PassIndex c7 missing: ' + $particleSourceName)
+            }
+            if ($particleSourceText -match 'Intensity\s*>\s*0\.5805') {
+                throw ('Particle pass selection is coupled to Intensity again: ' + $particleSourceName)
+            }
+            if ($particleSourceText -match '(?s)return\s+float4\([^;]*,\s*1\.0\s*\)') {
+                throw ('Particle shader returned an opaque frame: ' + $particleSourceName)
+            }
+            if ($particleSourceText -notmatch 'min\(saturate\(outRgb\),\s*(alpha|outAlpha|coreAlpha)\.xxx\)') {
+                throw ('Particle shader lost premultiplied-alpha clamp: ' + $particleSourceName)
+            }
+            if ($particleSourceText -notmatch 'float\s+t\s*=\s*Time\s*\*\s*0\.5') {
+                throw ('Particle shader lost half-speed time scale: ' + $particleSourceName)
+            }
+            if ($particleSourceText -notmatch 'float\s+horizontalScale\s*=\s*2\.0') {
+                throw ('Particle shader lost 2x horizontal scale: ' + $particleSourceName)
+            }
+            if ($particleSourceText -notmatch 'float\s+verticalScale\s*=\s*0\.6666667') {
+                throw ('Particle shader lost 1.5x vertical compression: ' + $particleSourceName)
+            }
+            if ($particleSourceText -notmatch 'float\s+brightnessScale\s*=\s*0\.82') {
+                throw ('Particle shader lost 18 percent brightness trim: ' + $particleSourceName)
+            }
+        }
+
+        $detailSourcePath = Join-Path $root 'divider-caustic-detail.hlsl'
+        $detailSourceText = Get-Content -LiteralPath $detailSourcePath -Raw -Encoding UTF8
+        if ($detailSourceText -match '(?s)return\s+float4\([^;]*,\s*1\.0\s*\)') {
+            throw 'Transparent caustic detail shader returned an opaque frame'
+        }
+        if ($detailSourceText -notmatch 'return\s+float4\(rgb,alpha\)') {
+            throw 'Transparent caustic detail shader lost explicit alpha output'
+        }
+
+        $runtimeSourceText = Get-Content -LiteralPath $PSCommandPath -Raw -Encoding UTF8
+        if ($runtimeSourceText.IndexOf('particlePopup.Child=popupRoot',[StringComparison]::Ordinal) -lt 0) {
+            throw 'GPU sandwich is no longer hosted by the single popup root'
+        }
+        if ([Regex]::Matches($runtimeSourceText,'new\s+Popup\(\);').Count -ne 1) {
+            throw 'GPU divider must use exactly one native WPF Popup'
+        }
+        foreach ($transparentContract in @(
+            'popupRoot.Background=Brushes.Transparent',
+            'particleLayer.Background=Brushes.Transparent',
+            'particleSource.Background=Brushes.Transparent'
+        )) {
+            if ($runtimeSourceText.IndexOf($transparentContract,[StringComparison]::Ordinal) -lt 0) {
+                throw ('GPU sandwich transparency contract missing: ' + $transparentContract)
+            }
+        }
+        foreach ($densityContract in @(
+            'particleEffectC = new RdcDividerGlowEffect(particleShaderPath)',
+            'particleEffectD = new RdcDividerGlowEffect(particleShaderPath)',
+            'coreEffectC = new RdcDividerGlowEffect(particleCoreShaderPath)',
+            'coreEffectD = new RdcDividerGlowEffect(particleCoreShaderPath)'
+        )) {
+            if ($runtimeSourceText.IndexOf($densityContract,[StringComparison]::Ordinal) -lt 0) {
+                throw ('Doubled particle density contract missing: ' + $densityContract)
+            }
+        }
+        if ($runtimeSourceText.IndexOf('int crossingCenterExtra = 6;',[StringComparison]::Ordinal) -lt 0 -or
+            $runtimeSourceText.IndexOf('dividerHeight+crossingCenterExtra-1',[StringComparison]::Ordinal) -lt 0) {
+            throw 'Divider drag mask center geometry regressed'
+        }
+        if ($runtimeSourceText.IndexOf('ApplyCompactLineSpacing()',[StringComparison]::Ordinal) -lt 0 -or
+            $runtimeSourceText.IndexOf('$headerLog.ApplyCompactLineSpacing()',[StringComparison]::Ordinal) -lt 0 -or
+            $runtimeSourceText.IndexOf('$log.ApplyCompactLineSpacing()',[StringComparison]::Ordinal) -lt 0) {
+            throw 'Global RichEdit compact line spacing regressed'
+        }
+        if ($runtimeSourceText.IndexOf('250.0 * i / fadeDenominator',[StringComparison]::Ordinal) -lt 0 -or
+            $runtimeSourceText.IndexOf('250.0 * (crossingFade-1-i) / fadeDenominator',[StringComparison]::Ordinal) -lt 0) {
+            throw 'Divider drag mask linear 0-250 fade regressed'
+        }
+    }
     if ($form.Controls.Count -lt 3) { throw 'UI controls missing' }
     if ($finish.Text -ne 'Остановить' -or $finish.Glyph -ne [RdcButtonGlyph]::Stop) { throw 'Stop button state missing' }
     Set-FinishButtonMode $false
@@ -4236,6 +5481,48 @@ if ($SelfTest) {
     if (Select-String -LiteralPath $PSCommandPath -Pattern 'ReadToEnd\(' -Quiet) { throw 'Unbounded ReadToEnd found in GUI script' }
 
     Reset-CompactLogSession
+    $runtimeSynthetic =
+        'START HEADER' + $nl +
+        'Remote Connection' + $nl +
+        '┌─ Commands' + $nl +
+        '│ Help:    npx desktop-commander remote --help' + $nl +
+        '│ Log out: npx desktop-commander remote --logout' + $nl +
+        '└─ Run these in a new Terminal, or after disconnecting.' + $nl +
+        $nl +
+        '❌ Channel error: channel error: transport failure - socket=closed(-) ch=errored attempt=0' + $nl +
+        '🔴 Device marked as offline' + $nl +
+        '[DEBUG] Failed to set status offline: TypeError: fetch failed' + $nl +
+        '🔄 Recreating channel... (attempt 1) - socket=closed(-) ch=errored attempt=1' + $nl +
+        '⚠️ Channel closed - socket=closed(-) ch=closed attempt=1' + $nl +
+        '✅ Channel subscribed (recovered after 1 attempt)' + $nl +
+        '🟢 Device marked as online' + $nl +
+        '👋 Presence tracked (device test-device visible as online)' + $nl
+    Add-RemoteChunk $runtimeSynthetic
+    if (-not $script:startupComplete) { throw 'Startup footer did not freeze the reference pane' }
+    if ($headerLog.Text -like '*Channel error:*' -or $headerLog.Text -like '*Recreating channel*' -or $headerLog.Text -like '*Presence tracked*') {
+        throw 'Runtime transport output leaked into the startup/reference pane'
+    }
+    if (
+        $log.Text -notlike '*Channel error:*' -or
+        $log.Text -notlike '*Device marked as offline*' -or
+        $log.Text -notlike '*Recreating channel*' -or
+        $log.Text -notlike '*Channel subscribed*' -or
+        $log.Text -notlike '*Device marked as online*' -or
+        $log.Text -notlike '*Presence tracked*'
+    ) {
+        throw 'Runtime transport output was not routed to the activity pane'
+    }
+    if ($log.Lines.Count -lt 8) { throw 'Activity pane lost multiline runtime output' }
+    try { $log.RefreshViewport() } catch { throw 'Activity viewport refresh failed' }
+
+    Reset-CompactLogSession
+    Set-StartupFromProbe $runtimeSynthetic
+    if (-not $script:startupComplete) { throw 'Startup probe did not find the Commands footer' }
+    if ($script:startupBlock -like '*Channel error:*' -or $script:startupBlock -like '*Presence tracked*') {
+        throw 'Startup probe retained post-Commands runtime output'
+    }
+
+    Reset-CompactLogSession
     $synthetic = 'START HEADER' + $nl + 'Remote Connection' + $nl +
         '🌐 https://example.invalid/remote  🚀 start  ⏳ wait  🔌 online  💾 saved  👋 presence' + $nl +
         'Found persisted session for device 11111111-2222-3333-4444-555555555555' + $nl +
@@ -4326,21 +5613,197 @@ if ($SelfTest) {
     }
 
     Reset-CompactLogSession
+    Clear-RemoteFault
+
+    # A cold start is a distinct yellow connecting state, followed by one
+    # green confirmation only after real Remote MCP readiness is established.
+    $script:remoteReady = $false
+    Set-DividerStartupState $true
+    if ($gpuDivider -and -not $gpuDivider.StartupRequested) {
+        throw 'Cold-start connecting state did not request the yellow startup palette'
+    }
+    Update-RemoteHealthFromLine 'Desktop Commander Remote is connected'
+    if (-not $script:remoteReady -or $script:remoteFaultLatched) {
+        throw 'Cold-start ready marker did not establish Remote MCP readiness'
+    }
+    if ($gpuDivider -and $gpuDivider.StartupRequested) {
+        throw 'Cold-start ready transition did not leave the yellow startup palette'
+    }
+    if ($gpuDivider -and -not $gpuDivider.RecoveryActive) {
+        throw 'Cold-start ready transition did not start the green confirmation flash'
+    }
+    $script:remoteReady = $false
+
+    # Physical/network transport loss must latch red immediately while leaving
+    # Desktop Commander's own realtime-channel reconnect loop in control.
+    Clear-RemoteFault
+    $script:remoteReady = $true
+    $script:stopping = $false
+    Set-DividerStartupState $true
+    Update-RemoteHealthFromLine 'Channel error: channel error: transport failure - socket=closed(-) ch=errored attempt=0'
+    if ($gpuDivider -and $gpuDivider.StartupRequested) {
+        throw 'Transport fault did not override the yellow startup palette'
+    }
+    if (-not $script:remoteFaultLatched -or $script:remoteFaultKind -ne 'transport-offline') {
+        throw 'Realtime transport failure did not latch the network fault'
+    }
+    if ($script:remoteReady) { throw 'Realtime transport failure did not clear ready state' }
+    if ($script:autoReconnectAt -or $script:remoteConnectDeadline) {
+        throw 'Realtime transport failure must not compete with the built-in channel reconnect'
+    }
+    Update-RemoteHealthFromLine 'Channel subscribed (recovered after 7 attempts)'
+    if ($script:remoteReady -or -not $script:remoteFaultLatched) {
+        throw 'Channel subscription alone must not establish Remote MCP readiness'
+    }
+    Update-RemoteHealthFromLine 'Device marked as online'
+    if ($script:remoteReady -or -not $script:remoteFaultLatched) {
+        throw 'Online status write alone must not establish Remote MCP readiness'
+    }
+    Update-RemoteHealthFromLine 'Presence tracked (device test-device visible as online)'
+    if (-not $script:remoteReady -or $script:remoteFaultLatched) {
+        throw 'Presence confirmation did not restore Remote MCP readiness'
+    }
+
+    # CLOSED without an earlier CHANNEL_ERROR is still a real transport fault.
+    Update-RemoteHealthFromLine 'Channel closed - socket=closed(-) ch=closed attempt=1'
+    if (-not $script:remoteFaultLatched -or $script:remoteFaultKind -ne 'transport-offline') {
+        throw 'Closed realtime channel did not latch transport fault'
+    }
+    Update-RemoteHealthFromLine 'Presence tracked (device test-device visible as online)'
+    if ($script:remoteFaultLatched -or -not $script:remoteReady) {
+        throw 'Presence did not recover a closed realtime channel'
+    }
+
+    # Local executor recovery is separate from realtime transport health.
+    Update-RemoteHealthFromLine ' - ❌ Local Desktop Commander MCP went away (stdio closed); will restart on next tool call'
+    if (-not $script:remoteFaultLatched -or $script:remoteFaultKind -ne 'local-mcp') {
+        throw 'Local MCP loss did not latch executor fault'
+    }
+    Update-RemoteHealthFromLine 'Connected to Desktop Commander MCP'
+    if (-not $script:remoteFaultLatched -or $script:remoteReady) {
+        throw 'Local MCP handshake cleared fault before executor verification'
+    }
+    Update-RemoteHealthFromLine 'Local Desktop Commander MCP restarted; device is online again'
+    if ($script:remoteFaultLatched -or -not $script:remoteReady) {
+        throw 'Verified local MCP restart did not restore ready state'
+    }
+
+    # Clean shutdown noise must not turn the divider red.
+    Clear-RemoteFault
+    $script:remoteReady = $true
+    $script:stopping = $true
+    Update-RemoteHealthFromLine 'Device marked as offline'
+    Update-RemoteHealthFromLine 'Channel closed - socket=closed(-) ch=closed attempt=0'
+    if ($script:remoteFaultLatched) { throw 'Intentional stop incorrectly latched transport fault' }
+    $script:stopping = $false
+    $script:remoteReady = $false
+
+    # Tool envelopes/results can contain lifecycle-looking text while inspecting
+    # source or logs. Those payload strings must never mutate Remote health.
+    Reset-CompactLogSession
+    Clear-RemoteFault
+    $script:remoteReady = $true
+    Process-RemoteLine '🔧 Received tool call health_payload_probe: command contains Channel error: synthetic'
+    Process-RemoteLine '{"content":[{"type":"text","text":"Channel error: synthetic tool output"}]}'
+    if ($script:remoteFaultLatched -or -not $script:remoteReady) {
+        throw 'Tool payload text falsely triggered Remote transport fault'
+    }
+    Process-RemoteLine '✅ Tool call health_payload_probe completed:'
+    if ($script:remoteFaultLatched -or -not $script:remoteReady) {
+        throw 'Tool payload probe completion corrupted Remote health'
+    }
+
+    # A successful end-to-end remote call proves reachability even if upstream
+    # does not repeat Presence after its internal reconnect.
+    Set-RemoteFault 'transport-offline' 'synthetic reconnect probe' $false
+    Process-RemoteLine '🔧 Received tool call transport_recovery_probe: begin'
+    Process-RemoteLine '✅ Tool call transport_recovery_probe completed:'
+    if ($script:remoteFaultLatched -or -not $script:remoteReady) {
+        throw 'Successful tool call did not clear recoverable transport fault'
+    }
+
+    # Restarted shell + adopted already-running Remote MCP: no fresh Presence
+    # marker may arrive, so successful tool completion must establish ready.
+    Reset-CompactLogSession
+    Clear-RemoteFault
+    $script:remoteReady = $false
+    Process-RemoteLine '🔧 Received tool call adopted_session_probe: begin'
+    Process-RemoteLine '✅ Tool call adopted_session_probe completed:'
+    if ($script:remoteFaultLatched -or -not $script:remoteReady) {
+        throw 'Successful tool call did not establish readiness for adopted Remote MCP session'
+    }
+    Reset-CompactLogSession
+
+    # A caller-local $detail string used to shadow the WinForms status label and
+    # surface as a modal "property Text not found" exception.
+    & {
+        $detail = 'shadow probe'
+        Set-State 'Проблема связи' 'status-detail probe' ([Drawing.Color]::LightCoral)
+    }
+    if ($statusDetail.Text -ne 'status-detail probe') {
+        throw 'Status detail control is still vulnerable to caller variable shadowing'
+    }
+
     if ($script:activityHoldSeconds -ne 10.0) { throw 'Divider minimum hold must start at 10 seconds' }
-    Process-RemoteLine 'Received tool call timeout_probe: begin'
+    Process-RemoteLine '🔧 Received tool call timeout_probe: begin'
     $script:lastToolMarkerAt = (Get-Date).AddSeconds(-59)
     Refresh-DividerActivitySession
-    if ($script:activeToolCalls -ne 1) { throw 'Interrupted tool call expired before 60 seconds' }
+    if ($script:activeToolCalls -ne 1) { throw 'Interrupted tool call faulted before 60 seconds' }
+    if ($script:remoteFaultLatched) { throw 'Fault latch engaged before 60 seconds' }
+
     $script:lastToolMarkerAt = (Get-Date).AddSeconds(-61)
     Refresh-DividerActivitySession
-    if ($script:activeToolCalls -ne 0) { throw 'Interrupted tool call did not expire after 60 seconds' }
+    if ($script:activeToolCalls -ne 0) { throw 'Stale tool activity did not retire after 60 seconds' }
+    if ($script:remoteFaultLatched) { throw 'Silence incorrectly entered Remote fault mode' }
+    if ($script:activityHoldUntil) { throw 'Stale tool activity left an idle hold behind' }
+
+    Process-RemoteLine '✅ Tool call timeout_probe completed:'
+    if ($script:activeToolCalls -ne 0) { throw 'Late completion after stale retirement corrupted activity count' }
+    if ($script:remoteFaultLatched) { throw 'Late completion after stale retirement latched fault mode' }
+
+    Clear-RemoteFault
+    $script:remoteReady = $false
+    Update-RemoteHealthFromLine 'Remote session expired and could not be renewed'
+    if (-not $script:remoteFaultLatched -or $script:remoteFaultKind -ne 'session-lost') {
+        throw 'Fatal Remote MCP session loss was not latched'
+    }
+    Update-RemoteHealthFromLine 'Desktop Commander Remote is connected'
+    if (-not $script:remoteReady -or $script:remoteFaultLatched) {
+        throw 'Remote ready marker did not clear the fault latch'
+    }
+    if ($gpuDivider -and -not $gpuDivider.RecoveryActive) {
+        throw 'Remote recovery did not start the green flash'
+    }
+
+    Reset-CompactLogSession
+    Clear-RemoteFault
+    Process-RemoteLine '🔧 Received tool call failure_probe: begin'
+    Process-RemoteLine '❌ Tool call failure_probe failed: synthetic failure'
+    if (-not $script:remoteFaultLatched -or $script:remoteFaultKind -ne 'tool-failed') {
+        throw 'Failed tool call did not latch fault mode'
+    }
+    Update-RemoteHealthFromLine 'Presence tracked (device test-device visible as online)'
+    if (-not $script:remoteReady) {
+        throw 'Presence confirmation did not restore transport readiness after tool failure'
+    }
+    if (-not $script:remoteFaultLatched -or $script:remoteFaultKind -ne 'tool-failed') {
+        throw 'Presence confirmation incorrectly cleared an explicit tool failure'
+    }
+    Process-RemoteLine '🔧 Received tool call recovery_probe: begin'
+    Process-RemoteLine '✅ Tool call recovery_probe completed:'
+    if ($script:remoteFaultLatched -or -not $script:remoteReady) {
+        throw 'Successful tool call did not clear prior tool failure and restore readiness'
+    }
+    if ($gpuDivider -and -not $gpuDivider.RecoveryActive) {
+        throw 'Successful tool call after failure did not start recovery flash'
+    }
 
     Reset-CompactLogSession
     $script:activityGapEwmaSeconds = 24.0
     $script:lastToolCompletedAt = (Get-Date).AddSeconds(-5)
-    Process-RemoteLine 'Received tool call max_hold_probe: begin'
+    Process-RemoteLine '🔧 Received tool call max_hold_probe: begin'
     if ([Math]::Abs($script:activityHoldSeconds - 30.0) -gt 0.01) { throw 'Divider adaptive hold did not clamp at 30 seconds' }
-    Process-RemoteLine 'Tool call max_hold_probe completed:'
+    Process-RemoteLine '✅ Tool call max_hold_probe completed:'
     if (-not $script:activityHoldUntil -or
         ($script:activityHoldUntil - (Get-Date)).TotalSeconds -lt 29.0) {
         throw 'Divider completion hold did not use 30-second maximum'
@@ -4349,18 +5812,47 @@ if ($SelfTest) {
     Reset-CompactLogSession
     if ($gpuDivider) {
         if ($gpuDivider.GetType().Name -ne 'RdcGpuDividerHost') { throw 'Unexpected GPU divider control type' }
+        if (-not $gpuDivider.PassConfigurationValid) { throw 'GPU particle pass configuration is coupled or invalid' }
+        $visualMetrics = $gpuDivider.RunVisualSelfTest()
+        Write-Output ('GPU VISUAL SELF TEST: ' + $visualMetrics)
+        $gpuDivider.SetActivity($false)
         $gpuDivider.SetInteractiveMove($true)
         $gpuDivider.SetInteractiveMove($false)
-        Process-RemoteLine 'Received tool call shader_test: begin'
+        Process-RemoteLine '🔧 Received tool call shader_test: begin'
         if ($script:activeToolCalls -ne 1 -or -not $gpuDivider.ActivityRequested) { throw 'GPU activity did not start on Received tool call' }
-        Process-RemoteLine 'Tool call shader_test completed:'
+        Process-RemoteLine '✅ Tool call shader_test completed:'
         if ($script:activeToolCalls -ne 0 -or -not $gpuDivider.ActivityRequested) { throw 'GPU activity hold did not remain active after completion' }
         $script:activityHoldUntil = (Get-Date).AddMilliseconds(-1)
         Refresh-DividerActivitySession
         if ($gpuDivider.ActivityRequested) { throw 'GPU activity did not stop after hold expiry' }
+
+        $gpuDivider.SetFault($true)
+        $faultWatch = [Diagnostics.Stopwatch]::StartNew()
+        while ($faultWatch.ElapsedMilliseconds -lt 750) {
+            [Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 15
+        }
+        $faultWatch.Stop()
+        if ($gpuDivider.FaultBlend -lt 0.90) { throw 'Fault palette did not fade in smoothly' }
+
+        $gpuDivider.BeginRecoveryFlash()
+        $recoveryWatch = [Diagnostics.Stopwatch]::StartNew()
+        while ($recoveryWatch.ElapsedMilliseconds -lt 260) {
+            [Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 15
+        }
+        if ($gpuDivider.RecoveryBlend -lt 0.85) { throw 'Recovery flash did not reach a strong green peak' }
+        while ($recoveryWatch.ElapsedMilliseconds -lt 3200) {
+            [Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 15
+        }
+        $recoveryWatch.Stop()
+        if ($gpuDivider.RecoveryActive -or $gpuDivider.RecoveryBlend -gt 0.05) {
+            throw 'Recovery flash did not settle back to the normal palette'
+        }
     } else {
-        Process-RemoteLine 'Received tool call fallback_test: begin'
-        Process-RemoteLine 'Tool call fallback_test completed:'
+        Process-RemoteLine '🔧 Received tool call fallback_test: begin'
+        Process-RemoteLine '✅ Tool call fallback_test completed:'
         if ($script:activeToolCalls -ne 0) { throw 'Static divider fallback broke activity state tracking' }
     }
 

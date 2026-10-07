@@ -1,17 +1,25 @@
 {
-    "version":  "1.5.9",
+    "version":  "1.5.10",
     "files":  [
                   {
                       "name":  "remote-window.ps1",
-                      "sha256":  "B0AE49EEEAB7BEB66D2E7E5EC6C9D00CF610A638D8F2400FE898B7AEA5BE8C2E"
+                      "sha256":  "550CAFA7B0428889F17F5DAE4E98A2B5FAFE546E71740417D53478F75EACC5E2"
                   },
                   {
                       "name":  "divider-caustic.ps",
-                      "sha256":  "CBB538767EDB7E3FDC596CFED4577EB0C16605A0943EC1FFF309295C0F5C7A8B"
+                      "sha256":  "75756A6BF150AF0BC8ADB80655FF452BBDD8EF7253039B6D5DB93E9F172B0EC6"
+                  },
+                  {
+                      "name":  "divider-caustic-detail.ps",
+                      "sha256":  "6D51DCD7E6BE84DA853B216FA03801C5C773DCB6BF7960FA495A20A355792DAB"
                   },
                   {
                       "name":  "divider-particles.ps",
-                      "sha256":  "A4FC32EBCB141283CF2CA9A2E78A049C412F36519730BEA13A4488DC9C2BAECE"
+                      "sha256":  "40044DDA8A367A7F9AF7C8543B58985C13DD4928533F5A24FDADA0C771BD50FA"
+                  },
+                  {
+                      "name":  "divider-particles-core.ps",
+                      "sha256":  "C83FAE9E7D3EA6B0C8CD02B3BEBB7C6981C24362F72BFCA5DE2059F3B460BCA2"
                   },
                   {
                       "name":  "RDCRelay.ico",
@@ -19,7 +27,7 @@
                   },
                   {
                       "name":  "version.txt",
-                      "sha256":  "55C4132C9883C31A2A0D9A5A58D72420A0C98D632907B1FD05565AC2815D5272"
+                      "sha256":  "F8870F77108009B2204CEF9D4193A35A90E50A0C4DECDC034FB255A5C2B59D25"
                   },
                   {
                       "name":  "update.ps1",

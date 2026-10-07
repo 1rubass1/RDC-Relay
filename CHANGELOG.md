@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.5.10 (2026-10-06)
+
+- Added a bounded Remote MCP health supervisor that distinguishes a live `cmd/npx` process from an actually ready remote session, tracks ready/fatal markers, restarts lost sessions with 2/5/10 second backoff, and handles unexpected process exits.
+- Treat realtime transport loss (`Channel error`, `Channel closed`, `Device marked as offline`) as a persistent visual fault without competing with Desktop Commander's own channel reconnect.
+- Require upstream's full reachability proof before green/ready: `Channel subscribed` and an online status write remain transitional; `Presence tracked` (or the final connected marker) confirms the realtime channel, capability publication and usable remote path.
+- Track the original 0.2.52 local-executor loss/recovery markers (`Local Desktop Commander MCP went away` / `... restarted; device is online again`) instead of relying on an assumed disconnect string.
+- Keep a slow first connection red after the readiness grace period but leave the live Remote process in charge of its own background reconnect; bounded supervisor restarts remain reserved for fatal session/startup/process failures.
+- Fixed a PowerShell scope collision where the fault-detail string shadowed the WinForms status label and produced repeated modal `property "Text" not found` dialogs; background refresh exceptions are now logged without blocking the UI.
+- Freeze the upper log pane at Desktop Commander's startup/Commands footer and route later channel/offline/reconnect/presence output to the lower activity pane, while preserving the complete raw session log on disk.
+- Stabilize the lower RichEdit viewport after text replacement and pane resizing by restoring scroll position only after redraw is re-enabled and forcing immediate plus deferred repaint/reflow.
+- Added a two-tone yellow/amber connecting palette for the initial Remote MCP startup (particles, caustic and rails). It transitions to the green ready confirmation on success, or yields to persistent red on a fault.
+- Fixed the particle popup lifecycle: startup could open the transparent WPF popup before the WinForms owner existed, leaving it below the main window. Ownership/Z-order are now repaired after load without using global topmost behavior. With that fixed, the selected sandwich composition is restored: coupled halo, transparent caustic detail, then a wider soft-white hot core.
+- Preserve the previous `remote-session.log` before a fresh launch so failed reconnect cycles remain diagnosable.
+- Added persistent fault signalling: particles, caustic and divider rails smoothly move into a two-tone red/red-orange palette and remain there until the fault clears.
+- Added a one-shot green/yellow-green recovery confirmation with a fast peak and a longer smooth return to the normal purple/orange palette; geometry and particle trajectories remain unchanged.
+- Trigger the green confirmation on every real `not ready -> ready` transition, including the first successful connection after application startup, without retriggering on duplicate ready markers.
+- Track Desktop Commander tool lifecycle using its leading Unicode markers (🔧/✅/❌). Explicit failed calls remain visibly faulted, but prolonged silence or a missing completion marker now retires to idle instead of being treated as a Remote MCP failure.
+- Extended GUI self-tests for cold-start readiness, explicit tool failures, idle-timeout retirement, recovery signalling and GPU palette transitions.
+- Restored a reproducible four-shader build: particle pass selection now uses an explicit `PassIndex` shader constant instead of overloading `Intensity`, and both particle/core bytecode files are rebuilt from their checked-in HLSL sources.
+- Hardened release/UI integrity checks: self-test now validates the exact manifest payload and hashes, single-popup sandwich/transparency contracts and premultiplied-alpha guards; GPU initialization failures are logged instead of silently falling back.
+- Kept explicit tool-call failures latched red across duplicate Presence/ready markers; only a later successful tool call clears that tool fault and triggers the recovery confirmation.
+- Doubled divider particle density from roughly 12 to 24 simultaneous trajectories by adding two preserving GPU passes with independent time phases, without increasing ps_3_0 shader instruction count.
+- Slowed particle animation to 50% speed and doubled only its horizontal geometry (heads, hot cores, tails and ghost offsets); then compressed the complete particle silhouette vertically to two thirds of its previous height and reduced particle/core luminance by 18% so purple/orange hue remains visible instead of clipping toward white.
+- Simplified the divider-drag scrollbar crossing mask: keep the fully opaque center narrower, trim one additional pixel from its lower side for visual balance, and use a direct mirrored 15 px linear alpha ramp from 0 to 250 instead of the curved/dark overlay experiment.
+- Apply the banner's proven 1 px exact RichEdit line-spacing correction to both full log surfaces so Unicode box-drawing groups such as Next / Commands no longer show horizontal seams outside the ASCII banner.
+- Prevent false red connection faults when tool commands/results merely contain lifecycle-looking strings such as `Channel error:`; serialized tool payloads are excluded from health parsing, and any successful remote tool call now proves readiness, including after the GUI adopts an already-running Remote MCP whose earlier Presence marker is no longer replayed.
+
 ## 1.5.9 (2026-10-06)
 
 - Replaced the recolored upstream-style application icon with an original RDC Relay identity: white rounded badge, relay chip, monitor and overlapping purple/orange windows.

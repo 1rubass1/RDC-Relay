@@ -6,7 +6,6 @@ float Intensity     : register(c2);
 float Activity      : register(c3);
 float Fault         : register(c4);
 float Recovery      : register(c5);
-float Startup       : register(c6);
 float PassIndex     : register(c7);
 
 static const float3 PURPLE    = float3(123.0/255.0,95.0/255.0,162.0/255.0);
@@ -23,9 +22,6 @@ static const float3 FAULT_HOT        = float3(1.00,0.58,0.34);
 static const float3 RECOVERY_GREEN   = float3(0.18,0.92,0.35);
 static const float3 RECOVERY_LIME    = float3(0.70,0.96,0.20);
 static const float3 RECOVERY_HOT     = float3(1.00,0.98,0.68);
-static const float3 STARTUP_YELLOW   = float3(1.00,0.78,0.16);
-static const float3 STARTUP_AMBER    = float3(0.96,0.48,0.09);
-static const float3 STARTUP_HOT      = float3(1.00,0.94,0.58);
 
 float ellipseGlow(float2 uv,float x,float rx,float ry)
 {
@@ -95,10 +91,10 @@ float3 lightAt(float2 uv,float x,float dir,float pulse,float turn,float seed)
 
     float halo=ellipseGlow(uv,x,30.0*px*s*horizontalScale,haloVertical);
     float body=ellipseGlow(uv,x,19.0*px*s*horizontalScale,bodyVertical);
-    float core=ellipseGlow(uv,x,5.6*px*s*horizontalScale,0.048*s*verticalScale);
+    float core=ellipseGlow(uv,x,7.2*px*s*horizontalScale,0.055*s*verticalScale);
 
     // Keep the stretched, softened hot centre from the previous iteration.
-    float hotCore=ellipseGlow(uv,x,6.8*px*s*horizontalScale,0.047*s*verticalScale);
+    float hotCore=ellipseGlow(uv,x,8.6*px*s*horizontalScale,0.054*s*verticalScale);
 
     float tail=directionalTail(uv,x,dir,px,seed)*turn;
     float ghost=ellipseGlow(uv,x-dir*28.0*px*horizontalScale,7.0*px*horizontalScale*(1.0+0.22*c),0.061*(1.0+0.22*c)*verticalScale)*0.42*turn;
@@ -242,17 +238,9 @@ float4 main(float2 uv:TEXCOORD):COLOR
         FAULT_RED_ORANGE*(oH*0.72+oB*0.38)+
         FAULT_HOT*collision*0.40;
 
-    float startup=saturate(Startup);
     float fault=saturate(Fault);
     float recovery=saturate(Recovery);
-
-    float3 startupLight=
-        STARTUP_YELLOW*(pH*0.76+pB*0.42)+
-        STARTUP_AMBER*(oH*0.72+oB*0.38)+
-        STARTUP_HOT*collision*0.40;
-
-    float3 light=lerp(normalLight,startupLight,startup);
-    light=lerp(light,faultLight,fault);
+    float3 light=lerp(normalLight,faultLight,fault);
 
     // Recovery is a single strong green-led confirmation flash. The second
     // family moves toward yellow-green for a warmer, analogous success palette.
@@ -265,43 +253,36 @@ float4 main(float2 uv:TEXCOORD):COLOR
     // The hottest centre remains warm-white in normal activity, hot red while
     // faulted, and briefly near-white green during confirmed recovery.
     float whiteCore=0.48*smoothstep(0.18,0.84,hot)+0.04*pB*oB;
-    float3 hotTint=lerp(HOT_WHITE,STARTUP_HOT,startup);
-    hotTint=lerp(hotTint,FAULT_HOT,fault);
+    float3 hotTint=lerp(HOT_WHITE,FAULT_HOT,fault);
     hotTint=lerp(hotTint,RECOVERY_HOT,recovery);
     light=lerp(light,hotTint,saturate(whiteCore));
     // Recovery is intentionally a strong *particle-local* flash.
     // The popup remains transparent away from particle heads/tails, so the
-    // static caustic divider never flashes as a whole. Pull overall luminance
-    // back by 18% so the purple/orange hue survives instead of clipping white.
-    float brightnessScale=0.82;
-    light=saturate(light*Intensity*brightnessScale*(1.0+0.08*startup+1.15*recovery));
+    // static caustic divider never flashes as a whole.
+    light=saturate(light*Intensity*(1.0+1.15*recovery));
 
     float alpha=saturate(
         max(pH,oH)*0.66+
         max(pB,oB)*0.31+
         hot*0.52+
         collision*0.22+
-        startup*max(pH,oH)*0.05+
         recovery*max(pH,oH)*0.34+
         recovery*hot*0.16);
 
-    float baseEnergy=saturate(dot(base.rgb,float3(0.299,0.587,0.114))*1.55);
+    // Match the coloured layer's -18% luminance trim so the white core does not wash out hue.
+    float brightnessScale=0.82;
+    float coreSignal=saturate(hot*1.06);
+    float coreAlpha=saturate(coreSignal*0.64*brightnessScale);
+    float3 coreColor=float3(1.0,1.0,0.997);
 
     if (!passB) {
-        // The caustic is still only visible through the original 7 px strip,
-        // but its local energy and colour are imprinted inside the particle halo.
-        float ridge=smoothstep(0.05,0.78,baseEnergy);
-        float gain=lerp(0.66,1.18,ridge);
-        float3 outRgb=light*alpha*gain;
-        outRgb+=base.rgb*alpha*0.10;
-        outRgb=min(saturate(outRgb),alpha.xxx);
-        return float4(outRgb,alpha);
+        float3 outRgb=coreColor*coreAlpha;
+        outRgb=min(saturate(outRgb),coreAlpha.xxx);
+        return float4(outRgb,coreAlpha);
     }
 
-    float interaction=alpha*(0.18+0.38*baseEnergy);
-    float outAlpha=saturate(base.a+alpha*(1.0-base.a));
-    float3 outRgb=base.rgb*(1.0+interaction*0.18);
-    outRgb+=light*alpha*(0.76+0.34*baseEnergy);
+    float outAlpha=saturate(base.a+coreAlpha*(1.0-base.a));
+    float3 outRgb=base.rgb+coreColor*coreAlpha*(1.0-base.a);
     outRgb=min(saturate(outRgb),outAlpha.xxx);
     return float4(outRgb,outAlpha);
 }

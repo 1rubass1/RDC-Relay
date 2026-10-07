@@ -69,7 +69,9 @@ public static class RdcShaderCompiler {
 
 $pairs = @(
     @('divider-caustic.hlsl','divider-caustic.ps'),
-    @('divider-particles.hlsl','divider-particles.ps')
+    @('divider-caustic-detail.hlsl','divider-caustic-detail.ps'),
+    @('divider-particles.hlsl','divider-particles.ps'),
+    @('divider-particles-core.hlsl','divider-particles-core.ps')
 )
 
 foreach ($pair in $pairs) {

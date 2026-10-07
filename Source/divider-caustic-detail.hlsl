@@ -105,17 +105,10 @@ float3 causticBand(float2 uv, float t)
 
 float4 main(float2 uv : TEXCOORD) : COLOR
 {
-    float recovery = saturate(Recovery);
-    float recoveryLift = 1.0 + 0.42*recovery;
-    float3 color = BG + causticBand(uv,Time) * Intensity * recoveryLift;
-
-    // Same frame, moved just inside the 7 px host so centre particles can cross it.
-    float topLine = 1.0-smoothstep(0.020,0.070,abs(uv.y-0.13));
-    float bottomLine = 1.0-smoothstep(0.020,0.070,abs(uv.y-0.87));
-    float lineMask = max(topLine,bottomLine);
-    float3 lineColor = statePrimary()*0.92 + stateHot()*0.03;
-    lineColor *= 1.0 + 0.18*recovery;
-    color = lerp(color,lineColor,saturate(lineMask*0.94));
-
-    return float4(saturate(color),1.0);
+    float recovery=saturate(Recovery);
+    float recoveryLift=1.0+0.42*recovery;
+    float3 detail=causticBand(uv,Time)*Intensity*recoveryLift*0.88;
+    float alpha=saturate(max(detail.r,max(detail.g,detail.b))*1.16);
+    float3 rgb=min(saturate(detail),alpha.xxx);
+    return float4(rgb,alpha);
 }

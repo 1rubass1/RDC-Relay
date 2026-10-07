@@ -24,7 +24,9 @@ internal static class SetupProgram
     {
         new Payload("remote-window.ps1", "RdcPayload.remote-window.ps1"),
         new Payload("divider-caustic.ps", "RdcPayload.divider-caustic.ps"),
+        new Payload("divider-caustic-detail.ps", "RdcPayload.divider-caustic-detail.ps"),
         new Payload("divider-particles.ps", "RdcPayload.divider-particles.ps"),
+        new Payload("divider-particles-core.ps", "RdcPayload.divider-particles-core.ps"),
         new Payload("RDCRelay.ico", "RdcPayload.RDCRelay.ico"),
         new Payload("version.txt", "RdcPayload.version.txt"),
         new Payload("update.ps1", "RdcPayload.update.ps1"),
