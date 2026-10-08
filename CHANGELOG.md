@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.14 (2026-10-08)
+
+- Correct the bottom status hint alignment so the version, separator and close-window hint keep the intended right-anchored geometry without shifting the text block.
+- Keep the runtime version source synchronized at 1.5.14 across the shell payload and release metadata.
+
 ## 1.5.13 (2026-10-08)
 
 - Recover automatically from a corrupted Desktop Commander npx cache when the pinned Remote package loses its `dist/index.js` entrypoint, keeping the divider in recovery yellow instead of surfacing a false persistent fault.
