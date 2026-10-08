@@ -1,4 +1,8 @@
-# Changelog
+﻿# Changelog
+
+## 1.5.15 (2026-10-08)
+
+- Restore the 1.5.12 bottom status hint geometry exactly, keeping the close-window hint, separator and runtime version aligned as in the established release layout.
 
 ## 1.5.14 (2026-10-08)
 
@@ -49,7 +53,7 @@
 - Added persistent fault signalling: particles, caustic and divider rails smoothly move into a two-tone red/red-orange palette and remain there until the fault clears.
 - Added a one-shot green/yellow-green recovery confirmation with a fast peak and a longer smooth return to the normal purple/orange palette; geometry and particle trajectories remain unchanged.
 - Trigger the green confirmation on every real `not ready -> ready` transition, including the first successful connection after application startup, without retriggering on duplicate ready markers.
-- Track Desktop Commander tool lifecycle using its leading Unicode markers (🔧/✅/❌). Explicit failed calls remain visibly faulted, but prolonged silence or a missing completion marker now retires to idle instead of being treated as a Remote MCP failure.
+- Track Desktop Commander tool lifecycle using its leading Unicode markers (рџ”§/вњ…/вќЊ). Explicit failed calls remain visibly faulted, but prolonged silence or a missing completion marker now retires to idle instead of being treated as a Remote MCP failure.
 - Extended GUI self-tests for cold-start readiness, explicit tool failures, idle-timeout retirement, recovery signalling and GPU palette transitions.
 - Restored a reproducible four-shader build: particle pass selection now uses an explicit `PassIndex` shader constant instead of overloading `Intensity`, and both particle/core bytecode files are rebuilt from their checked-in HLSL sources.
 - Hardened release/UI integrity checks: self-test now validates the exact manifest payload and hashes, single-popup sandwich/transparency contracts and premultiplied-alpha guards; GPU initialization failures are logged instead of silently falling back.
@@ -85,7 +89,7 @@
 
 ## 1.5.6 (2026-10-06)
 
-- Replaced the ambiguous post-stop "Close" action with a Stop/Start state button: `■ Остановить` / `▶ Запустить`.
+- Replaced the ambiguous post-stop "Close" action with a Stop/Start state button: `в–  РћСЃС‚Р°РЅРѕРІРёС‚СЊ` / `в–¶ Р—Р°РїСѓСЃС‚РёС‚СЊ`.
 - Added vector Stop/Play button glyphs rendered by the shell itself.
 - Refined the top-right command group: retained the 4 px utility spacing and 16 px separation before Stop, restored the purple Help treatment, and reduced only its visible circle while keeping the full hit target.
 - Tightened startup banner line spacing by one physical pixel to remove dark seams between ASCII-art rows.
@@ -129,3 +133,4 @@ Maintenance and release-engineering release. No intentional UI redesign.
 - Added the first GitHub-backed self-update implementation with SHA256 payload
   verification and rollback.
 - Refined the application icon and corrected monogram alignment/background.
+

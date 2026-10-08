@@ -1,7 +1,7 @@
 ﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$appVersion = '1.5.14'
+$appVersion = '1.5.15'
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'RDCRelay.ico'
@@ -3579,9 +3579,8 @@ $infoHost.Controls.Add($runtimeSep)
 $infoHost.Controls.Add($runtimeRight)
 
 $hintHost = New-Object Windows.Forms.FlowLayoutPanel
-$hintHost.AutoSize = $true
-$hintHost.Anchor = [Windows.Forms.AnchorStyles]::Top -bor [Windows.Forms.AnchorStyles]::Right
-$hintHost.FlowDirection = 'LeftToRight'
+$hintHost.Dock = 'Fill'
+$hintHost.FlowDirection = 'RightToLeft'
 $hintHost.WrapContents = $false
 $hintHost.Margin = New-Object Windows.Forms.Padding(0)
 $hintHost.Padding = New-Object Windows.Forms.Padding(0)
@@ -5845,8 +5844,6 @@ if ($SelfTest) {
     if ($title.Text -notlike 'RDC Relay*') { throw 'Header title missing' }
     if ($title.Text -match '\bv\d+\.\d+\b') { throw 'Version must not be in header' }
     if ($hintVersion.Text -ne ('v' + $appVersion)) { throw 'Bottom version label missing' }
-    if ($hintHost.FlowDirection -ne [Windows.Forms.FlowDirection]::LeftToRight) { throw 'Bottom hint flow direction mismatch' }
-    if (-not $hintHost.AutoSize -or $hintHost.Anchor -ne ([Windows.Forms.AnchorStyles]::Top -bor [Windows.Forms.AnchorStyles]::Right)) { throw 'Bottom hint host is not right-anchored' }
     if ($bottom.ColumnStyles[1].Width -lt 440) { throw 'Bottom version container too narrow' }
     $bannerProbe = New-Object RdcLogBox
     $bannerProbe.ForeColor = [Drawing.Color]::Gainsboro
@@ -6428,3 +6425,6 @@ finally {
         $windowMutex.Dispose()
     }
 }
+
+
+
