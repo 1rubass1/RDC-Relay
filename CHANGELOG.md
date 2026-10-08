@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.13 (2026-10-08)
+
+- Recover automatically from a corrupted Desktop Commander npx cache when the pinned Remote package loses its `dist/index.js` entrypoint, keeping the divider in recovery yellow instead of surfacing a false persistent fault.
+- Treat a slow cold start as transitional rather than failed: the Relay now keeps waiting for the upstream readiness proof and only enters the red fault state on an explicit transport/session failure.
+- Make the stopped state authoritative after a manual Stop so late Remote MCP readiness, health and fault markers cannot resurrect activity or overwrite the stopped visual state.
+- Keep the stopped divider visually quiet and neutral while preserving the existing ready, connecting, recovery and fault feedback for active sessions.
+
 ## 1.5.12 (2026-10-07)
 
 - Make updater writes transactional: journal files before replacement, stage payloads on the target volume, use atomic replacement where available, roll back in reverse order, and keep failed updates immediately retryable.

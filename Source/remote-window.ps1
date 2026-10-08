@@ -1,7 +1,7 @@
 ﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$appVersion = '1.5.12'
+$appVersion = '1.5.13'
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'RDCRelay.ico'
@@ -2303,6 +2303,9 @@ public sealed class RdcDividerGlowEffect : ShaderEffect {
     public static readonly DependencyProperty StartupProperty =
         DependencyProperty.Register("Startup", typeof(double), typeof(RdcDividerGlowEffect),
             new UIPropertyMetadata(0.0, PixelShaderConstantCallback(6)));
+    public static readonly DependencyProperty StoppedProperty =
+        DependencyProperty.Register("Stopped", typeof(double), typeof(RdcDividerGlowEffect),
+            new UIPropertyMetadata(0.0, PixelShaderConstantCallback(8)));
     public static readonly DependencyProperty PassIndexProperty =
         DependencyProperty.Register("PassIndex", typeof(double), typeof(RdcDividerGlowEffect),
             new UIPropertyMetadata(0.0, PixelShaderConstantCallback(7)));
@@ -2329,6 +2332,7 @@ public sealed class RdcDividerGlowEffect : ShaderEffect {
         UpdateShaderValue(FaultProperty);
         UpdateShaderValue(RecoveryProperty);
         UpdateShaderValue(StartupProperty);
+        UpdateShaderValue(StoppedProperty);
         UpdateShaderValue(PassIndexProperty);
     }
 }
@@ -2367,6 +2371,7 @@ public sealed class RdcGpuDividerHost : ElementHost {
     private bool renderPaused;
     private bool faultMode;
     private bool startupMode;
+    private bool stoppedMode;
     private IntPtr particlePopupHwnd = IntPtr.Zero;
     private int lastPopupX = Int32.MinValue;
     private int lastPopupY = Int32.MinValue;
@@ -2591,6 +2596,9 @@ public sealed class RdcGpuDividerHost : ElementHost {
             System.Windows.Media.Color.FromRgb(46,235,89),
             recoveryBlend
         );
+        if (stoppedMode) {
+            rail = System.Windows.Media.Color.FromRgb(112,115,120);
+        }
         stateRailBrush.Color=rail;
 
         if (renderPaused || interactiveMove) {
@@ -3251,7 +3259,25 @@ public sealed class RdcGpuDividerHost : ElementHost {
         targetActivity=active ? 1.0 : 0.0;
     }
 
+    public void SetStopped(bool active) {
+        stoppedMode=active;
+        if (active) {
+            startupMode=false;
+            faultMode=false;
+            recoveryActive=false;
+            recoveryBlend=0.0;
+            targetActivity=0.10;
+            activity=Math.Max(activity,0.10);
+        }
+        if (!renderPaused) {
+            EnsurePopupOpen();
+            PositionPopup();
+            ApplyCurrentFrame();
+        }
+    }
+
     public void SetStartup(bool active) {
+        if (active) stoppedMode=false;
         if (startupMode == active) return;
         startupMode=active;
 
@@ -3267,7 +3293,7 @@ public sealed class RdcGpuDividerHost : ElementHost {
     }
 
     public void SetFault(bool active) {
-        if (active) startupMode=false;
+        if (active) { startupMode=false; stoppedMode=false; }
         if (faultMode == active) return;
         faultMode=active;
 
@@ -3283,6 +3309,7 @@ public sealed class RdcGpuDividerHost : ElementHost {
     }
 
     public void BeginRecoveryFlash() {
+        stoppedMode=false;
         startupMode=false;
         faultMode=false;
         recoveryActive=true;
@@ -4030,6 +4057,7 @@ $script:reader = $null
 $script:bannerStyled = $false
 $script:startTime = $null
 $script:stopping = $false
+$script:manualStopRequested = $false
 $script:exitHandled = $false
 $script:accountEmail = $null
 $script:lastFrameDark = $null
@@ -4174,6 +4202,11 @@ function Set-DividerStartupState([bool]$startup) {
         $gpuDivider.SetStartup($startup)
     }
 }
+function Set-DividerStoppedState([bool]$stopped) {
+    if ($gpuDivider -and -not $gpuDivider.IsDisposed) {
+        $gpuDivider.SetStopped($stopped)
+    }
+}
 function Set-DividerFaultState([bool]$fault) {
     if ($gpuDivider -and -not $gpuDivider.IsDisposed) {
         $gpuDivider.SetFault($fault)
@@ -4246,6 +4279,7 @@ function Clear-RemoteFault {
     Set-DividerFaultState $false
 }
 function Mark-RemoteReady([string]$marker = '') {
+    if ($script:manualStopRequested -or $script:stopping) { return }
     $wasReady = $script:remoteReady
     $wasFault = $script:remoteFaultLatched
     $preserveToolFault =
@@ -4278,6 +4312,7 @@ function Mark-RemoteReady([string]$marker = '') {
     }
 }
 function Update-RemoteHealthFromLine([string]$line) {
+    if ($script:manualStopRequested -or $script:stopping) { return }
     if ([string]::IsNullOrWhiteSpace($line)) { return }
 
     if (
@@ -4975,6 +5010,35 @@ function Find-ExistingRemote {
         return Get-Process -Id $candidate.ProcessId -ErrorAction Stop
     } catch { return $null }
 }
+function Repair-DesktopCommanderNpxCache {
+    $cacheRoot = $null
+    if ($env:LOCALAPPDATA) { $cacheRoot = Join-Path $env:LOCALAPPDATA 'npm-cache\\_npx' }
+    if (-not $cacheRoot -or -not (Test-Path -LiteralPath $cacheRoot)) { return 0 }
+    $removed = 0
+    try {
+        $packageDirs = Get-ChildItem -LiteralPath $cacheRoot -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName 'node_modules\\@wonderwhy-er\\desktop-commander' } |
+            Where-Object { Test-Path -LiteralPath $_ }
+        foreach ($packageDir in $packageDirs) {
+            $entryPoint = Join-Path $packageDir 'dist\\index.js'
+            if (Test-Path -LiteralPath $entryPoint) { continue }
+            try {
+                $cacheEntry = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $packageDir))
+                Remove-Item -LiteralPath $cacheEntry -Recurse -Force -ErrorAction Stop
+                $removed++
+                Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Восстановление Desktop Commander: удалён неполный npx-кэш ' + $cacheEntry + $nl)
+            } catch { Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] Не удалось удалить повреждённый npx-кэш Desktop Commander: ' + $_.Exception.Message + $nl) }
+        }
+    } catch {}
+    return $removed
+}
+function Test-DesktopCommanderBootstrapFailure {
+    if (-not (Test-Path -LiteralPath $logPath)) { return $false }
+    try {
+        $tail = Get-Content -LiteralPath $logPath -Raw -ErrorAction Stop
+        return ($tail -match '(?i)Cannot find module.*[\\/]@wonderwhy-er[\\/]desktop-commander[\\/]dist/index\\.js')
+    } catch { return $false }
+}
 function Start-NoWindowCmd([string]$commandLine) {
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = Join-Path $env:SystemRoot 'System32\cmd.exe'
@@ -4988,6 +5052,8 @@ function Start-NoWindowCmd([string]$commandLine) {
 function Start-Remote {
     try {
         if ($script:proc -and -not $script:proc.HasExited) { return }
+        $script:manualStopRequested = $false
+        Set-DividerStoppedState $false
         if (-not $script:supervisorRestarting) {
             $script:autoReconnectAttempt = 0
             $script:autoReconnectAt = $null
@@ -5012,6 +5078,7 @@ function Start-Remote {
             return
         }
         $npxPath = Resolve-NpxPath
+        if (-not $SelfTest -and -not $Preview) { [void](Repair-DesktopCommanderNpxCache) }
         if ($script:reader) { $script:reader.Dispose(); $script:reader = $null }
         Reset-CompactLogSession
         if (Test-Path $logPath) {
@@ -5023,6 +5090,7 @@ function Start-Remote {
         }
         $script:stopping = $false
         $script:exitHandled = $false
+        Set-DividerStoppedState $false
         $script:remoteReady = $false
         $script:remoteInteractiveAuth = $false
         $script:remoteConnectDeadline = (Get-Date).AddSeconds($remoteConnectGraceSeconds)
@@ -5385,12 +5453,8 @@ function Refresh-Window {
         $script:remoteConnectDeadline -and
         $now -ge $script:remoteConnectDeadline
     ) {
+        # A missed readiness deadline is not itself evidence that the transport failed.
         $script:remoteConnectDeadline = $null
-        Set-RemoteFault 'connection-timeout' (
-            'Remote MCP не подтвердил готовность за ' +
-            [int]$remoteConnectGraceSeconds +
-            ' секунд; продолжаю ждать встроенное восстановление канала.'
-        ) $false
     }
 
     if ($script:autoReconnectAt -and $now -ge $script:autoReconnectAt) {
@@ -5454,6 +5518,14 @@ function Refresh-Window {
 
             if ($script:stopping) {
                 Set-State 'Завершён' 'Remote-процесс остановлен.' ([Drawing.Color]::Silver)
+            }
+            elseif ($code -eq 1 -and (Test-DesktopCommanderBootstrapFailure)) {
+                [void](Repair-DesktopCommanderNpxCache)
+                $bootstrapReason = 'Desktop Commander не запустился: в локальном npx-кэше отсутствует dist/index.js. Повреждённый кэш удалён; повторяю запуск автоматически.'
+                Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] ВОССТАНОВЛЕНИЕ: ' + $bootstrapReason + $nl)
+                Schedule-AutoReconnect $bootstrapReason
+                Set-DividerFaultState $false
+                Set-State 'Восстановление Desktop Commander…' $bootstrapReason ([Drawing.Color]::Khaki)
             }
             else {
                 Set-RemoteFault 'process-exit' (
