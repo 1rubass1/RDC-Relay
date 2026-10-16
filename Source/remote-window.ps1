@@ -2627,6 +2627,13 @@ public sealed class RdcGpuDividerHost : ElementHost {
         // Resume the frozen animation phase, but snap activity to the current
         // requested state.
         activity = (startupMode || faultMode || recoveryActive || recoveryBlend > 0.002)
+        // A recovery pulse confirms a live transition. If the window was
+        // minimized/occluded mid-pulse, do not replay its frozen green frames
+        // when the user restores the window. Real health state is retained.
+        recoveryActive = false;
+        recoveryBlend = 0.0;
+        recoveryAge = 0.0;
+
             ? 1.0
             : targetActivity;
         lastFrameSeconds = watch.Elapsed.TotalSeconds;
@@ -3112,6 +3119,8 @@ public sealed class RdcGpuDividerHost : ElementHost {
     public double ActivityLevel { get { return activity; } }
     public bool ActivityRequested { get { return targetActivity > 0.5; } }
     public bool StoppedVisualActive { get { return stoppedMode && popupRoot.Opacity < 0.001; } }
+    // Deterministic visibility regression hook; never changes Remote MCP state.
+    public void SimulateVisibilityPauseForTest(bool paused) { SetRenderingPaused(paused); }
     public bool FaultRequested { get { return faultMode; } }
     public double FaultBlend { get { return faultBlend; } }
     public bool StartupRequested { get { return startupMode; } }
@@ -6378,6 +6387,12 @@ if ($SelfTest) {
 }
 if ($Preview) {
     Set-State 'Предпросмотр' 'Dev preview без запуска remote-процесса.' ([Drawing.Color]::LightBlue)
+        $gpuDivider.SimulateVisibilityPauseForTest($true)
+        $gpuDivider.BeginRecoveryFlash()
+        $gpuDivider.SimulateVisibilityPauseForTest($false)
+        if ($gpuDivider.RecoveryActive -or $gpuDivider.RecoveryBlend -gt 0.001) {
+            throw 'Restoring window replayed deferred green recovery pulse'
+        }
 
     $previewBanner = @(
         '██████╗ ███████╗███████╗██╗  ██╗████████╗ ██████╗ ██████╗     ██████╗ ██████╗ ███╗   ███╗███╗   ███╗ █████╗ ███╗   ██╗██████╗ ███████╗██████╗',
