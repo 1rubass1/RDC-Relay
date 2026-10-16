@@ -6,12 +6,22 @@ $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $ProjectRoot 
 if ($errors.Count) { throw 'GUI parse failed' }
 # Load only the state machine, with fake process handles and UI sinks. Never
 # launch, stop, log out, or inspect the user's actual Desktop Commander server.
-$names=@('Begin-RemoteOperation','Complete-RemoteOperation','Update-RemoteOperation','Set-RemoteActionsEnabled','Reset-RemoteHandle','Complete-RuntimeInitialization')
+$names=@('Begin-RemoteOperation','Complete-RemoteOperation','Update-RemoteOperation','Set-RemoteActionsEnabled','Reset-RemoteHandle','Complete-RuntimeInitialization','Test-DesktopCommanderBootstrapFailure')
 foreach($name in $names) {
     $node=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
     . ([scriptblock]::Create($node.Extent.Text))
 }
 function Assert($condition,[string]$message) { if(-not $condition){throw $message} }
+$logPath=Join-Path $env:TEMP ('RdcBootstrap-' + [Guid]::NewGuid().ToString('N') + '.log')
+try {
+    [IO.File]::WriteAllText($logPath,'Error: Cannot find module C:\npm-cache\_npx\ab\node_modules\@wonderwhy-er\desktop-commander\dist\index.js')
+    Assert (Test-DesktopCommanderBootstrapFailure) 'Windows npx bootstrap failure was not recognized'
+    [IO.File]::WriteAllText($logPath,'Error: Cannot find module /npm-cache/_npx/ab/node_modules/@wonderwhy-er/desktop-commander/dist/index.js')
+    Assert (Test-DesktopCommanderBootstrapFailure) 'POSIX npx bootstrap failure was not recognized'
+    [IO.File]::WriteAllText($logPath,'Error: Cannot find module C:\other\package\index.js')
+    Assert (-not (Test-DesktopCommanderBootstrapFailure)) 'Unrelated module failure was misclassified'
+} finally { Remove-Item -LiteralPath $logPath -ErrorAction SilentlyContinue }
+Write-Output 'PASS: bootstrap error classification for Windows and POSIX paths'
 function New-FakeProcess([bool]$exited=$false,[int]$code=0) {
     $p=[pscustomobject]@{HasExited=$exited;ExitCode=$code;Id=123;Disposed=$false}
     $p | Add-Member ScriptMethod Dispose { $this.Disposed=$true }
@@ -22,6 +32,8 @@ function Add-Log { param($text) }
 function Read-LiveLog {}
 function Set-AccountDisplay { param($email) }
 function Set-FinishButtonMode { param($running) }
+function Set-DividerStoppedState { param($stopped) $script:stoppedVisual=$stopped }
+function Clear-RemoteFault {}
 function Set-RemoteFault { param($kind,$reason,$retry) $script:fault=$kind }
 function Schedule-AutoReconnect { param($reason) }
 function Resolve-NpxPath { return 'C:\Fake\npx.cmd' }
@@ -42,11 +54,13 @@ $form | Add-Member ScriptMethod Close {$this.CloseCount++}
 $root=$env:TEMP; $nl=[Environment]::NewLine; $desktopCommanderPackage='test-only'
 $script:initializing=$false; $script:remoteOperation=$null
 $script:startCalls=0; $script:closeRequested=$false
+$script:manualStopRequested=$false; $script:stoppedVisual=$false
 
 foreach($action in @('stop','restart','logout','reconnect')) {
     $script:proc=New-FakeProcess
     $before=$script:startCalls
     Begin-RemoteOperation $action
+    Assert ($script:manualStopRequested -eq ($action -eq 'stop')) 'Manual stop guard was not assigned to the correct action'
     Assert (-not $finish.Enabled) 'Actions not disabled while pending'
     $watch=[Diagnostics.Stopwatch]::StartNew()
     Update-RemoteOperation
@@ -63,6 +77,7 @@ foreach($action in @('stop','restart','logout','reconnect')) {
         Update-RemoteOperation
     }
     Assert ($null -eq $script:remoteOperation -and $finish.Enabled) 'Operation did not complete'
+    if ($action -eq 'stop') { Assert $script:stoppedVisual 'Manual stop did not activate neutral divider state' }
     $expected=if($action -eq 'stop'){$before}else{$before+1}
     Assert ($script:startCalls -eq $expected) 'Unexpected restart count'
     if($action -eq 'reconnect') { Assert $script:wasSupervisor 'Reconnect lost supervisor flag' }
@@ -76,6 +91,7 @@ $script:remoteOperation.Process.HasExited=$true
 $script:remoteOperation.Process.ExitCode=1
 Update-RemoteOperation
 Assert ($script:startCalls -eq $before -and $script:fault -eq 'operation-failed') 'Failed stop restarted remote'
+Assert (-not $script:manualStopRequested) 'Failed operation left manual-stop guard enabled'
 Assert $finish.Enabled 'Failed operation left controls disabled'
 Write-Output 'PASS: failed stop leaves server handle and does not start a duplicate'
 

@@ -2303,9 +2303,6 @@ public sealed class RdcDividerGlowEffect : ShaderEffect {
     public static readonly DependencyProperty StartupProperty =
         DependencyProperty.Register("Startup", typeof(double), typeof(RdcDividerGlowEffect),
             new UIPropertyMetadata(0.0, PixelShaderConstantCallback(6)));
-    public static readonly DependencyProperty StoppedProperty =
-        DependencyProperty.Register("Stopped", typeof(double), typeof(RdcDividerGlowEffect),
-            new UIPropertyMetadata(0.0, PixelShaderConstantCallback(8)));
     public static readonly DependencyProperty PassIndexProperty =
         DependencyProperty.Register("PassIndex", typeof(double), typeof(RdcDividerGlowEffect),
             new UIPropertyMetadata(0.0, PixelShaderConstantCallback(7)));
@@ -2332,7 +2329,6 @@ public sealed class RdcDividerGlowEffect : ShaderEffect {
         UpdateShaderValue(FaultProperty);
         UpdateShaderValue(RecoveryProperty);
         UpdateShaderValue(StartupProperty);
-        UpdateShaderValue(StoppedProperty);
         UpdateShaderValue(PassIndexProperty);
     }
 }
@@ -2601,7 +2597,7 @@ public sealed class RdcGpuDividerHost : ElementHost {
         }
         stateRailBrush.Color=rail;
 
-        if (renderPaused || interactiveMove) {
+        if (renderPaused || interactiveMove || stoppedMode) {
             popupRoot.Opacity = 0.0;
             return;
         }
@@ -3115,6 +3111,7 @@ public sealed class RdcGpuDividerHost : ElementHost {
     public int RenderTier { get { return RenderCapability.Tier; } }
     public double ActivityLevel { get { return activity; } }
     public bool ActivityRequested { get { return targetActivity > 0.5; } }
+    public bool StoppedVisualActive { get { return stoppedMode && popupRoot.Opacity < 0.001; } }
     public bool FaultRequested { get { return faultMode; } }
     public double FaultBlend { get { return faultBlend; } }
     public bool StartupRequested { get { return startupMode; } }
@@ -3266,8 +3263,8 @@ public sealed class RdcGpuDividerHost : ElementHost {
             faultMode=false;
             recoveryActive=false;
             recoveryBlend=0.0;
-            targetActivity=0.10;
-            activity=Math.Max(activity,0.10);
+            targetActivity=0.0;
+            activity=0.0;
         }
         if (!renderPaused) {
             EnsurePopupOpen();
@@ -4243,6 +4240,7 @@ function Set-RemoteFault(
     [string]$reason,
     [bool]$scheduleRestart = $false
 ) {
+    if ($script:manualStopRequested -or $script:stopping) { return }
     $changed =
         (-not $script:remoteFaultLatched) -or
         ($script:remoteFaultKind -ne $kind) -or
@@ -5036,7 +5034,7 @@ function Test-DesktopCommanderBootstrapFailure {
     if (-not (Test-Path -LiteralPath $logPath)) { return $false }
     try {
         $tail = Get-Content -LiteralPath $logPath -Raw -ErrorAction Stop
-        return ($tail -match '(?i)Cannot find module.*[\\/]@wonderwhy-er[\\/]desktop-commander[\\/]dist/index\\.js')
+        return ($tail -match '(?i)Cannot find module.*[\\/]@wonderwhy-er[\\/]desktop-commander[\\/]dist[\\/]index\.js')
     } catch { return $false }
 }
 function Start-NoWindowCmd([string]$commandLine) {
@@ -5173,6 +5171,7 @@ function Set-RemoteActionsEnabled([bool]$enabled) {
 
 function Begin-RemoteOperation([string]$action) {
     if ($script:remoteOperation -or $script:initializing) { return }
+    $script:manualStopRequested = ($action -eq 'stop')
     $script:remoteOperation = [pscustomobject]@{
         Action = $action; Stage = 'stopping'; Process = $null
         Deadline = (Get-Date).AddSeconds(10); Failure = ''
@@ -5193,6 +5192,7 @@ function Complete-RemoteOperation([string]$errorText = '') {
     if ($errorText) {
         $script:closeRequested = $false
         $script:stopping = $false
+        $script:manualStopRequested = $false
         $script:autoReconnectAt = $null
         Set-RemoteFault 'operation-failed' $errorText $false
         Set-State 'Действие не выполнено' $errorText ([Drawing.Color]::LightCoral)
@@ -5205,6 +5205,11 @@ function Complete-RemoteOperation([string]$errorText = '') {
         return
     }
     if ($op.Action -eq 'stop') {
+        $script:remoteReady = $false
+        $script:remoteConnectDeadline = $null
+        $script:autoReconnectAt = $null
+        Clear-RemoteFault
+        Set-DividerStoppedState $true
         Set-FinishButtonMode $false
         Set-State 'Остановлен' 'Remote-процесс остановлен.' ([Drawing.Color]::Silver)
     }
@@ -6289,6 +6294,9 @@ if ($SelfTest) {
         if ($gpuDivider.RecoveryActive -or $gpuDivider.RecoveryBlend -gt 0.05) {
             throw 'Recovery flash did not settle back to the normal palette'
         }
+        $gpuDivider.SetStopped($true)
+        if (-not $gpuDivider.StoppedVisualActive) { throw 'Stopped divider did not become quiet and neutral' }
+        $gpuDivider.SetStopped($false)
     } else {
         Process-RemoteLine '🔧 Received tool call fallback_test: begin'
         Process-RemoteLine '✅ Tool call fallback_test completed:'
