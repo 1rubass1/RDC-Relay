@@ -209,7 +209,11 @@ $script:rdcNoticeInstalling = $false
 $script:rdcNoticeControl = New-Object RdcUpdateNoticeStrip
 $script:rdcNoticeControl.BackColor = $form.BackColor
 $script:rdcNoticeControl.Font = $hintVersion.Font
-$script:rdcNoticeControl.Dock = 'Fill'
+# The bottom TableLayoutPanel uses an auto-preferred 100px row even though
+# its visible footer is 25px high. Drawing in that 100px vertical center was
+# clipped completely. Dock only across the top of the visible inner footer.
+$script:rdcNoticeControl.Dock = 'Top'
+$script:rdcNoticeControl.Height = 25
 $script:rdcNoticeControl.Margin = New-Object Windows.Forms.Padding(0)
 $script:rdcNoticeControl.Visible = $false
 $script:rdcNoticeControl.TabStop = $false

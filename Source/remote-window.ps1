@@ -5920,6 +5920,18 @@ if ($SelfTest) {
         $script:rdcNoticeControl.FinishAnimationForTest()
         $bottom.ColumnStyles[1].Width = $script:rdcNoticeControl.SuggestedWidth
         $bottom.PerformLayout()
+        # Regression: the footer's auto-layout row is 100px high, while only
+        # the top 25px is visible. An opaque control drawing in the center of
+        # that row disappears completely on-screen (even though DrawToBitmap
+        # of its entire 100px area can pass).
+        $visibleFooterHeight = $bottom.ClientSize.Height - $bottom.Padding.Vertical
+        if ($script:rdcNoticeControl.Height -gt $visibleFooterHeight -or
+            $script:rdcNoticeControl.Top -ne $bottom.Padding.Top -or
+            $script:rdcNoticeControl.Height -lt 20) {
+            throw ('Update notice clipped outside visible footer: control=' +
+                $script:rdcNoticeControl.Bounds + ', visible height=' +
+                $visibleFooterHeight)
+        }
         if ($env:RDC_RELAY_FOOTER_CAPTURE) {
             $bmp = New-Object Drawing.Bitmap([Math]::Max(1,$script:rdcNoticeControl.Width),[Math]::Max(1,$script:rdcNoticeControl.Height))
             try {
@@ -6484,6 +6496,7 @@ if ($Preview) {
         $form.Add_Shown({ Show-RdcUpdateNotice $script:previewUpdateVersion })
     }
     Set-State 'Предпросмотр' 'Dev preview без запуска remote-процесса.' ([Drawing.Color]::LightBlue)
+    Set-RuntimeDisplay 'Remote не запущен' 'Только предпросмотр' $true
 
     $previewBanner = @(
         '██████╗ ███████╗███████╗██╗  ██╗████████╗ ██████╗ ██████╗     ██████╗ ██████╗ ███╗   ███╗███╗   ███╗ █████╗ ███╗   ██╗██████╗ ███████╗██████╗',
