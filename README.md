@@ -90,6 +90,26 @@ files.
 The repository must be publicly readable for the unauthenticated updater to
 reach GitHub.
 
+### Optional in-session update notification (development candidate)
+
+The original automatic update/repair check **at application launch is retained**.
+When RDC Relay stays open, a separate nonblocking background check runs against
+the same immutable `stable` commit and manifest roughly every hour. A newer
+stable version triggers a staged footer microinteraction: installed version
+moves left, an arrow slides out from the orange separator, and a filled orange
+button labeled with the new version fades in. Clicking the button invokes the
+existing transactional `update.ps1 -Force` and restarts RDC Relay after success.
+
+The code lives in `Source/update-notice.ps1`. To **revert only this optional
+feature during development**, set `$script:enableUpdateNotice = $false` near
+the beginning of `Source/remote-window.ps1` and regenerate the manifest for a
+new candidate build. No footer controls are replaced and no hourly request is
+made when it is disabled. The old automatic startup updater still operates.
+
+`-Preview` shows a synthetic next-patch-version notice without calling GitHub
+or performing an update. This candidate must pass visual acceptance before it is
+versioned and published.
+
 ## Runtime notes
 
 - A second launcher instance exits without activating the existing window.

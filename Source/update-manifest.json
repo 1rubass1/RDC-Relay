@@ -3,7 +3,11 @@
     "files":  [
                   {
                       "name":  "remote-window.ps1",
-                      "sha256":  "C904309B8D6D79F6D5633ACC36E471775109F2AB3594FC2593E540F6BF7D57D0"
+                      "sha256":  "07E045EC9EA36811B2FC3DB85EE90FF0C836B21AAF275A72A0F96C55D0CA20EC"
+                  },
+                  {
+                      "name":  "update-notice.ps1",
+                      "sha256":  "9A7082FA593C17551997BD438E14ECBD756E460824DA397A7CB09E1C65F71964"
                   },
                   {
                       "name":  "divider-caustic.ps",

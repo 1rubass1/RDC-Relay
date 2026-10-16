@@ -25,6 +25,7 @@ internal static class SetupProgram
     private static readonly Payload[] Files = new Payload[]
     {
         new Payload("remote-window.ps1", "RdcPayload.remote-window.ps1"),
+        new Payload("update-notice.ps1", "RdcPayload.update-notice.ps1"),
         new Payload("divider-caustic.ps", "RdcPayload.divider-caustic.ps"),
         new Payload("divider-caustic-detail.ps", "RdcPayload.divider-caustic-detail.ps"),
         new Payload("divider-particles.ps", "RdcPayload.divider-particles.ps"),

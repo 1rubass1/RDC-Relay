@@ -33,6 +33,7 @@ function Convert-ToCanonicalUtf8Lf {
 
 foreach ($name in @(
     'remote-window.ps1',
+    'update-notice.ps1',
     'update.ps1',
     'version.txt',
     'RDC Relay.cmd'
@@ -55,6 +56,7 @@ Copy-Item -LiteralPath $sourceIcon -Destination $runtimeIcon -Force
 
 $manifestPayload = @(
     'remote-window.ps1',
+    'update-notice.ps1',
     'divider-caustic.ps',
     'divider-caustic-detail.ps',
     'divider-particles.ps',
@@ -146,6 +148,7 @@ using System.Reflection;
         $setupSource,
         $assemblyInfo,
         ('/resource:' + (Join-Path $sourceDir 'remote-window.ps1') + ',RdcPayload.remote-window.ps1'),
+        ('/resource:' + (Join-Path $sourceDir 'update-notice.ps1') + ',RdcPayload.update-notice.ps1'),
         ('/resource:' + (Join-Path $sourceDir 'divider-caustic.ps') + ',RdcPayload.divider-caustic.ps'),
         ('/resource:' + (Join-Path $sourceDir 'divider-caustic-detail.ps') + ',RdcPayload.divider-caustic-detail.ps'),
         ('/resource:' + (Join-Path $sourceDir 'divider-particles.ps') + ',RdcPayload.divider-particles.ps'),

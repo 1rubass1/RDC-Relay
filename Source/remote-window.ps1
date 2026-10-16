@@ -2,6 +2,10 @@
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $appVersion = '1.5.15'
+# Flip to $false to remove the optional update notice and restore the original
+# startup auto-updater/footer with no other runtime or UI modifications.
+$script:enableUpdateNotice = $true
+$script:updateInstallRequested = $false
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'RDCRelay.ico'
@@ -2623,10 +2627,6 @@ public sealed class RdcGpuDividerHost : ElementHost {
             return;
         }
 
-        // Do not replay a stale fade after the window was hidden for a while.
-        // Resume the frozen animation phase, but snap activity to the current
-        // requested state.
-        activity = (startupMode || faultMode || recoveryActive || recoveryBlend > 0.002)
         // A recovery pulse confirms a live transition. If the window was
         // minimized/occluded mid-pulse, do not replay its frozen green frames
         // when the user restores the window. Real health state is retained.
@@ -2634,6 +2634,10 @@ public sealed class RdcGpuDividerHost : ElementHost {
         recoveryBlend = 0.0;
         recoveryAge = 0.0;
 
+        // Do not replay a stale fade after the window was hidden for a while.
+        // Resume the frozen animation phase, but snap activity to the current
+        // requested state.
+        activity = (startupMode || faultMode || recoveryActive || recoveryBlend > 0.002)
             ? 1.0
             : targetActivity;
         lastFrameSeconds = watch.Elapsed.TotalSeconds;
@@ -3115,12 +3119,12 @@ public sealed class RdcGpuDividerHost : ElementHost {
         visibilityTimer.Tick+=VisibilityTimer_Tick;
     }
 
+    // Deterministic visibility regression hook; never changes Remote MCP state.
+    public void SimulateVisibilityPauseForTest(bool paused) { SetRenderingPaused(paused); }
     public int RenderTier { get { return RenderCapability.Tier; } }
     public double ActivityLevel { get { return activity; } }
     public bool ActivityRequested { get { return targetActivity > 0.5; } }
     public bool StoppedVisualActive { get { return stoppedMode && popupRoot.Opacity < 0.001; } }
-    // Deterministic visibility regression hook; never changes Remote MCP state.
-    public void SimulateVisibilityPauseForTest(bool paused) { SetRenderingPaused(paused); }
     public bool FaultRequested { get { return faultMode; } }
     public double FaultBlend { get { return faultBlend; } }
     public bool StartupRequested { get { return startupMode; } }
@@ -5322,6 +5326,7 @@ function Start-RuntimeInitialization {
         try {
             Set-State 'Проверка обновлений…' 'Проверяю установленную версию; окно остаётся доступным.' ([Drawing.Color]::Khaki)
             $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $updaterPath + '"'),'-InstallRoot',('"' + $root + '"'),'-CurrentVersion',$appVersion)
+            if ($script:updateInstallRequested) { $args += '-Force' }
             $script:updateProc = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $args -WindowStyle Hidden -PassThru
             return
         } catch { Add-Log ('Проверка обновления не запущена: ' + $_.Exception.Message + $nl) }
@@ -5335,6 +5340,12 @@ function Complete-RuntimeInitialization {
         $code = $script:updateProc.ExitCode
         $script:updateProc.Dispose()
         $script:updateProc = $null
+        if ($script:updateInstallRequested) {
+            $script:updateInstallRequested = $false
+            if ($script:enableUpdateNotice -and $code -ne 42) {
+                Complete-RdcUpdateNoticeInstall $code
+            }
+        }
         if ($code -eq 42) {
             if ($windowMutex) {
                 $windowMutex.ReleaseMutex(); $windowMutex.Dispose(); $script:windowMutex = $null
@@ -5349,6 +5360,10 @@ function Complete-RuntimeInitialization {
             return
         }
         if ($code -ne 0) { Add-Log ('Обновление не установлено. Подробности: update.log.' + $nl) }
+    }
+    if ($script:updateInstallRequested) {
+        $script:updateInstallRequested = $false
+        if ($script:enableUpdateNotice) { Complete-RdcUpdateNoticeInstall 1 }
     }
     $script:initializing = $false
     Set-RemoteActionsEnabled $true
@@ -5449,6 +5464,7 @@ function Refresh-Window {
     if ($script:initializing) { Complete-RuntimeInitialization; return }
     if ($script:remoteOperation) { Update-RemoteOperation; return }
     Apply-SystemFrameTheme
+    if ($script:enableUpdateNotice) { Update-RdcUpdateNoticePolling }
 
     if ($script:uiInteracting -or $vScroll.IsDragging -or $hScroll.IsDragging) {
         return
@@ -5588,6 +5604,12 @@ $timer.Add_Tick({
     }
 })
 
+# The notification module owns only its temporary footer replacement, async
+# stable-branch checker and update button; removing it restores the old footer.
+$script:enableUpdateNotice = $script:enableUpdateNotice -and
+    (Test-Path -LiteralPath (Join-Path $root 'update-notice.ps1'))
+if ($script:enableUpdateNotice) { . (Join-Path $root 'update-notice.ps1') }
+
 $script:shortcutSyncTimer = $null
 if (-not $SelfTest -and -not $Preview) {
     $script:shortcutSyncTimer = New-Object Windows.Forms.Timer
@@ -5638,6 +5660,7 @@ $form.Add_FormClosing({
 })
 $form.Add_FormClosed({
     $timer.Stop()
+    if ($script:enableUpdateNotice) { Dispose-RdcUpdateNotice }
     if ($script:shortcutSyncTimer) {
         try { $script:shortcutSyncTimer.Stop() } catch {}
         try { $script:shortcutSyncTimer.Dispose() } catch {}
@@ -5698,6 +5721,7 @@ if ($SelfTest) {
 
     $requiredPayload = @(
         'remote-window.ps1',
+        'update-notice.ps1',
         'divider-caustic.ps',
         'divider-caustic-detail.ps',
         'divider-particles.ps',
@@ -5876,6 +5900,67 @@ if ($SelfTest) {
     if ($desktopCommanderPackage -ne '@wonderwhy-er/desktop-commander@0.2.52') { throw 'Unexpected Desktop Commander package pin' }
     if ($hintSep.ForeColor.ToArgb() -ne $accentOrange.ToArgb()) { throw 'Bottom separator color mismatch' }
     if ($runtimeSep.ForeColor.ToArgb() -ne $accentOrange.ToArgb()) { throw 'Runtime separator color mismatch' }
+    if ($script:enableUpdateNotice) {
+        $normalWidth = [int]$bottom.ColumnStyles[1].Width
+        if ($normalWidth -ne 440 -or -not $bottom.Controls.Contains($hintHost)) {
+            throw 'Baseline footer was changed by disabled update notice'
+        }
+        $parsedCurrent = [Version]$appVersion
+        $noticeTestVersion = '{0}.{1}.{2}' -f $parsedCurrent.Major,$parsedCurrent.Minor,($parsedCurrent.Build+1)
+        $newerManifest = '{"version":"' + $noticeTestVersion + '"}'
+        $sameManifest = '{"version":"' + $appVersion + '"}'
+        if ((Get-RdcAvailableVersionFromManifest $newerManifest) -ne $noticeTestVersion -or
+            (Get-RdcAvailableVersionFromManifest $sameManifest)) {
+            throw 'Stable manifest version comparison is incorrect'
+        }
+        Show-RdcUpdateNotice $noticeTestVersion
+        if (-not $script:rdcNoticeActive -or $bottom.Controls.Contains($hintHost)) {
+            throw 'Update notice did not take ownership of footer temporarily'
+        }
+        $script:rdcNoticeControl.FinishAnimationForTest()
+        $bottom.ColumnStyles[1].Width = $script:rdcNoticeControl.SuggestedWidth
+        $bottom.PerformLayout()
+        if ($env:RDC_RELAY_FOOTER_CAPTURE) {
+            $bmp = New-Object Drawing.Bitmap([Math]::Max(1,$script:rdcNoticeControl.Width),[Math]::Max(1,$script:rdcNoticeControl.Height))
+            try {
+                $script:rdcNoticeControl.DrawToBitmap($bmp,(New-Object Drawing.Rectangle(0,0,$bmp.Width,$bmp.Height)))
+                $bmp.Save($env:RDC_RELAY_FOOTER_CAPTURE,[Drawing.Imaging.ImageFormat]::Png)
+            } finally { $bmp.Dispose() }
+        }
+        if (-not $script:rdcNoticeControl.AnimationComplete -or
+            -not $script:rdcNoticeControl.ButtonReady -or
+            $script:rdcNoticeControl.SuggestedWidth -ne 590 -or
+            $script:rdcNoticeControl.OfferedVersion -ne $noticeTestVersion) {
+            throw 'Update notification stage timings/geometry invalid'
+        }
+        $script:rdcNoticeTestClicks = 0
+        $clickProbe = [EventHandler] { param($sender,$args) $script:rdcNoticeTestClicks++ }
+        $script:rdcNoticeControl.add_Click($clickProbe)
+        try {
+            $downMethod = $script:rdcNoticeControl.GetType().GetMethod('OnKeyDown',
+                [Reflection.BindingFlags]'Instance,NonPublic')
+            $upMethod = $script:rdcNoticeControl.GetType().GetMethod('OnKeyUp',
+                [Reflection.BindingFlags]'Instance,NonPublic')
+            foreach ($key in @([Windows.Forms.Keys]::Enter,[Windows.Forms.Keys]::Space)) {
+                $downEvent = New-Object Windows.Forms.KeyEventArgs($key)
+                $upEvent = New-Object Windows.Forms.KeyEventArgs($key)
+                $downMethod.Invoke($script:rdcNoticeControl,[object[]]@($downEvent.PSObject.BaseObject)) | Out-Null
+                $upMethod.Invoke($script:rdcNoticeControl,[object[]]@($upEvent.PSObject.BaseObject)) | Out-Null
+            }
+            if ($script:rdcNoticeTestClicks -ne 2) {
+                throw 'Update button must support Enter/Space activation exactly once'
+            }
+        } finally {
+            $script:rdcNoticeControl.remove_Click($clickProbe)
+        }
+        Hide-RdcUpdateNotice
+        if ($script:rdcNoticeActive -or $bottom.Controls.Contains($script:rdcNoticeControl) -or
+            -not $bottom.Controls.Contains($hintHost) -or
+            [int]$bottom.ColumnStyles[1].Width -ne $normalWidth -or
+            $hintVersion.Text -ne ('v'+$appVersion) -or $hintSep.Text -ne '•') {
+            throw 'Hiding update notification did not restore original footer exactly'
+        }
+    }
     if ($statusDot.GetType().Name -ne 'RdcStatusIndicator') { throw 'Status indicator control missing' }
     if ($headerLog.GetType().Name -ne 'RdcLogBox') { throw 'Header log control missing' }
     if ($headerVScroll.GetType().Name -ne 'RdcOverlayScrollBar' -or -not $headerVScroll.Vertical -or $headerVScroll.Target -ne $headerLog) { throw 'Header vertical scrollbar missing' }
@@ -6306,6 +6391,12 @@ if ($SelfTest) {
         $gpuDivider.SetStopped($true)
         if (-not $gpuDivider.StoppedVisualActive) { throw 'Stopped divider did not become quiet and neutral' }
         $gpuDivider.SetStopped($false)
+        $gpuDivider.SimulateVisibilityPauseForTest($true)
+        $gpuDivider.BeginRecoveryFlash()
+        $gpuDivider.SimulateVisibilityPauseForTest($false)
+        if ($gpuDivider.RecoveryActive -or $gpuDivider.RecoveryBlend -gt 0.001) {
+            throw 'Restoring window replayed deferred green recovery pulse'
+        }
     } else {
         Process-RemoteLine '🔧 Received tool call fallback_test: begin'
         Process-RemoteLine '✅ Tool call fallback_test completed:'
@@ -6386,13 +6477,13 @@ if ($SelfTest) {
     exit 0
 }
 if ($Preview) {
+    # Safe visual-only demonstration, never queries GitHub or installs anything.
+    if ($script:enableUpdateNotice) {
+        $previewBase = [Version]$appVersion
+        $script:previewUpdateVersion = '{0}.{1}.{2}' -f $previewBase.Major,$previewBase.Minor,($previewBase.Build+1)
+        $form.Add_Shown({ Show-RdcUpdateNotice $script:previewUpdateVersion })
+    }
     Set-State 'Предпросмотр' 'Dev preview без запуска remote-процесса.' ([Drawing.Color]::LightBlue)
-        $gpuDivider.SimulateVisibilityPauseForTest($true)
-        $gpuDivider.BeginRecoveryFlash()
-        $gpuDivider.SimulateVisibilityPauseForTest($false)
-        if ($gpuDivider.RecoveryActive -or $gpuDivider.RecoveryBlend -gt 0.001) {
-            throw 'Restoring window replayed deferred green recovery pulse'
-        }
 
     $previewBanner = @(
         '██████╗ ███████╗███████╗██╗  ██╗████████╗ ██████╗ ██████╗     ██████╗ ██████╗ ███╗   ███╗███╗   ███╗ █████╗ ███╗   ██╗██████╗ ███████╗██████╗',
