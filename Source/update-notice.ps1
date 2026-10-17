@@ -10,9 +10,16 @@ using System.Windows.Forms;
 
 public sealed class RdcUpdateNoticeStrip : Control {
     private readonly Stopwatch watch = new Stopwatch();
-    private readonly Font buttonFont = new Font("Segoe UI Semibold", 9f);
+    private readonly Font buttonFont = new Font("Segoe UI", 9.5f, FontStyle.Bold);
     private const int DefaultWidth = 440;
     private const int ExtraWidth = 150;
+    // 300 ms connected move, 280 ms arrow reveal, then 230 ms button fade.
+    // Only the -Preview replays the sequence; production plays it once.
+    private const double MoveDuration = 0.30;
+    private const double ArrowStart = 0.23;
+    private const double ArrowDuration = 0.28;
+    private const double ButtonFadeStart = 0.48;
+    private const double ButtonFadeDuration = 0.23;
     private string installed = "";
     private string offered = "";
     private string note = "Крестик закрывает окно вместе с remote-процессом.";
@@ -45,9 +52,9 @@ public sealed class RdcUpdateNoticeStrip : Control {
 
     public bool Installing { get { return installing; } set { installing=value; Invalidate(); } }
     public string OfferedVersion { get { return offered; } }
-    public bool AnimationComplete { get { return Elapsed >= 0.59; } }
-    public bool ButtonReady { get { return Elapsed >= 0.57 && !installing; } }
-    public int SuggestedWidth { get { return DefaultWidth + (int)Math.Round(ExtraWidth*Ease(Elapsed/0.25)); } }
+    public bool AnimationComplete { get { return Elapsed >= 0.75; } }
+    public bool ButtonReady { get { return Elapsed >= 0.73 && !installing; } }
+    public int SuggestedWidth { get { return DefaultWidth + (int)Math.Round(ExtraWidth*Ease(Elapsed/MoveDuration)); } }
     public void FinishAnimationForTest() { forceFinish=true; Invalidate(); }
     private double Elapsed { get { return forceFinish ? 1.0 : watch.Elapsed.TotalSeconds; } }
     private static double Clamp(double x) { return Math.Max(0.0,Math.Min(1.0,x)); }
@@ -87,9 +94,9 @@ public sealed class RdcUpdateNoticeStrip : Control {
         int arrowXFinal=buttonX-7-19;
         int targetVersionX=arrowXFinal-7-oldWidth;
         double elapsed=Elapsed;
-        double move=Ease(elapsed/0.25);
-        double arrow=Ease((elapsed-0.16)/0.21);
-        double buttonAlpha=Clamp((elapsed-0.42)/0.17);
+        double move=Ease(elapsed/MoveDuration);
+        double arrow=Ease((elapsed-ArrowStart)/ArrowDuration);
+        double buttonAlpha=Clamp((elapsed-ButtonFadeStart)/ButtonFadeDuration);
         int versionX=originalVersionX-
             (int)Math.Round((originalVersionX-targetVersionX)*move);
         int arrowX=sepX-8-(int)Math.Round((sepX-8-arrowXFinal)*arrow);
@@ -111,7 +118,7 @@ public sealed class RdcUpdateNoticeStrip : Control {
             GraphicsState save=g.Save();
             g.SetClip(new Rectangle(0,0,Math.Max(0,sepX),Height));
             using (SolidBrush b=new SolidBrush(Color.FromArgb(
-                (int)(255*arrow),orange))) {
+                (int)(255*arrow),Color.FromArgb(239,240,244)))) {
                 using (StringFormat fmt=new StringFormat()) {
                     fmt.Alignment=StringAlignment.Near;
                     fmt.LineAlignment=StringAlignment.Center;
@@ -125,18 +132,23 @@ public sealed class RdcUpdateNoticeStrip : Control {
         buttonBounds=new Rectangle(buttonX,Math.Max(0,(Height-24)/2),buttonWidth,24);
         if (buttonAlpha > 0.001) {
             int alpha=(int)(255*buttonAlpha);
-            Color fill=installing ? Color.FromArgb(99,86,77) :
-                pressed ? Color.FromArgb(166,88,41) :
-                hovered ? Color.FromArgb(225,146,75) :
-                          Color.FromArgb(191,118,67);
+            // Neutral gray surface with a substantial gold border and
+            // high-contrast bold gold version number, including hover states.
+            Color fill=installing ? Color.FromArgb(50,52,56) :
+                pressed ? Color.FromArgb(47,50,55) :
+                hovered ? Color.FromArgb(72,75,81) :
+                          Color.FromArgb(55,58,64);
+            Color gold=installing ? Color.FromArgb(177,143,80) :
+                       hovered ? Color.FromArgb(255,210,119) :
+                                 Color.FromArgb(235,184,87);
             using (GraphicsPath path=Rounded(buttonBounds,6))
             using (SolidBrush b=new SolidBrush(Color.FromArgb(alpha,fill)))
-            using (Pen pen=new Pen(Color.FromArgb(alpha,148,78,38),1f)) {
+            using (Pen pen=new Pen(Color.FromArgb(alpha,gold),2.15f)) {
+                pen.Alignment=PenAlignment.Inset;
                 g.FillPath(b,path);
                 g.DrawPath(pen,path);
             }
-            using (SolidBrush ink=new SolidBrush(Color.FromArgb(
-                alpha,installing ? Color.FromArgb(210,201,193) : Color.FromArgb(25,25,29))))
+            using (SolidBrush ink=new SolidBrush(Color.FromArgb(alpha,gold)))
             using (StringFormat centered=new StringFormat()) {
                 centered.Alignment=StringAlignment.Center;
                 centered.LineAlignment=StringAlignment.Center;
@@ -208,7 +220,7 @@ $script:rdcNoticeActive = $false
 $script:rdcNoticeInstalling = $false
 $script:rdcNoticeControl = New-Object RdcUpdateNoticeStrip
 $script:rdcNoticeControl.BackColor = $form.BackColor
-$script:rdcNoticeControl.Font = $hintVersion.Font
+$script:rdcNoticeControl.Font = $hint.Font # match informational text size exactly
 # The bottom TableLayoutPanel uses an auto-preferred 100px row even though
 # its visible footer is 25px high. Drawing in that 100px vertical center was
 # clipped completely. Dock only across the top of the visible inner footer.
@@ -248,6 +260,9 @@ function Show-RdcUpdateNotice([string]$Version) {
         $bottom.Controls.Remove($hintHost)
         $bottom.Controls.Add($script:rdcNoticeControl,1,0)
     }
+    # Assign after attaching to TableLayoutPanel: WinForms autoscaling may
+    # replace fonts during reparenting. Match the actual hint label at draw time.
+    $script:rdcNoticeControl.Font = $hint.Font
     $script:rdcNoticeActive = $true
     $script:rdcNoticeControl.Visible = $true
     $script:rdcNoticeControl.TabStop = $false
@@ -353,7 +368,39 @@ function Update-RdcUpdateNoticePolling {
     }
 }
 
+# -Preview only: keep the original footer on screen long enough to be seen
+# before playing the 3-stage reveal, then reset and replay every ~7 seconds.
+# In production this timer does not exist; a real update animates just once.
+function Start-RdcUpdateNoticePreview([string]$Version) {
+    if (-not $Preview -or -not $script:enableUpdateNotice) { return }
+    if ($script:rdcNoticePreviewTimer) { return }
+    $script:rdcNoticePreviewVersion = $Version
+    $script:rdcNoticePreviewShown = $false
+    $script:rdcNoticePreviewNextAt = (Get-Date).AddSeconds(1.8)
+    $script:rdcNoticePreviewTimer = New-Object Windows.Forms.Timer
+    $script:rdcNoticePreviewTimer.Interval = 100
+    $script:rdcNoticePreviewTimer.Add_Tick({
+        $now = Get-Date
+        if ($now -lt $script:rdcNoticePreviewNextAt) { return }
+        if ($script:rdcNoticePreviewShown) {
+            Hide-RdcUpdateNotice
+            $script:rdcNoticePreviewShown = $false
+            $script:rdcNoticePreviewNextAt = $now.AddSeconds(1.4)
+        } else {
+            Show-RdcUpdateNotice $script:rdcNoticePreviewVersion
+            $script:rdcNoticePreviewShown = $true
+            $script:rdcNoticePreviewNextAt = $now.AddSeconds(5.8)
+        }
+    })
+    $script:rdcNoticePreviewTimer.Start()
+}
+
 function Dispose-RdcUpdateNotice {
+    if ($script:rdcNoticePreviewTimer) {
+        $script:rdcNoticePreviewTimer.Stop()
+        $script:rdcNoticePreviewTimer.Dispose()
+        $script:rdcNoticePreviewTimer = $null
+    }
     if ($script:rdcNoticeAnimationTimer) {
         $script:rdcNoticeAnimationTimer.Stop()
         $script:rdcNoticeAnimationTimer.Dispose()

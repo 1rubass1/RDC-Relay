@@ -3610,6 +3610,7 @@ $hintSep.Margin = New-Object Windows.Forms.Padding(6,2,6,0)
 $hintVersion = New-Object Windows.Forms.Label
 $hintVersion.AutoSize = $true
 $hintVersion.Text = 'v' + $appVersion
+$hintVersion.Font = $hint.Font
 $hintVersion.ForeColor = [Drawing.Color]::Gray
 $hintVersion.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
 
@@ -5914,6 +5915,10 @@ if ($SelfTest) {
             throw 'Stable manifest version comparison is incorrect'
         }
         Show-RdcUpdateNotice $noticeTestVersion
+        if ([Math]::Abs($script:rdcNoticeControl.Font.SizeInPoints - $hint.Font.SizeInPoints) -gt 0.001 -or
+            [Math]::Abs($hintVersion.Font.SizeInPoints - $hint.Font.SizeInPoints) -gt 0.001) {
+            throw ('Installed version footer font mismatch: control=' + $script:rdcNoticeControl.Font.SizeInPoints + ', version=' + $hintVersion.Font.SizeInPoints + ', info=' + $hint.Font.SizeInPoints)
+        }
         if (-not $script:rdcNoticeActive -or $bottom.Controls.Contains($hintHost)) {
             throw 'Update notice did not take ownership of footer temporarily'
         }
@@ -6493,9 +6498,9 @@ if ($Preview) {
     if ($script:enableUpdateNotice) {
         $previewBase = [Version]$appVersion
         $script:previewUpdateVersion = '{0}.{1}.{2}' -f $previewBase.Major,$previewBase.Minor,($previewBase.Build+1)
-        $form.Add_Shown({ Show-RdcUpdateNotice $script:previewUpdateVersion })
+        $form.Add_Shown({ Start-RdcUpdateNoticePreview $script:previewUpdateVersion })
     }
-    Set-State 'Предпросмотр' 'Dev preview без запуска remote-процесса.' ([Drawing.Color]::LightBlue)
+    Set-State 'Предпросмотр' 'Анимация обновления повторяется каждые 7 секунд.' ([Drawing.Color]::LightBlue)
     Set-RuntimeDisplay 'Remote не запущен' 'Только предпросмотр' $true
 
     $previewBanner = @(
