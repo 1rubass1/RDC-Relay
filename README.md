@@ -96,15 +96,20 @@ The original automatic update/repair check **at application launch is retained**
 When RDC Relay stays open, a separate nonblocking background check runs against
 the same immutable `stable` commit and manifest roughly every hour. A newer
 stable version triggers a staged footer microinteraction: installed version
-moves left, a white arrow slides out from behind the orange separator, and a
-neutral-gray button with a thick gold border and bold gold version text fades
-in. Clicking the button invokes the existing transactional `update.ps1 -Force` and restarts RDC Relay after success.
+moves left, an arrow in the same muted gray as the informational text slides
+out from behind the orange separator, and a neutral-gray button with a thick,
+rounded gold border and bold gold version text fades in. Clicking the button
+invokes the existing transactional `update.ps1 -Force` and restarts RDC Relay
+after success.
 
 The code lives in `Source/update-notice.ps1`. To **revert only this optional
 feature during development**, set `$script:enableUpdateNotice = $false` near
 the beginning of `Source/remote-window.ps1` and regenerate the manifest for a
-new candidate build. No footer controls are replaced and no hourly request is
-made when it is disabled. The old automatic startup updater still operates.
+new candidate build. When enabled, one persistent 25-pixel footer renderer is
+used for both idle and animated states: neither the font nor the informational
+text control is replaced during the transition. When disabled, the original
+footer controls remain in place and no hourly requests are made. The old
+automatic startup updater still operates.
 
 `-Preview` replays a synthetic next-patch-version notification about every
 7 seconds, with a short initial pause so the movement can actually be observed.

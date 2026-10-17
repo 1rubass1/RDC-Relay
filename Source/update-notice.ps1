@@ -24,7 +24,7 @@ public sealed class RdcUpdateNoticeStrip : Control {
     private string offered = "";
     private string note = "Крестик закрывает окно вместе с remote-процессом.";
     private Rectangle buttonBounds = Rectangle.Empty;
-    private bool hovered, pressed, installing, forceFinish;
+    private bool hovered, pressed, installing, forceFinish, active;
 
     public RdcUpdateNoticeStrip() {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
@@ -34,10 +34,29 @@ public sealed class RdcUpdateNoticeStrip : Control {
         BackColor = Color.FromArgb(29,32,36);
         ForeColor = Color.FromArgb(128,128,128);
         TabStop = false;
-        AccessibleRole = AccessibleRole.PushButton;
+        AccessibleRole = AccessibleRole.StaticText;
+    }
+
+    // The same control paints both idle and update states. Keeping it attached
+    // avoids reparenting/autoscaling text or vertically shifting the footer.
+    public void SetIdle(string installedVersion,string normalHint) {
+        watch.Reset();
+        active = false;
+        installed = installedVersion;
+        offered = "";
+        note = normalHint;
+        AccessibleRole = AccessibleRole.StaticText;
+        AccessibleName = "RDC Relay v" + installed;
+        hovered = false;
+        pressed = false;
+        installing = false;
+        buttonBounds = Rectangle.Empty;
+        Cursor = Cursors.Default;
+        Invalidate();
     }
 
     public void Begin(string installedVersion,string offeredVersion,string normalHint) {
+        active = true;
         installed = installedVersion;
         offered = offeredVersion;
         note = normalHint;
@@ -45,16 +64,31 @@ public sealed class RdcUpdateNoticeStrip : Control {
         hovered = false;
         pressed = false;
         forceFinish = false;
+        AccessibleRole = AccessibleRole.PushButton;
         AccessibleName = "Установить RDC Relay v" + offered;
         watch.Restart();
         Invalidate();
     }
 
+    public void End() {
+        watch.Reset();
+        active = false;
+        AccessibleRole = AccessibleRole.StaticText;
+        AccessibleName = "RDC Relay v" + installed;
+        forceFinish = false;
+        pressed = false;
+        hovered = false;
+        installing = false;
+        buttonBounds = Rectangle.Empty;
+        Cursor = Cursors.Default;
+        Invalidate();
+    }
+    public bool IsActive { get { return active; } }
     public bool Installing { get { return installing; } set { installing=value; Invalidate(); } }
     public string OfferedVersion { get { return offered; } }
-    public bool AnimationComplete { get { return Elapsed >= 0.75; } }
-    public bool ButtonReady { get { return Elapsed >= 0.73 && !installing; } }
-    public int SuggestedWidth { get { return DefaultWidth + (int)Math.Round(ExtraWidth*Ease(Elapsed/MoveDuration)); } }
+    public bool AnimationComplete { get { return active && Elapsed >= 0.75; } }
+    public bool ButtonReady { get { return active && Elapsed >= 0.73 && !installing; } }
+    public int SuggestedWidth { get { return active ? DefaultWidth + (int)Math.Round(ExtraWidth*Ease(Elapsed/MoveDuration)) : DefaultWidth; } }
     public void FinishAnimationForTest() { forceFinish=true; Invalidate(); }
     private double Elapsed { get { return forceFinish ? 1.0 : watch.Elapsed.TotalSeconds; } }
     private static double Clamp(double x) { return Math.Max(0.0,Math.Min(1.0,x)); }
@@ -63,7 +97,9 @@ public sealed class RdcUpdateNoticeStrip : Control {
     private static GraphicsPath Rounded(Rectangle r,int rad) {
         GraphicsPath p=new GraphicsPath();
         float d=rad*2;
-        RectangleF rf=new RectangleF(r.Left+0.5f,r.Top+0.5f,r.Width-1,r.Height-1);
+        // Inset the geometric contour by > half the pen width on every side.
+        // A centered stroke remains fully inside the 25px footer at any DPI.
+        RectangleF rf=new RectangleF(r.Left+1.5f,r.Top+1.5f,r.Width-3f,r.Height-3f);
         p.AddArc(rf.Left,rf.Top,d,d,180,90);
         p.AddArc(rf.Right-d,rf.Top,d,d,270,90);
         p.AddArc(rf.Right-d,rf.Bottom-d,d,d,0,90);
@@ -93,7 +129,7 @@ public sealed class RdcUpdateNoticeStrip : Control {
         int buttonX=sepX-7-buttonWidth;
         int arrowXFinal=buttonX-7-19;
         int targetVersionX=arrowXFinal-7-oldWidth;
-        double elapsed=Elapsed;
+        double elapsed=active ? Elapsed : 0.0;
         double move=Ease(elapsed/MoveDuration);
         double arrow=Ease((elapsed-ArrowStart)/ArrowDuration);
         double buttonAlpha=Clamp((elapsed-ButtonFadeStart)/ButtonFadeDuration);
@@ -118,7 +154,7 @@ public sealed class RdcUpdateNoticeStrip : Control {
             GraphicsState save=g.Save();
             g.SetClip(new Rectangle(0,0,Math.Max(0,sepX),Height));
             using (SolidBrush b=new SolidBrush(Color.FromArgb(
-                (int)(255*arrow),Color.FromArgb(239,240,244)))) {
+                (int)(255*arrow),muted))) {
                 using (StringFormat fmt=new StringFormat()) {
                     fmt.Alignment=StringAlignment.Near;
                     fmt.LineAlignment=StringAlignment.Center;
@@ -129,7 +165,8 @@ public sealed class RdcUpdateNoticeStrip : Control {
             g.Restore(save);
         }
 
-        buttonBounds=new Rectangle(buttonX,Math.Max(0,(Height-24)/2),buttonWidth,24);
+        // 2px clear margins above and below; no outline clips at control edge.
+        buttonBounds=new Rectangle(buttonX,Math.Max(2,(Height-21)/2),buttonWidth,21);
         if (buttonAlpha > 0.001) {
             int alpha=(int)(255*buttonAlpha);
             // Neutral gray surface with a substantial gold border and
@@ -143,8 +180,8 @@ public sealed class RdcUpdateNoticeStrip : Control {
                                  Color.FromArgb(235,184,87);
             using (GraphicsPath path=Rounded(buttonBounds,6))
             using (SolidBrush b=new SolidBrush(Color.FromArgb(alpha,fill)))
-            using (Pen pen=new Pen(Color.FromArgb(alpha,gold),2.15f)) {
-                pen.Alignment=PenAlignment.Inset;
+            using (Pen pen=new Pen(Color.FromArgb(alpha,gold),2.2f)) {
+                pen.Alignment=PenAlignment.Center;
                 g.FillPath(b,path);
                 g.DrawPath(pen,path);
             }
@@ -227,8 +264,15 @@ $script:rdcNoticeControl.Font = $hint.Font # match informational text size exact
 $script:rdcNoticeControl.Dock = 'Top'
 $script:rdcNoticeControl.Height = 25
 $script:rdcNoticeControl.Margin = New-Object Windows.Forms.Padding(0)
-$script:rdcNoticeControl.Visible = $false
 $script:rdcNoticeControl.TabStop = $false
+# Preserve the exact same renderer, font, parent, right edge and 25px bounds
+# from the initial idle frame through every update-animation frame.
+# The legacy footer remains untouched when the feature flag is disabled.
+$bottom.Controls.Remove($hintHost)
+$bottom.Controls.Add($script:rdcNoticeControl,1,0)
+$script:rdcNoticeControl.Font = $hint.Font
+$script:rdcNoticeControl.SetIdle($appVersion,$hint.Text)
+$script:rdcNoticeControl.Visible = $true
 
 $script:rdcNoticeAnimationTimer = New-Object Windows.Forms.Timer
 $script:rdcNoticeAnimationTimer.Interval = 33
@@ -256,15 +300,7 @@ function Show-RdcUpdateNotice([string]$Version) {
         $script:rdcNoticeControl.OfferedVersion -eq $Version) { return }
     $script:rdcNoticeAnimationTimer.Stop()
     $script:rdcNoticeControl.Begin($appVersion,$Version,$hint.Text)
-    if (-not $script:rdcNoticeActive) {
-        $bottom.Controls.Remove($hintHost)
-        $bottom.Controls.Add($script:rdcNoticeControl,1,0)
-    }
-    # Assign after attaching to TableLayoutPanel: WinForms autoscaling may
-    # replace fonts during reparenting. Match the actual hint label at draw time.
-    $script:rdcNoticeControl.Font = $hint.Font
     $script:rdcNoticeActive = $true
-    $script:rdcNoticeControl.Visible = $true
     $script:rdcNoticeControl.TabStop = $false
     $script:rdcNoticeAnimationTimer.Start()
 }
@@ -272,11 +308,10 @@ function Hide-RdcUpdateNotice {
     $script:rdcNoticeAnimationTimer.Stop()
     if (-not $script:rdcNoticeActive) { return }
     $script:rdcNoticeControl.TabStop = $false
-    $bottom.Controls.Remove($script:rdcNoticeControl)
-    $bottom.ColumnStyles[1].Width = 440
-    $bottom.Controls.Add($hintHost,1,0)
     $script:rdcNoticeActive = $false
     $script:rdcNoticeInstalling = $false
+    $script:rdcNoticeControl.End()
+    $bottom.ColumnStyles[1].Width = 440
     $bottom.PerformLayout()
 }
 function Complete-RdcUpdateNoticeInstall([int]$ExitCode) {

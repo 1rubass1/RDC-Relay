@@ -5903,9 +5903,17 @@ if ($SelfTest) {
     if ($runtimeSep.ForeColor.ToArgb() -ne $accentOrange.ToArgb()) { throw 'Runtime separator color mismatch' }
     if ($script:enableUpdateNotice) {
         $normalWidth = [int]$bottom.ColumnStyles[1].Width
-        if ($normalWidth -ne 440 -or -not $bottom.Controls.Contains($hintHost)) {
-            throw 'Baseline footer was changed by disabled update notice'
+        if ($normalWidth -ne 440 -or -not $bottom.Controls.Contains($script:rdcNoticeControl) -or
+            $bottom.Controls.Contains($hintHost) -or $script:rdcNoticeControl.IsActive) {
+            throw 'Idle notification renderer must remain attached without changing footer width'
         }
+        $baselineNoticeControl = $script:rdcNoticeControl
+        $baselineNoticeTop = $script:rdcNoticeControl.Top
+        $baselineNoticeFont = $script:rdcNoticeControl.Font
+        # Render and store the exact right-hand informational text before
+        # animation. Its pixels must remain bit-for-bit unchanged afterwards.
+        $bmpIdle = New-Object Drawing.Bitmap($script:rdcNoticeControl.Width,$script:rdcNoticeControl.Height)
+        $script:rdcNoticeControl.DrawToBitmap($bmpIdle,(New-Object Drawing.Rectangle(0,0,$bmpIdle.Width,$bmpIdle.Height)))
         $parsedCurrent = [Version]$appVersion
         $noticeTestVersion = '{0}.{1}.{2}' -f $parsedCurrent.Major,$parsedCurrent.Minor,($parsedCurrent.Build+1)
         $newerManifest = '{"version":"' + $noticeTestVersion + '"}'
@@ -5919,8 +5927,10 @@ if ($SelfTest) {
             [Math]::Abs($hintVersion.Font.SizeInPoints - $hint.Font.SizeInPoints) -gt 0.001) {
             throw ('Installed version footer font mismatch: control=' + $script:rdcNoticeControl.Font.SizeInPoints + ', version=' + $hintVersion.Font.SizeInPoints + ', info=' + $hint.Font.SizeInPoints)
         }
-        if (-not $script:rdcNoticeActive -or $bottom.Controls.Contains($hintHost)) {
-            throw 'Update notice did not take ownership of footer temporarily'
+        if (-not $script:rdcNoticeActive -or $bottom.Controls.Contains($hintHost) -or
+            -not [Object]::ReferenceEquals($baselineNoticeControl,$script:rdcNoticeControl) -or
+            -not [Object]::ReferenceEquals($baselineNoticeFont,$script:rdcNoticeControl.Font)) {
+            throw 'Notice activation rebuilt the footer renderer or changed its font'
         }
         $script:rdcNoticeControl.FinishAnimationForTest()
         $bottom.ColumnStyles[1].Width = $script:rdcNoticeControl.SuggestedWidth
@@ -5937,13 +5947,25 @@ if ($SelfTest) {
                 $script:rdcNoticeControl.Bounds + ', visible height=' +
                 $visibleFooterHeight)
         }
-        if ($env:RDC_RELAY_FOOTER_CAPTURE) {
-            $bmp = New-Object Drawing.Bitmap([Math]::Max(1,$script:rdcNoticeControl.Width),[Math]::Max(1,$script:rdcNoticeControl.Height))
-            try {
-                $script:rdcNoticeControl.DrawToBitmap($bmp,(New-Object Drawing.Rectangle(0,0,$bmp.Width,$bmp.Height)))
+        $bmp = New-Object Drawing.Bitmap([Math]::Max(1,$script:rdcNoticeControl.Width),[Math]::Max(1,$script:rdcNoticeControl.Height))
+        try {
+            $script:rdcNoticeControl.DrawToBitmap($bmp,(New-Object Drawing.Rectangle(0,0,$bmp.Width,$bmp.Height)))
+            # Compare right-hand note area relative to the fixed right edge:
+            # rendering, glyph size, vertical position and colors must not move.
+            $notePixelWidth = [Math]::Min(285,[Math]::Min($bmpIdle.Width,$bmp.Width))
+            for ($py=0; $py -lt $bmp.Height; $py++) {
+                for ($dx=1; $dx -le $notePixelWidth; $dx++) {
+                    if ($bmpIdle.GetPixel(($bmpIdle.Width-$dx),$py).ToArgb() -ne
+                        $bmp.GetPixel(($bmp.Width-$dx),$py).ToArgb()) {
+                        throw ('Footer informational text changed pixel during animation: xFromRight=' +
+                            $dx + ', y=' + $py)
+                    }
+                }
+            }
+            if ($env:RDC_RELAY_FOOTER_CAPTURE) {
                 $bmp.Save($env:RDC_RELAY_FOOTER_CAPTURE,[Drawing.Imaging.ImageFormat]::Png)
-            } finally { $bmp.Dispose() }
-        }
+            }
+        } finally { $bmp.Dispose(); $bmpIdle.Dispose() }
         if (-not $script:rdcNoticeControl.AnimationComplete -or
             -not $script:rdcNoticeControl.ButtonReady -or
             $script:rdcNoticeControl.SuggestedWidth -ne 590 -or
@@ -5971,11 +5993,14 @@ if ($SelfTest) {
             $script:rdcNoticeControl.remove_Click($clickProbe)
         }
         Hide-RdcUpdateNotice
-        if ($script:rdcNoticeActive -or $bottom.Controls.Contains($script:rdcNoticeControl) -or
-            -not $bottom.Controls.Contains($hintHost) -or
+        if ($script:rdcNoticeActive -or $script:rdcNoticeControl.IsActive -or
+            -not $bottom.Controls.Contains($script:rdcNoticeControl) -or
+            $bottom.Controls.Contains($hintHost) -or
+            -not [Object]::ReferenceEquals($baselineNoticeControl,$script:rdcNoticeControl) -or
+            $script:rdcNoticeControl.Top -ne $baselineNoticeTop -or
             [int]$bottom.ColumnStyles[1].Width -ne $normalWidth -or
             $hintVersion.Text -ne ('v'+$appVersion) -or $hintSep.Text -ne '•') {
-            throw 'Hiding update notification did not restore original footer exactly'
+            throw 'Hiding update notification did not restore persistent idle footer'
         }
     }
     if ($statusDot.GetType().Name -ne 'RdcStatusIndicator') { throw 'Status indicator control missing' }
