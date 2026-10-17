@@ -1,5 +1,15 @@
 ﻿# Changelog
 
+## 1.5.16 (2026-10-17)
+
+- Add an in-session update notification for a newer release on the stable channel: the current version slides left, a muted-gray arrow emerges from the orange divider, and a dark-gray button with a bold gold version and rounded gold outline fades in. Clicking it invokes the existing transactional updater.
+- Preserve the bottom informational text and version typography throughout the animation using one persistent renderer; keep the original footer when the optional notice feature is disabled.
+- Improve release detection while RDC Relay remains open with a nonblocking hourly check of the stable manifest; the existing startup updater remains available.
+- Avoid replaying stale green recovery flashes when restoring a minimized or occluded window.
+- Correct manual Stop state protection against late Remote MCP health/readiness/fault markers and activate the quiet neutral stopped visual state.
+- Fix Windows npx bootstrap failure classification so a damaged Desktop Commander cache can trigger the intended recovery.
+- Extend UI lifecycle, footer pixel-stability, animation and upgrade regression tests. A harmless visual-only preview replays the notification without accessing GitHub or starting Remote.
+
 ## 1.5.15 (2026-10-08)
 
 - Restore the 1.5.12 bottom status hint geometry exactly, keeping the close-window hint, separator and runtime version aligned as in the established release layout.

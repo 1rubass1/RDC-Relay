@@ -90,7 +90,7 @@ files.
 The repository must be publicly readable for the unauthenticated updater to
 reach GitHub.
 
-### Optional in-session update notification (development candidate)
+### In-session update notifications
 
 The original automatic update/repair check **at application launch is retained**.
 When RDC Relay stays open, a separate nonblocking background check runs against
@@ -115,8 +115,7 @@ automatic startup updater still operates.
 7 seconds, with a short initial pause so the movement can actually be observed.
 The repeating animation is **preview-only**: in production the notification
 animates exactly once per newly discovered version. Preview never calls GitHub
-or performs an update. This candidate requires visual acceptance before it is
-versioned and published.
+or performs an update.
 
 ## Runtime notes
 

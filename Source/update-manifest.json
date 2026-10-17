@@ -1,9 +1,9 @@
 {
-    "version":  "1.5.15",
+    "version":  "1.5.16",
     "files":  [
                   {
                       "name":  "remote-window.ps1",
-                      "sha256":  "03D6DE8CC2B02AA8EAE79747FEFBD00CBD640DB4FE974AF83F573047A0513FA6"
+                      "sha256":  "F677D51A26445E7C875F7D2583ABDE910AE6D3488F9FCD794C1727133ACDC54F"
                   },
                   {
                       "name":  "update-notice.ps1",
@@ -31,7 +31,7 @@
                   },
                   {
                       "name":  "version.txt",
-                      "sha256":  "C15460F7EBA74BD299A6AF31F083EA5B8C9AFE626C60254A11A3BBEB1DD55B4F"
+                      "sha256":  "006B3896FC152B976C2A9843F88C0117A606BA8BC20DD4EF0EF33D12A9C0A6A7"
                   },
                   {
                       "name":  "update.ps1",
