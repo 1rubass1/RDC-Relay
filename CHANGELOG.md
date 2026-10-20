@@ -1,5 +1,18 @@
 ﻿# Changelog
 
+## Unreleased — candidate 1.5.17
+
+- Recover from npm ENOENT / Windows -4058 when a partially populated
+  `npm-cache\_npx\<hash>\package.json` is missing: only remove the
+  log-identified entry and retry once, without clearing unrelated packages.
+- Recognize both `npm error` and older `npm ERR!` diagnostics, reject
+  non-ENOENT/unrelated/traversal targets and reparse-point directories.
+- Clarify first-device OAuth onboarding in the status/help text, and add
+  an Account-menu shortcut to the official device-verification page.
+  RDC Relay already runs the pinned `npx.cmd` command; no terminal
+  copy/paste is required. User browser approval remains mandatory.
+- Add isolated regression tests for safe npm-cache recovery.
+
 ## 1.5.16 (2026-10-17)
 
 - Add an in-session update notification for a newer release on the stable channel: the current version slides left, a muted-gray arrow emerges from the orange divider, and a dark-gray button with a bold gold version and rounded gold outline fades in. Clicking it invokes the existing transactional updater.

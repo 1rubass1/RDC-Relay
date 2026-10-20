@@ -3514,10 +3514,13 @@ $reconnectItem = New-Object Windows.Forms.ToolStripMenuItem
 $reconnectItem.Text = 'Переподключить'
 $devicesItem = New-Object Windows.Forms.ToolStripMenuItem
 $devicesItem.Text = 'Управление устройствами…'
+$verifyDeviceItem = New-Object Windows.Forms.ToolStripMenuItem
+$verifyDeviceItem.Text = 'Подтвердить новое устройство…'
 [void]$accountMenu.Items.Add($switchAccountItem)
 [void]$accountMenu.Items.Add($reconnectItem)
 [void]$accountMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
 [void]$accountMenu.Items.Add($devicesItem)
+[void]$accountMenu.Items.Add($verifyDeviceItem)
 
 $top.Controls.Add($statusDot,0,0)
 $top.SetRowSpan($statusDot,2)
@@ -4109,6 +4112,7 @@ $script:remoteConnectDeadline = $null
 $script:remoteInteractiveAuth = $false
 $script:autoReconnectAttempt = 0
 $script:autoReconnectAt = $null
+$script:npxMissingPackageRepairAttempted = $false
 $script:supervisorRestarting = $false
 $script:preserveFaultOnStop = $false
 $uiStartupMaxChars = 30000
@@ -4301,6 +4305,7 @@ function Mark-RemoteReady([string]$marker = '') {
     $script:remoteReady = $true
     $script:remoteInteractiveAuth = $false
     $script:remoteConnectDeadline = $null
+    $script:npxMissingPackageRepairAttempted = $false
     $script:autoReconnectAttempt = 0
     $script:autoReconnectAt = $null
 
@@ -5051,6 +5056,58 @@ function Test-DesktopCommanderBootstrapFailure {
         return ($tail -match '(?i)Cannot find module.*[\\/]@wonderwhy-er[\\/]desktop-commander[\\/]dist[\\/]index\.js')
     } catch { return $false }
 }
+# Recover npm ENOENT caused by an incomplete npx cache entry, without
+# clearing unrelated packages or requiring npm.ps1 / ExecutionPolicy changes.
+# The failing package.json path must come from THIS launch's npm log and point
+# to an immediate, hex-named child of this user's npm-cache\\_npx directory.
+function Repair-DesktopCommanderMissingNpxPackageJson {
+    if ($SelfTest -or $Preview -or $script:npxMissingPackageRepairAttempted) { return $false }
+    if (-not $env:LOCALAPPDATA -or -not (Test-Path -LiteralPath $logPath)) { return $false }
+    try {
+        $enoent = $false
+        $candidate = $null
+        foreach ($line in @(Get-Content -LiteralPath $logPath -Tail 160 -ErrorAction Stop)) {
+            if ($line -match '(?i)^\s*npm\s+(?:error|ERR!)\s+code\s+ENOENT\s*$') {
+                $enoent = $true
+            }
+            if ($line -match '(?i)^\s*npm\s+(?:error|ERR!)\s+path\s+(.+?)\s*$') {
+                $candidate = $Matches[1].Trim().Trim([char]34,[char]39)
+            }
+        }
+        if (-not $enoent -or -not $candidate) { return $false }
+
+        $npxRoot = [IO.Path]::GetFullPath(
+            (Join-Path $env:LOCALAPPDATA 'npm-cache\_npx')
+        ).TrimEnd([char]92)
+        $reportedFile = [IO.Path]::GetFullPath($candidate)
+        if ([IO.Path]::GetFileName($reportedFile) -cne 'package.json') { return $false }
+        $entry = [IO.Path]::GetDirectoryName($reportedFile)
+        $parent = [IO.Path]::GetDirectoryName($entry)
+        $hash = [IO.Path]::GetFileName($entry)
+        if (-not [string]::Equals($parent,$npxRoot,[StringComparison]::OrdinalIgnoreCase)) { return $false }
+        if ($hash -notmatch '^[0-9a-fA-F]{8,64}$') { return $false }
+        if (Test-Path -LiteralPath $reportedFile) { return $false }
+        if (-not (Test-Path -LiteralPath $entry -PathType Container)) { return $false }
+
+        # Never traverse junctions, symlinks or other directory reparse points.
+        foreach ($dir in @($npxRoot,$entry)) {
+            $info = Get-Item -LiteralPath $dir -Force -ErrorAction Stop
+            if (($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+        }
+
+        # One deletion per startup episode. A later startup must not loop.
+        $script:npxMissingPackageRepairAttempted = $true
+        Remove-Item -LiteralPath $entry -Recurse -Force -ErrorAction Stop
+        Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') +
+            '] Восстановление npm: удалена только повреждённая папка npx-кэша ' +
+            $hash + '; пакет будет загружен заново.' + $nl)
+        return $true
+    } catch {
+        Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') +
+            '] Восстановление npm не удалось: ' + $_.Exception.Message + $nl)
+        return $false
+    }
+}
 function Start-NoWindowCmd([string]$commandLine) {
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = Join-Path $env:SystemRoot 'System32\cmd.exe'
@@ -5305,6 +5362,7 @@ function Restart-Remote {
     if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
     $script:autoReconnectAttempt = 0
     $script:autoReconnectAt = $null
+    $script:npxMissingPackageRepairAttempted = $false
     $script:preserveFaultOnStop = $script:remoteFaultLatched
     Begin-RemoteOperation 'restart'
 }
@@ -5397,6 +5455,9 @@ $reconnectItem.Add_Click({ Restart-Remote })
 $devicesItem.Add_Click({
     try { Start-Process 'https://mcp.desktopcommander.app/' } catch {}
 })
+$verifyDeviceItem.Add_Click({
+    try { Start-Process 'https://mcp.desktopcommander.app/device/verify' } catch {}
+})
 $helpMenu = New-Object Windows.Forms.ContextMenuStrip
 $helpMenu.BackColor = [Drawing.Color]::FromArgb(38,41,46)
 $helpMenu.ForeColor = [Drawing.Color]::Gainsboro
@@ -5430,6 +5491,10 @@ $aboutItem.Add_Click({
         'Если аккаунты различаются, ChatGPT не увидит этот компьютер.' + $nl + $nl +
         'При выборе «Сменить аккаунт…» текущее remote-соединение будет остановлено, ' +
         'выполнен штатный выход и запущена новая браузерная авторизация.' + $nl + $nl +
+        'Для добавления устройства достаточно установить RDC Relay и запустить его: ' +
+        'команду npx с сайта копировать в терминал не требуется. ' +
+        'При первой авторизации подтвердите устройство в браузере, сверив код из журнала. ' +
+        'Повторные запуски обычно используют сохранённую сессию. ' + $nl + $nl +
         'Пароли и токены эта оболочка не копирует и не хранит.'
     [Windows.Forms.MessageBox]::Show(
         $helpText,
@@ -5522,7 +5587,7 @@ function Refresh-Window {
                     Set-State (
                         'Ожидание авторизации…'
                     ) (
-                        'Завершите вход в браузере; автоматический таймаут приостановлен.'
+                        'Подтвердите устройство в браузере; код — в журнале выше. Команды в терминале не нужны.'
                     ) ([Drawing.Color]::Khaki)
                 }
                 elseif ($script:remoteReady) {
@@ -5549,6 +5614,13 @@ function Refresh-Window {
 
             if ($script:stopping) {
                 Set-State 'Завершён' 'Remote-процесс остановлен.' ([Drawing.Color]::Silver)
+            }
+            elseif (Repair-DesktopCommanderMissingNpxPackageJson) {
+                $bootstrapReason = 'npm не смог найти package.json в повреждённом npx-кэше (ENOENT / -4058). Удалена только сбойная запись; повторяю запуск.'
+                Add-Log ('[' + (Get-Date -Format 'HH:mm:ss') + '] ВОССТАНОВЛЕНИЕ: ' + $bootstrapReason + $nl)
+                Schedule-AutoReconnect $bootstrapReason
+                Set-DividerFaultState $false
+                Set-State 'Восстановление npm-кэша…' $bootstrapReason ([Drawing.Color]::Khaki)
             }
             elseif ($code -eq 1 -and (Test-DesktopCommanderBootstrapFailure)) {
                 [void](Repair-DesktopCommanderNpxCache)

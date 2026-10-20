@@ -41,6 +41,24 @@ folder anywhere (for example to the Desktop), then double-click `RDC Relay.exe`.
 The supporting runtime files remain in the same folder; no installation is
 registered for portable copies.
 
+## First launch on another Windows PC
+
+1. Install Node.js 18+ and RDC Relay, then launch **RDC Relay**.
+2. RDC Relay launches the pinned Desktop Commander Remote itself, via
+   `npx.cmd`. **Do not copy the terminal command from the website**.
+3. On first pairing, the upstream OAuth device flow opens a browser.
+   Compare the one-time code shown in RDC Relay's startup log and approve
+   the new device in the browser. If the browser does not open, choose
+   **Account → Confirm new device** (official verification page).
+4. Later launches reuse the authorized local session unless revoked.
+
+The one-time browser approval is mandatory: RDC Relay does not impersonate
+the user, silently approve devices, or store passwords/tokens.
+The startup supervisor retries when npm reports a missing `package.json`
+inside a partial `npm-cache\_npx` entry. It removes **only the identified
+damaged cache entry**; it never clears the entire cache or requires
+changing PowerShell execution policy.
+
 ## Repository layout
 
 - `Source/` — runtime PowerShell, compiled WPF pixel shaders and HLSL sources
