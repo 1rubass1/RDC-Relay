@@ -52,6 +52,23 @@ registered for portable copies.
 Generated release binaries are written to `dist/` and are intentionally not
 tracked by Git.
 
+## Development review rules
+
+### Visual UI changes
+
+For changes to UI layout, animations, motion, or visual feedback, run an
+isolated interactive preview and **ask the user to review the actual result**
+before treating the appearance as accepted. Preserve any running production
+Remote session and keep the preview non-destructive.
+
+**Prefer direct user review over bulk screenshot collection.** Do not
+routinely capture dozens of screenshots or animation frames to assess
+appearance. Use a small number of targeted captures only when necessary to
+diagnose a specific rendering problem or validate a concrete regression;
+explain why if extensive frame capture is genuinely required. Automated
+tests remain mandatory where applicable, but do not replace user visual
+acceptance.
+
 ## Build a release
 
 From the repository root:
