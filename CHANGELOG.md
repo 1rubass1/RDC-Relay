@@ -1,6 +1,6 @@
 ﻿# Changelog
 
-## Unreleased — candidate 1.5.17
+## 1.5.17 (2026-10-20)
 
 - Recover from npm ENOENT / Windows -4058 when a partially populated
   `npm-cache\_npx\<hash>\package.json` is missing: only remove the
