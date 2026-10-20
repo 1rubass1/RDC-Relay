@@ -1,5 +1,10 @@
 ﻿# Changelog
 
+## 1.5.18 (candidate — unpublished)
+
+- Fix the in-session update button for windows relaunched with `-SkipUpdate`: explicit clicks now always launch the updater with `-Force`, while passive startup checks remain suppressed.
+- Add a regression test covering skipped startup checks, explicit user clicks, normal launch, and missing updater files; include it in the release build gate.
+
 ## 1.5.17 (2026-10-20)
 
 - Recover from npm ENOENT / Windows -4058 when a partially populated

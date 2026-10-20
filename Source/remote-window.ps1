@@ -1,7 +1,7 @@
 ﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$appVersion = '1.5.17'
+$appVersion = '1.5.18'
 # Flip to $false to remove the optional update notice and restore the original
 # startup auto-updater/footer with no other runtime or UI modifications.
 $script:enableUpdateNotice = $true
@@ -5381,7 +5381,10 @@ function Start-RuntimeInitialization {
     $script:initializing = $true
     Set-RemoteActionsEnabled $false
     $updaterPath = Join-Path $root 'update.ps1'
-    if (-not $SkipUpdate -and (Test-Path -LiteralPath $updaterPath)) {
+    # -SkipUpdate only suppresses the automatic startup check after an update.
+    # An explicit click on the update notice must ALWAYS run the updater.
+    if ((-not $SkipUpdate -or $script:updateInstallRequested) -and
+        (Test-Path -LiteralPath $updaterPath)) {
         try {
             Set-State 'Проверка обновлений…' 'Проверяю установленную версию; окно остаётся доступным.' ([Drawing.Color]::Khaki)
             $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $updaterPath + '"'),'-InstallRoot',('"' + $root + '"'),'-CurrentVersion',$appVersion)

@@ -174,6 +174,10 @@ using System.Reflection;
         & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path (Join-Path $root 'Tests') 'Test-UiLifecycle.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'UI lifecycle tests failed.' }
 
+        Write-Host 'Running update notice click regression tests...'
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path (Join-Path $root 'Tests') 'Test-UpdateNoticeClick.ps1')
+        if ($LASTEXITCODE -ne 0) { throw 'Update notice click regression test failed.' }
+
         Write-Host 'Running installer/updater transaction tests...'
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path (Join-Path $root 'Tests') 'Test-Transactions.ps1') -SetupPath $setupExe
         if ($LASTEXITCODE -ne 0) { throw 'Installer/updater transaction tests failed.' }
