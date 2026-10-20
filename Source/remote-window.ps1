@@ -6047,6 +6047,20 @@ if ($SelfTest) {
             $script:rdcNoticeControl.OfferedVersion -ne $noticeTestVersion) {
             throw 'Update notification stage timings/geometry invalid'
         }
+        # A newer stable release must replace an already displayed update
+        # without recreating the footer or replaying identical notifications.
+        $laterTestVersion = '{0}.{1}.{2}' -f $parsedCurrent.Major,$parsedCurrent.Minor,($parsedCurrent.Build+2)
+        Show-RdcUpdateNotice $laterTestVersion
+        if ($script:rdcNoticeControl.OfferedVersion -ne $laterTestVersion -or
+            -not [Object]::ReferenceEquals($baselineNoticeControl,$script:rdcNoticeControl)) {
+            throw 'A later release failed to replace the already visible update version'
+        }
+        $script:rdcNoticeControl.FinishAnimationForTest()
+        Show-RdcUpdateNotice $laterTestVersion
+        if (-not $script:rdcNoticeControl.ButtonReady -or
+            $script:rdcNoticeControl.OfferedVersion -ne $laterTestVersion) {
+            throw 'Identical update version unexpectedly replayed the animation'
+        }
         $script:rdcNoticeTestClicks = 0
         $clickProbe = [EventHandler] { param($sender,$args) $script:rdcNoticeTestClicks++ }
         $script:rdcNoticeControl.add_Click($clickProbe)

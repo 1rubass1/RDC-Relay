@@ -3,7 +3,7 @@
     "files":  [
                   {
                       "name":  "remote-window.ps1",
-                      "sha256":  "0D1E440659BADF76B0B6E7E7A164A4A70B616885C0AD7C3F551D1D14F56CB41E"
+                      "sha256":  "E658172FEDB5251C04AAC270969E49E6DBBA85767E99E2F13A0E400CB1659DCC"
                   },
                   {
                       "name":  "update-notice.ps1",

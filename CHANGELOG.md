@@ -1,9 +1,10 @@
 ﻿# Changelog
 
-## 1.5.18 (candidate — unpublished)
+## 1.5.18 (2026-10-20)
 
 - Fix the in-session update button for windows relaunched with `-SkipUpdate`: explicit clicks now always launch the updater with `-Force`, while passive startup checks remain suppressed.
-- Add a regression test covering skipped startup checks, explicit user clicks, normal launch, and missing updater files; include it in the release build gate.
+- Verified that an already visible update button automatically switches to the newest stable release on the next background check (approximately hourly); duplicate versions do not replay the animation. Added offline polling and actual UI control regressions to the release gate.
+- Add regression coverage for skipped startup checks, explicit user clicks, normal launch, and missing updater files.
 
 ## 1.5.17 (2026-10-20)
 
