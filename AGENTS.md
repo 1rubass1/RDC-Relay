@@ -1,24 +1,21 @@
-# RDC Relay — instructions for AI agents
+# RDC Relay — AI agent entrypoint (development only)
 
-## Entry point
-This project uses the separate **AI Engineering Playbook** repository:
-https://github.com/1rubass1/AI-Engineering-Playbook
+**This file is for development branch agents, not a product or release artifact.**
 
-First read the Playbook's `00_START_HERE.md`. In a **new working chat** without an explicitly assigned role, ask the user to choose a role as required by that entry point. A role assigned for one chat does not automatically apply to others. Once assigned, read `CORE/ROLE_COORDINATION.md`, only `ROLES/<chosen role>.md`, and the task-relevant instructions. Treat Playbook files as read-only during RDC Relay work.
+The project uses the private [AI Engineering Playbook](https://github.com/1rubass1/AI-Engineering-Playbook) as its read-only methodology. Read `00_START_HERE.md` there. If no role is assigned in a *new working chat*, present the Playbook's six roles and await user selection; never infer the role. If a role has been assigned for this chat, read `CORE/ROLE_COORDINATION.md`, **only that role** in `ROLES/`, and the task-relevant modules. Do not read `ZZ_PLAYBOOK_DEV/` for ordinary RDC work.
 
-Then read, in order:
-1. `PROJECT_INDEX.md` — where facts and project artifacts live.
-2. `PROJECT_CONTEXT.md` — stage snapshot.
-3. `COORDINATION/BOARD.md` — task ownership, status, and next handoff.
-4. Only the task-relevant strategic documents and source files.
+Then consult, in order:
+1. [PROJECT_INDEX.md](PROJECT_INDEX.md) — canonical project knowledge map.
+2. [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) — current stage and next action.
+3. [COORDINATION/BOARD.md](COORDINATION/BOARD.md) — active task status, owner and handoff.
+4. [docs/dev/README.md](docs/dev/README.md) and **only** relevant scope documents.
 
-## Existing project documentation
-Canonical historical and current strategic documents are presently outside this Git working tree, at `E:\Projects\GitSync\RDC\` on **STARMER**: `HANDOFF.md`, `WORKLOG.md`, `ROADMAP.md`, `TECHNICAL_DESIGN.md`, `SOURCES.md`, and transport spikes. Do **not** invent their contents if STARMER is unavailable. Their relocation/versioning is a pending architectural decision, not an accomplished migration.
-
-## Safety and delivery constraints
-- Do not stop/restart/logout the running Desktop Commander Remote session, change installed production RDC Relay, or expose local execution tools to the internet without explicit scope and user approval.
-- No production provider refactor before actual authenticated ChatGPT end-to-end transport feasibility and security gates pass.
-- `stable` is the production update branch. Use isolated feature branches; do not move `stable`, tag or publish a release without explicit approval.
-- Use the official original Remote Desktop Commander documentation to verify upstream engine behavior. For UI, follow the project's established visual acceptance rule and applicable Windows App Design / Fluent 2 guidance.
-- Minimize diagnostic captures, logs, resource usage and extra documents. No additional spending without explicit authorization.
-- Record verified results separately from assumptions, and do not mark an untested behavior PASS.
+## Branch and secret boundaries
+- **`development`** is the dev-only integration branch; task branches should target it. Old `develop/*` Git refs prohibit a top-level branch called `develop`.
+- `main` and `stable` remain published v1.5.18 production baselines until a separate, approved release. **Never merge the entire development branch into a production branch** with docs/dev, coordination, designs or internal reports.
+- Source code and approved public user documentation must be selected explicitly for release. Dev-only files must not be embedded in Setup, Portable ZIP, updater payload, or GitHub release assets.
+- GitHub RDC Relay repository is **PUBLIC**, including this dev branch. Never commit real credentials, bearer tokens, tunnel IDs, private endpoints, device/account IDs or sensitive logs. Local byte-exact backups are outside Git on STARMER.
+- Do not stop/restart/logout active production Remote, change installed payload or expose arbitrary local tools publicly without explicit authorization.
+- No production provider refactor before an authenticated real ChatGPT end-to-end proof, least privilege, failure testing, threat review, and owner GO decision. No new expenses without permission.
+- Original Remote engine technical behavior: official `@wonderwhy-er/desktop-commander` documentation. UI: Windows App Design/Fluent 2 as applicable, focused technical validation and **human visual acceptance**.
+- Preserve actual evidence and differentiate PASS, FAIL and NOT CHECKED. All Playbook instructions are read-only in user project work.
