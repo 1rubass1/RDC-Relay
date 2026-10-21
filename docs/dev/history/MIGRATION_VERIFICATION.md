@@ -9,6 +9,7 @@
 - **PASS**: Pen source after redaction parses as JSON; original design saved locally. Bitmap assets are copied unmodified.
 - **PASS (static)**: current `Scripts/build-release.ps1` uses an explicit `Source/` payload allowlist for updater manifest, Setup embedded resources and Portable archive. No governance/research/design files in its copy list.
 - **PASS (existing binary)**: existing v1.5.18 Portable ZIP on STARMER has 12 entries and contains no Markdown, `.pen` or development directories.
+- **PASS (repeatable guard)**: [Check-ReleaseBoundary.ps1](../tools/Check-ReleaseBoundary.ps1) returned exit 0, verifying 20 dev text/design files, clean main/stable tree, packager allowlists and the existing 12-entry Portable ZIP.
 - **NOT CHECKED**: a newly built Setup EXE from the migration branch; migration did not run a new release build, publish, stop Remote, or replace installation.
 - **NOT CHECKED**: actual ChatGPT custom MCP authorization; unrelated to documentation migration.
 

@@ -13,6 +13,8 @@
 
 The current `Scripts/build-release.ps1` uses an explicit `Source/` file allowlist for update manifests, Setup embedded resources and Portable ZIP. **Code inspection** confirms that it does not copy `docs/dev/` or root governance files. This is not a substitute for validating each actual release artifact.
 
+Run the dev-only [Check-ReleaseBoundary.ps1](../tools/Check-ReleaseBoundary.ps1) on the intended checkout, optionally passing `-PortableZip <built archive path>`. It checks public Git data patterns, main/stable commit file paths, the packager allowlists and ZIP entries. It is a guard against common mistakes, **not** proof of confidentiality, installer security or actual release acceptance.
+
 ## Pre-release gate
 1. Check release-branch diff for dev-only files and secrets; **do not** silently cherry-pick internal records.
 2. Audit actual compiled Setup resources, Portable ZIP members, manifest entries and attached release assets for unwanted files, personal data or credentials.

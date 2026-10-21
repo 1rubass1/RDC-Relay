@@ -13,6 +13,7 @@
 | [research/](research/RESULTS_MATRIX.md) | Evidence, sources, experiments, verified vs missing | Experiment records with actual results |
 | [design/](design/README.md) | Editable Pen reference, assets and UX acceptance | Design reference; user approval still needed |
 | [operations/](operations/RELEASE_BOUNDARY.md) | Branch, packaging, distribution, credential boundaries | Release boundary policy |
+| [tools/](tools/Check-ReleaseBoundary.ps1) | Development-only repeatable release-boundary guard | Read-only static checks plus optional Portable ZIP audit |
 | [history/](history/MIGRATION_MANIFEST.md) | Read-only pre-Playbook documents and import provenance | **Archive, not instructions for next task** |
 
 ## Data classification — GitHub is public
