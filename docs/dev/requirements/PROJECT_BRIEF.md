@@ -5,8 +5,12 @@
 ## Purpose and existing product
 RDC Relay is a Windows 10/11 GUI launcher, status monitor and lifecycle supervisor of the official `@wonderwhy-er/desktop-commander` Remote. Requirements: PowerShell 5.1, Node.js 18+, pinned upstream Remote package v0.2.52. Production v1.5.18 has a per-user installer, portable mode, transactional updates with rollback, account/device management, readiness and tool activity states, recovery, GUI tests and human review of appearance. Current update channel: `stable`.
 
-## Long-term goal
-Add **secure selectable connection providers** while continuing to use DesktopCommanderMCP as the local execution engine. OpenAI Secure MCP Tunnel and authenticated direct HTTPS MCP are feasibility candidates. Eliminating dependency on Remote service quotas is a motivation, not an assurance of zero costs or unlimited access.
+## Long-term goal — clarified by project owner on 2026-10-22
+Create **a reliable self-hosted connection path** from compatible AI clients to the existing free local DesktopCommanderMCP engine, **without hosted Desktop Commander Remote call quotas or mandatory commercial transport subscriptions**. The owner has a **static public IP** and prefers a directly controlled HTTPS MCP gateway over reliance on third-party tunnels. Retain currently working Desktop Commander Remote as an option/fallback, and allow other demonstrably working providers if one suffers usage limits or outages.
+
+This is a **transport independence** requirement, not an order to rewrite DesktopCommanderMCP as a new local executor. An own gateway still depends on client-side MCP permissions, user's Internet/power/hardware resources and TLS trust; do not promise unlimited ChatGPT usage or 24/7 reliability.
+
+Implementation architecture remains pending gate checks and owner approval: first test actual AI client compatibility, then direct public-IP HTTPS feasibility and isolated authentication, then secure scoped tool access, and only after verified second path add minimal provider switching UI. Consult [revised Architect review](../architecture/ARCHITECTURE_REVIEW_2026-10-22.md).
 
 ## Non-negotiable constraints
 - Preserve working Remote, its state machine, tested UI and safe transactional updater. No wholesale rewrite.

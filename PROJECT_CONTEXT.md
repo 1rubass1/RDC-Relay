@@ -16,7 +16,9 @@
 
 **Verification:** 10 preserved document backup hashes and 4 design source hashes match their manifest values; internal current-document links resolved; committed Markdown and Pen patterns scanned without known credential/email hits; `git diff --check` passed. Current `main`/`stable` tree excludes dev paths; inspected packaging allowlist, and existing v1.5.18 Portable ZIP excluded dev records (12 entries). New Setup build **NOT CHECKED**; no runtime process was stopped.
 
-**Next step:** Review [architect's strategic assessment](docs/dev/architecture/ARCHITECTURE_REVIEW_2026-10-22.md), task ARCH-005. Proposal: preserve existing Remote and mature MCP execution, shift toward real task-driven capabilities, and postpone multi-provider/public gateway/broker until justified. This is **not approved**; existing roadmap remains authoritative until owner decision. Only after approval scope a minimal client-permission/transport test if needed.
+**Owner's clarified requirement (2026-10-22):** Provide a self-hosted, no-metered-Remote-call alternative for AI→local DesktopCommanderMCP, using an available static public IP for direct HTTPS where safe. Existing hosted Remote stays as fallback; alternative services may be added if useful. The previous review underrated this core motivation and has been corrected.
+
+**Next step:** Review [revised architecture assessment](docs/dev/architecture/ARCHITECTURE_REVIEW_2026-10-22.md), task ARCH-005: client entitlement first, then static-IP HTTPS/TLS, protected gateway, least-privilege executor, integration and fallback. **No public port or runtime code touched**, and revised design is not adopted until the owner approves it.
 
 **Main unresolved risk:** Public Git dev branch must never store actual sensitive data; existing release packaging uses explicit allowlisted payload, but every release artifact must still be checked.
 
