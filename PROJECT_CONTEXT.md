@@ -16,7 +16,7 @@
 
 **Verification:** 10 preserved document backup hashes and 4 design source hashes match their manifest values; internal current-document links resolved; committed Markdown and Pen patterns scanned without known credential/email hits; `git diff --check` passed. Current `main`/`stable` tree excludes dev paths; inspected packaging allowlist, and existing v1.5.18 Portable ZIP excluded dev records (12 entries). New Setup build **NOT CHECKED**; no runtime process was stopped.
 
-**Next step:** Architect to define and obtain approval for the smallest authenticated actual-ChatGPT MCP access test, then hand off bounded implementation to Programmer and independent verification to Reviewer.
+**Next step:** Review [architect's strategic assessment](docs/dev/architecture/ARCHITECTURE_REVIEW_2026-10-22.md), task ARCH-005. Proposal: preserve existing Remote and mature MCP execution, shift toward real task-driven capabilities, and postpone multi-provider/public gateway/broker until justified. This is **not approved**; existing roadmap remains authoritative until owner decision. Only after approval scope a minimal client-permission/transport test if needed.
 
 **Main unresolved risk:** Public Git dev branch must never store actual sensitive data; existing release packaging uses explicit allowlisted payload, but every release artifact must still be checked.
 
