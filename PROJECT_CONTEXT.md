@@ -16,7 +16,7 @@
 
 **Verification:** 10 preserved document backup hashes and 4 design source hashes match their manifest values; internal current-document links resolved; committed Markdown and Pen patterns scanned without known credential/email hits; `git diff --check` passed. Current `main`/`stable` tree excludes dev paths; inspected packaging allowlist, and existing v1.5.18 Portable ZIP excluded dev records (12 entries). New Setup build **NOT CHECKED**; no runtime process was stopped.
 
-**Next step:** Architect to define and obtain approval for the smallest authenticated actual-ChatGPT MCP access test, then hand off bounded implementation to Programmer and independent verification to Reviewer.
+**Next step:** Review [2026-10-23 independent code and architecture audit](docs/dev/architecture/ARCHITECTURE_AUDIT_2026-10-23.md) (ARCH-007) alongside [separate strategy proposal PR #2](https://github.com/1rubass1/RDC-Relay/pull/2). The review adds MCP 2026-07-28 protocol compatibility, actionable process ownership and testing concerns and Codex/Gemini client choices. Findings are static/risk-ranked, NOT confirmed runtime failures. Existing Roadmap/Decisions unchanged pending owner approval.
 
 **Main unresolved risk:** Public Git dev branch must never store actual sensitive data; existing release packaging uses explicit allowlisted payload, but every release artifact must still be checked.
 
