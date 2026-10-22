@@ -22,7 +22,7 @@
 
 **Next step:** After this docs PR is reviewed and integrated into `development`, owner may launch the **Programmer** role for `PROG-003`: isolated baseline characterization of process/log/health contracts, without source refactoring or touching live Remote. Core implementation and independent Reviewer gates follow only on actual evidence; public HTTP/auth experiments remain deferred.
 
-**Checkpoint evidence:** Playbook files read from connected GitHub; staged project documents edited via connected GitHub. No new runtime test, UI acceptance, full release build, native connector E2E, user process stop or public port change claimed. STARMER connection was unresponsive while writing the local draft; the GitHub branch is the authoritative submitted snapshot pending local reconciliation. 
+**Checkpoint evidence:** Playbook files read from connected GitHub; staged project documents edited via connected GitHub. No new runtime test, UI acceptance, full release build, native connector E2E, user process stop or public port change claimed. STARMER connection was unresponsive while writing the local draft; the GitHub branch is the authoritative submitted snapshot pending local reconciliation.
 
 **Main unresolved risk:** Public Git dev branch must never store actual sensitive data; existing release packaging uses explicit allowlisted payload, but every release artifact must still be checked.
 
