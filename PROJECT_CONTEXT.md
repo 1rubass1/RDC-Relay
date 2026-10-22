@@ -20,7 +20,9 @@
 
 **New account constraint (2026-10-22):** Owner reviewed official requirements and confirmed ChatGPT Plus cannot register a full-featured external custom MCP connection. Official Help lists full custom MCP for Business/Enterprise/Edu (Pro limited to read/fetch). Plugin and Sites packaging do not confer missing account privileges. Hence ChatGPT Plus → own public-IP HTTPS MCP is **PLAN-LEVEL NO-GO** at present; no account UI end-to-end trial was claimed.
 
-**Next step:** Review [updated assessment](docs/dev/architecture/ARCHITECTURE_REVIEW_2026-10-22.md), task ARCH-005. Preserve self-host independence as a long-term goal, but select a supported client (e.g. local Codex CLI + stdio MCP within plan limits) before network-facing gateway development. **No public port or runtime code touched**. Revised strategy awaits owner approval.
+**Codex local MCP preflight (2026-10-22, Architect):** official OpenAI documentation and upstream DesktopCommanderMCP README both describe Codex CLI launching stdio MCP servers. STARMER has `codex.cmd` v0.163.0, Node.js v24.20.0, `npx.cmd`; `codex.cmd login status` returned exit 0 and indicated ChatGPT login; `codex.cmd mcp list` exited 0 and has no Desktop Commander registration. PowerShell selected `codex.ps1`, blocked by execution policy; use `codex.cmd` without changing system policy. **No Codex→DesktopCommanderMCP handshake or actual tool invocation has been run**; assign Programmer `PROG-002` for isolated end-to-end. No persistent user Codex configuration, production Remote, firewall or public ports modified.
+
+**Next step:** User may hand off `PROG-002` to Programmer for a bounded read-only test, while Architect retains pending [architecture review](docs/dev/architecture/ARCHITECTURE_REVIEW_2026-10-22.md) `ARCH-005`. Self-host gateway roadmap stays unapproved until the owner reviews the strategy.
 
 **Main unresolved risk:** Public Git dev branch must never store actual sensitive data; existing release packaging uses explicit allowlisted payload, but every release artifact must still be checked.
 
