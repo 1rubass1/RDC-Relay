@@ -18,7 +18,9 @@
 
 **Owner's clarified requirement (2026-10-22):** Provide a self-hosted, no-metered-Remote-call alternative for AI→local DesktopCommanderMCP, using an available static public IP for direct HTTPS where safe. Existing hosted Remote stays as fallback; alternative services may be added if useful. The previous review underrated this core motivation and has been corrected.
 
-**Next step:** Review [revised architecture assessment](docs/dev/architecture/ARCHITECTURE_REVIEW_2026-10-22.md), task ARCH-005: client entitlement first, then static-IP HTTPS/TLS, protected gateway, least-privilege executor, integration and fallback. **No public port or runtime code touched**, and revised design is not adopted until the owner approves it.
+**New account constraint (2026-10-22):** Owner reviewed official requirements and confirmed ChatGPT Plus cannot register a full-featured external custom MCP connection. Official Help lists full custom MCP for Business/Enterprise/Edu (Pro limited to read/fetch). Plugin and Sites packaging do not confer missing account privileges. Hence ChatGPT Plus → own public-IP HTTPS MCP is **PLAN-LEVEL NO-GO** at present; no account UI end-to-end trial was claimed.
+
+**Next step:** Review [updated assessment](docs/dev/architecture/ARCHITECTURE_REVIEW_2026-10-22.md), task ARCH-005. Preserve self-host independence as a long-term goal, but select a supported client (e.g. local Codex CLI + stdio MCP within plan limits) before network-facing gateway development. **No public port or runtime code touched**. Revised strategy awaits owner approval.
 
 **Main unresolved risk:** Public Git dev branch must never store actual sensitive data; existing release packaging uses explicit allowlisted payload, but every release artifact must still be checked.
 

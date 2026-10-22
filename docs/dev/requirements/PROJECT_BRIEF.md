@@ -10,7 +10,9 @@ Create **a reliable self-hosted connection path** from compatible AI clients to 
 
 This is a **transport independence** requirement, not an order to rewrite DesktopCommanderMCP as a new local executor. An own gateway still depends on client-side MCP permissions, user's Internet/power/hardware resources and TLS trust; do not promise unlimited ChatGPT usage or 24/7 reliability.
 
-Implementation architecture remains pending gate checks and owner approval: first test actual AI client compatibility, then direct public-IP HTTPS feasibility and isolated authentication, then secure scoped tool access, and only after verified second path add minimal provider switching UI. Consult [revised Architect review](../architecture/ARCHITECTURE_REVIEW_2026-10-22.md).
+**New confirmed constraint (2026-10-22):** ChatGPT **Plus** lacks the documented ability to independently connect a custom external MCP server with full tool/write/execute support. Owner checked plan terms; official Help confirms full custom MCP for Business/Enterprise/Edu and Pro's limited read/fetch, not Plus. Hence a static-IP HTTPS gateway will not bypass the client's entitlement. Plugin packages and Sites-based plugins must not be assumed to bypass this restriction. On this plan, keep official Desktop Commander Remote as the ChatGPT route; evaluate local MCP via Codex CLI or another truly compatible client before exposing a public gateway.
+
+Implementation remains subject to owner approval: first choose a *supported client path*, then network/TLS/auth/isolated executor (if remote is really needed), and only after proven second route add provider UI. Consult [revised Architect review](../architecture/ARCHITECTURE_REVIEW_2026-10-22.md).
 
 ## Non-negotiable constraints
 - Preserve working Remote, its state machine, tested UI and safe transactional updater. No wholesale rewrite.
