@@ -19,7 +19,7 @@
 | --- | --- |
 | Scope and acceptance | [Product brief](docs/dev/requirements/PROJECT_BRIEF.md) |
 | Phase sequencing | [Roadmap](docs/dev/planning/ROADMAP.md) |
-| System contracts and proposals | [Architecture overview](docs/dev/architecture/OVERVIEW.md), [legacy technical proposal](docs/dev/architecture/PROVIDER_TECHNICAL_DESIGN_LEGACY.md) |
+| System contracts and proposals | [Architecture overview](docs/dev/architecture/OVERVIEW.md), [system audit — 2026-10-23 proposal](docs/dev/architecture/ARCHITECTURE_AUDIT_2026-10-23.md), [legacy technical proposal](docs/dev/architecture/PROVIDER_TECHNICAL_DESIGN_LEGACY.md) |
 | Verified transport experiments | [Results matrix](docs/dev/research/RESULTS_MATRIX.md), [research archive](docs/dev/research/) |
 | Editable GUI concept and geometry | [Design reference](docs/dev/design/README.md) |
 | Dev branch / release / credential separation | [Release boundary](docs/dev/operations/RELEASE_BOUNDARY.md) |
