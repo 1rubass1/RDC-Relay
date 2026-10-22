@@ -12,7 +12,7 @@
 | Temporary public HTTPS ping-only MCP | **PASS** | Ephemeral test tunnel subsequently stopped |
 | Synthetic Bearer missing/wrong/correct secret | **PASS** | One test gate; NOT OAuth 2.1 |
 | Cloudflare Quick Tunnel on STARMER | **FAIL** | DNS SRV discovery failed in tested environment |
-| Owner-account ChatGPT custom MCP registration + invocation | **NOT CHECKED** | Visible UI button does not confirm permission, [research](CHATGPT_PLUGIN_UI_REVIEW.md) |
+| Personal ChatGPT Plus → independently registered external custom MCP | **PLAN-LEVEL NO-GO (2026-10-22)** | Owner confirmed published plan requirements; official ChatGPT Help availability says full custom MCP is Business and Enterprise/Edu, Pro limited read/fetch. Specific app UI/registration was not tested; plugin visibility alone does not override plan restrictions. See [capability review](CHATGPT_PLUGIN_UI_REVIEW.md) |
 | Actual authenticated ChatGPT → STARMER executable tool | **NOT CHECKED / NO RELEASE GO** | OAuth, scoped tools, negative tests, isolation, revocation and independent review outstanding |
 
 Documentation: [legacy sources](SOURCES_REFERENCE.md), [OpenAI Tunnel Spike 0](SPIKE_0_OPENAI_TUNNEL.md), [Direct HTTPS Spike 1](SPIKE_1_DIRECT_HTTPS_MCP.md), [ChatGPT UI study](CHATGPT_PLUGIN_UI_REVIEW.md).

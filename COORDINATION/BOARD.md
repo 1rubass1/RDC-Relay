@@ -2,7 +2,7 @@
 
 **Stage:** Playbook migration and secured-transport research · **Updated:** 2026-10-22
 **Status:** Playbook documentation migrated into `development`; transport/auth feasibility still unproven.
-**Next:** `ARCH-003` scope and approve authenticated MCP feasibility gate.
+**Next:** owner may assign **Programmer** task `PROG-002` for isolated Codex CLI → local DesktopCommanderMCP feasibility; architecture `ARCH-005` remains pending approval.
 
 ## Roles and ownership
 | Role | Responsibility | Boundaries |
@@ -18,7 +18,10 @@
 | ARCH-001 | Introduce Playbook roles, index, context, decisions and board on isolated branch | Architect | done | Documentation branch initial commit `d93e711` |
 | ARCH-002 | Owner selects canonical project knowledge storage and dev-only distribution policy | Architect + owner | done | Owner approval; `DECISIONS.md` ADR-002 and ADR-003 |
 | ARCH-004 | Sanitize, classify, migrate original records; verify links, archive, no release effect, merge only to `development` | Architect | done | [PR #1](https://github.com/1rubass1/RDC-Relay/pull/1) merged as `20b938b`; 10 local backup + 4 design-source SHA256 checks, link/secret scan PASS; local pointers created; existing v1.5.18 Portable 12 entries clean |
-| ARCH-003 | Define transport feasibility/auth/GO gates and roles for next cycle | Architect + owner | ready | [Research matrix](../docs/dev/research/RESULTS_MATRIX.md); no executor release |
+| ARCH-005 | Re-evaluate free self-hosted MCP transport goal, static IP and user account constraints | Architect + owner | review | [Architect review](../docs/dev/architecture/ARCHITECTURE_REVIEW_2026-10-22.md); on ChatGPT Plus, full external custom MCP connection not supported by current documented plan: client gate NO-GO; independent client choice pending |
+| ARCH-003 | Select eligible MCP client and design smallest transport/auth test after ARCH-005 | Architect + owner | blocked | ChatGPT Plus external full MCP: plan-level NO-GO; potential Codex CLI/local MCP or alternative compatible client; do not open router/firewall |
+| ARCH-006 | Verify official Codex CLI + local MCP compatibility and STARMER preflight; define safe hands-on test | Architect | done | Official OpenAI and DesktopCommanderMCP docs support Codex stdio; STARMER `codex.cmd 0.163.0`, `node v24.20.0`, `npx.cmd`, ChatGPT login and CLI MCP subcommands present; actual MCP tool call NOT CHECKED |
+| PROG-002 | Isolated Codex CLI → local `@wonderwhy-er/desktop-commander@0.2.52` stdio MCP handshake/list/read fixture; clean shutdown and evidence | Programmer (not launched) | ready | Must avoid changing user-global Codex config and live Remote; use isolated scratch/read-only fixture; record PASS/FAIL and billing or permission blocker; revert test config |
 | PROG-001 | Narrow scoped actual ChatGPT plugin connection/authorization experiment | Programmer | blocked | Requires ARCH-003 and explicitly authorized scope |
 | REV-001 | Independently check actual authentication/route behavior | Reviewer | planned | Depends on PROG-001 evidence and owner go-ahead |
 | DES-001 | Obtain user review of editable Pen and resolve any UX discrepancies | Designer | planned | `docs/dev/design/`; separate request, no automatic visual acceptance |

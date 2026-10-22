@@ -9,7 +9,7 @@
 | --- | --- | --- |
 | [requirements/](requirements/PROJECT_BRIEF.md) | Product purpose, scope, constraints | Agreed user brief; proposed details labelled |
 | [planning/](planning/ROADMAP.md) | Current phases, dependencies and gates | Current roadmap (supersedes imported legacy) |
-| [architecture/](architecture/OVERVIEW.md) | System contracts, provider direction and uncertainties | Current overview plus explicitly marked **legacy proposal** |
+| [architecture/](architecture/OVERVIEW.md) | System contracts, provider direction and uncertainties | Current overview, clearly marked legacy proposal and [unapproved architecture review](architecture/ARCHITECTURE_REVIEW_2026-10-22.md) |
 | [research/](research/RESULTS_MATRIX.md) | Evidence, sources, experiments, verified vs missing | Experiment records with actual results |
 | [design/](design/README.md) | Editable Pen reference, assets and UX acceptance | Design reference; user approval still needed |
 | [operations/](operations/RELEASE_BOUNDARY.md) | Branch, packaging, distribution, credential boundaries | Release boundary policy |

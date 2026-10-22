@@ -16,7 +16,13 @@
 
 **Verification:** 10 preserved document backup hashes and 4 design source hashes match their manifest values; internal current-document links resolved; committed Markdown and Pen patterns scanned without known credential/email hits; `git diff --check` passed. Current `main`/`stable` tree excludes dev paths; inspected packaging allowlist, and existing v1.5.18 Portable ZIP excluded dev records (12 entries). New Setup build **NOT CHECKED**; no runtime process was stopped.
 
-**Next step:** Architect to define and obtain approval for the smallest authenticated actual-ChatGPT MCP access test, then hand off bounded implementation to Programmer and independent verification to Reviewer.
+**Owner's clarified requirement (2026-10-22):** Provide a self-hosted, no-metered-Remote-call alternative for AI→local DesktopCommanderMCP, using an available static public IP for direct HTTPS where safe. Existing hosted Remote stays as fallback; alternative services may be added if useful. The previous review underrated this core motivation and has been corrected.
+
+**New account constraint (2026-10-22):** Owner reviewed official requirements and confirmed ChatGPT Plus cannot register a full-featured external custom MCP connection. Official Help lists full custom MCP for Business/Enterprise/Edu (Pro limited to read/fetch). Plugin and Sites packaging do not confer missing account privileges. Hence ChatGPT Plus → own public-IP HTTPS MCP is **PLAN-LEVEL NO-GO** at present; no account UI end-to-end trial was claimed.
+
+**Codex local MCP preflight (2026-10-22, Architect):** official OpenAI documentation and upstream DesktopCommanderMCP README both describe Codex CLI launching stdio MCP servers. STARMER has `codex.cmd` v0.163.0, Node.js v24.20.0, `npx.cmd`; `codex.cmd login status` returned exit 0 and indicated ChatGPT login; `codex.cmd mcp list` exited 0 and has no Desktop Commander registration. PowerShell selected `codex.ps1`, blocked by execution policy; use `codex.cmd` without changing system policy. **No Codex→DesktopCommanderMCP handshake or actual tool invocation has been run**; assign Programmer `PROG-002` for isolated end-to-end. No persistent user Codex configuration, production Remote, firewall or public ports modified.
+
+**Next step:** User may hand off `PROG-002` to Programmer for a bounded read-only test, while Architect retains pending [architecture review](docs/dev/architecture/ARCHITECTURE_REVIEW_2026-10-22.md) `ARCH-005`. Self-host gateway roadmap stays unapproved until the owner reviews the strategy.
 
 **Main unresolved risk:** Public Git dev branch must never store actual sensitive data; existing release packaging uses explicit allowlisted payload, but every release artifact must still be checked.
 
