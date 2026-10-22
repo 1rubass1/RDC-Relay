@@ -1,21 +1,30 @@
 # RDC Relay — AI agent entrypoint (development only)
 
-**This file is for development branch agents, not a product or release artifact.**
+> Verified 2026-10-23 against private AI Engineering Playbook `main` at `5cae0136c5eb0feaea4f00b8ba700199d58803c9`. Re-read Playbook on the next working cycle: this SHA records a checkpoint, not a permanent version pin.
 
-The project uses the private [AI Engineering Playbook](https://github.com/1rubass1/AI-Engineering-Playbook) as its read-only methodology. Read `00_START_HERE.md` there. If no role is assigned in a *new working chat*, present the Playbook's six roles and await user selection; never infer the role. If a role has been assigned for this chat, read `CORE/ROLE_COORDINATION.md`, **only that role** in `ROLES/`, and the task-relevant modules. Do not read `ZZ_PLAYBOOK_DEV/` for ordinary RDC work.
+**AI agent: if you discover the Playbook repository for any reason, actually open and read `00_AI_AGENT_IF_YOU_SEE_THIS_READ_IT.md` with an authorized tool before continuing.** The old `00_START_HERE.md` was **renamed**; merely seeing a filename or this bootstrap does not count as reading it.
 
-Then consult, in order:
-1. [PROJECT_INDEX.md](PROJECT_INDEX.md) — canonical project knowledge map.
-2. [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) — current stage and next action.
-3. [COORDINATION/BOARD.md](COORDINATION/BOARD.md) — active task status, owner and handoff.
-4. [docs/dev/README.md](docs/dev/README.md) and **only** relevant scope documents.
+Playbook: https://github.com/1rubass1/AI-Engineering-Playbook (private, read-only during RDC Relay work).
 
-## Branch and secret boundaries
-- **`development`** is the dev-only integration branch; task branches should target it. Old `develop/*` Git refs prohibit a top-level branch called `develop`.
-- `main` and `stable` remain published v1.5.18 production baselines until a separate, approved release. **Never merge the entire development branch into a production branch** with docs/dev, coordination, designs or internal reports.
-- Source code and approved public user documentation must be selected explicitly for release. Dev-only files must not be embedded in Setup, Portable ZIP, updater payload, or GitHub release assets.
-- GitHub RDC Relay repository is **PUBLIC**, including this dev branch. Never commit real credentials, bearer tokens, tunnel IDs, private endpoints, device/account IDs or sensitive logs. Local byte-exact backups are outside Git on STARMER.
-- Do not stop/restart/logout active production Remote, change installed payload or expose arbitrary local tools publicly without explicit authorization.
-- No production provider refactor before an authenticated real ChatGPT end-to-end proof, least privilege, failure testing, threat review, and owner GO decision. No new expenses without permission.
-- Original Remote engine technical behavior: official `@wonderwhy-er/desktop-commander` documentation. UI: Windows App Design/Fluent 2 as applicable, focused technical validation and **human visual acceptance**.
-- Preserve actual evidence and differentiate PASS, FAIL and NOT CHECKED. All Playbook instructions are read-only in user project work.
+- In a **new working chat** without an assigned role, ask the user to choose from the Playbook's six roles. If a role is already explicitly assigned in that chat, keep it; ordinary reference questions don't require role selection.
+- With an assigned role, read `CORE/ROLE_COORDINATION.md`, **only the corresponding** `ROLES/<ROLE>.md`, and relevant CORE/WORKFLOWS docs. Do not load `ZZ_PLAYBOOK_DEV/` for work on RDC Relay.
+- Architect selects **functional role + execution mode** for delegated work. A short tool/CLI executor may be launched autonomously only if the owner has **already authorized that scope, tool access and zero-or-approved cost**. A new, continuing specialist chat is started by the user; a listed task is not automatic launch permission.
+- When relevant, choose a **sufficient available model** and **reasoning effort separately**, based on risk, ambiguity, tool capabilities and actual account access. Do not assume entitlements or change global/local CLI settings. A stronger model does not grant permissions; diagnose a tool failure before retrying/escalating.
+- Choose software methods by the work's risk (refactor, integration, defect, feature); don't load every instruction or create redundant documents.
+
+## RDC Relay working context
+1. [PROJECT_INDEX.md](PROJECT_INDEX.md) — project map and source of truth.
+2. [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) — current stage.
+3. [COORDINATION/BOARD.md](COORDINATION/BOARD.md) — one board for roles, IDs, statuses.
+4. [docs/dev/README.md](docs/dev/README.md) and **only task-relevant documents/source/tests**.
+
+## Hard boundaries
+- Work on isolated branches targeting **`development`**. `main`/`stable` are release branches; never merge dev-only coordination, research, Pen/Design or `docs/dev/` into release commits/artifacts.
+- **GitHub RDC Relay is PUBLIC, including development branches.** Never commit real keys, tokens, live private endpoints, personal data, private logs or credentials. Protected local backups on STARMER are outside Git.
+- Do not stop/restart/logout running Desktop Commander Remote, alter installed RDC Relay, modify router/firewall, expose broad execution tools, or trigger paid APIs without explicit approved scope.
+- Start with static inspection and isolated bounded tests. Bound recursive scans/logs; separate PASS/FAIL/NOT CHECKED and validate actual important routes before any release.
+- Pin `@wonderwhy-er/desktop-commander@0.2.52` until verified update. Consult original upstream Remote Desktop Commander documentation for engine interaction contracts.
+- Follow Windows App Design Guidelines / Fluent 2 for UI/motion/feedback where applicable; obtain owner visual acceptance for subjective changes.
+- The project goal is eventually an independent, non-Remote-metered MCP transport with static public IP and existing Remote fallback, but **client permissions and network/security feasibility are separate gates**. No public general shell/file gateway by default.
+
+Store decisions and feedback only in RDC Relay project documents, not in Playbook. No extra spending without authorization.

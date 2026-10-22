@@ -2,7 +2,7 @@
 
 > **DEVELOPMENT-ONLY. NOT A RELEASE COMPONENT.** This tree is intended for the `development` branch and development-only task branches. Do not distribute its files in Setup EXE, Portable ZIP, update payloads, end-user app folders, or public release assets. Do not promote it wholesale into `main`/`stable`.
 
-**Entry points:** [project index](../../PROJECT_INDEX.md), [current context](../../PROJECT_CONTEXT.md), [coordination board](../../COORDINATION/BOARD.md), [decisions](../../DECISIONS.md). Read the separate AI Engineering Playbook `00_START_HERE.md` first, then use only the assigned role and relevant modules.
+**Entry points:** [project index](../../PROJECT_INDEX.md), [current context](../../PROJECT_CONTEXT.md), [coordination board](../../COORDINATION/BOARD.md), [decisions](../../DECISIONS.md). Open the private AI Engineering Playbook `00_AI_AGENT_IF_YOU_SEE_THIS_READ_IT.md` first (renamed from `00_START_HERE.md`). Read it even for repository orientation; select a role only for working tasks that lack a role assignment, then load that role and relevant modules.
 
 ## Knowledge layout
 | Folder | Purpose | Authority |

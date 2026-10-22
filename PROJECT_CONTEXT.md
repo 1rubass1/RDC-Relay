@@ -1,6 +1,6 @@
 # RDC Relay — current development context
 
-> Updated: 2026-10-22. Source: production Git metadata and local strategic records on STARMER.
+> Updated: 2026-10-23. Source: existing product history, 2026-10-23 static audit, owner-approved next stage and current private Playbook GitHub main.
 
 **Stage:** Playbook governance and classified knowledge migration completed on `development` via PR #1 (merge `20b938b`). `main` and `stable` remain production-only.
 
@@ -16,7 +16,13 @@
 
 **Verification:** 10 preserved document backup hashes and 4 design source hashes match their manifest values; internal current-document links resolved; committed Markdown and Pen patterns scanned without known credential/email hits; `git diff --check` passed. Current `main`/`stable` tree excludes dev paths; inspected packaging allowlist, and existing v1.5.18 Portable ZIP excluded dev records (12 entries). New Setup build **NOT CHECKED**; no runtime process was stopped.
 
-**Next step:** Architect to define and obtain approval for the smallest authenticated actual-ChatGPT MCP access test, then hand off bounded implementation to Programmer and independent verification to Reviewer.
+**Playbook refresh (2026-10-23):** private `1rubass1/AI-Engineering-Playbook` `main@5cae0136c5eb` was directly read. Entry point renamed **`00_AI_AGENT_IF_YOU_SEE_THIS_READ_IT.md`**; old `00_START_HERE.md` is gone. The Architect now considers delegated executor *mode*, sufficient *available model* and *reasoning effort* separately, with **explicit prior scope/tool/budget authorization** required to run short CLI executors. Project bootstrap/roadmap/board were updated on isolated `docs/playbook-refresh-2026-10-23` branch; merge to `development` is pending.
+
+**Core plan approval:** owner agreed to gradually strengthen the existing core before introducing a new provider. [ADR-004](DECISIONS.md), [Roadmap Stage B1](docs/dev/planning/ROADMAP.md) and `PROG-003` describe a no-behavior-change characterization-first cycle. [System audit PR #3](https://github.com/1rubass1/RDC-Relay/pull/3) and [transport strategy PR #2](https://github.com/1rubass1/RDC-Relay/pull/2) remain separate **drafts**, not merged/approved implementation.
+
+**Next step:** After this docs PR is reviewed and integrated into `development`, owner may launch the **Programmer** role for `PROG-003`: isolated baseline characterization of process/log/health contracts, without source refactoring or touching live Remote. Core implementation and independent Reviewer gates follow only on actual evidence; public HTTP/auth experiments remain deferred.
+
+**Checkpoint evidence:** Playbook files read from connected GitHub; staged project documents edited via connected GitHub. No new runtime test, UI acceptance, full release build, native connector E2E, user process stop or public port change claimed. STARMER connection was unresponsive while writing the local draft; the GitHub branch is the authoritative submitted snapshot pending local reconciliation.
 
 **Main unresolved risk:** Public Git dev branch must never store actual sensitive data; existing release packaging uses explicit allowlisted payload, but every release artifact must still be checked.
 
