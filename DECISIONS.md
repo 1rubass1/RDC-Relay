@@ -15,6 +15,15 @@
 
 **Security qualification:** RDC Relay GitHub is **public**, so development branches are public. No real credentials, private tunnel IDs, active endpoints, sensitive user/device/account data or unredacted logs in any Git branch. Such material stays in authorized protected local stores. Existing `Scripts/build-release.ps1` explicitly whitelists product payload; validate built artifacts before every release.
 
+## RDC-ADR-004 — Stabilize existing core incrementally before new provider
+**Accepted:** 2026-10-23, owner. **Scope:** gradual *behavior-preserving* improvement to RDC Relay's existing supervision, process ownership and transport-status derivation, with regression characterization **before** refactoring.
+
+**Decision:** Do not rewrite the existing 6,676-line PowerShell GUI, switch language/runtime, revise visual design or introduce a second `ConnectionProvider` prematurely. First obtain deterministic isolated tests for current lifecycle/log/state behavior, then extract minimal pure observation parsing and explicit process ownership boundaries in separately verifiable steps. Preserve release v1.5.18 and functioning Remote until independently validated candidate. Do not alter `main`/`stable` or published payloads in a documentation/planning task.
+
+**Reasons:** Reduces risk of breaking production or killing user processes while introducing testable seams needed by a later self-hosted transport. Stop if behavior changes without an approved requirement. Implementation details and gates: [current roadmap](docs/dev/planning/ROADMAP.md), [2026-10-23 audit, draft PR #3](https://github.com/1rubass1/RDC-Relay/pull/3).
+
+**Not decided:** A self-hosted gateway, active network exposure, specific parser/event interface, paid provider, model configuration or delegation of CLI executors. Each requires appropriate evidence and authorization. The user's original goal of an unmetered-by-Remote transport remains intact.
+
 ## Pending architectural decisions
 - Whether ChatGPT custom MCP / Sites can securely access the owner's environment: actual entitlement and authenticated end-to-end route unproven.
 - Provider architecture and concrete auth/transport choices remain conditional on a controlled GO/NO-GO research gate, not endorsed by migration.
