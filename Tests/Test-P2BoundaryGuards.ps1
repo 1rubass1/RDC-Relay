@@ -8,11 +8,31 @@ $temp=([IO.Path]::GetFullPath([IO.Path]::GetTempPath())).TrimEnd([char[]]@([IO.P
 $script:pass=0;$script:fail=0;$script:notChecked=0
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 Add-Type -Path (Join-Path $src 'P1Wire.cs'),(Join-Path $src 'P1Core.cs') -ReferencedAssemblies @('System.Core.dll','System.Web.Extensions.dll','System.dll','System.Security.dll','System.Windows.Forms.dll','System.Drawing.dll')
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class P2BoundarySymlinkNative {
+ [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true, EntryPoint="CreateSymbolicLinkW")]
+ [return: MarshalAs(UnmanagedType.U1)]
+ public static extern bool CreateSymbolicLink(string link, string target, int flags);
+}
+'@
 
 function Assert-P2([bool]$Value,[string]$Message){if(-not $Value){throw $Message}}
 function Pass-P2([string]$Name){Write-Output ('PASS '+$Name);$script:pass++}
 function Fail-P2([string]$Name,[string]$Message){Write-Output ('FAIL '+$Name+': '+$Message);$script:fail++}
 function NotChecked-P2([string]$Name,[string]$Message){Write-Output ('NOT CHECKED '+$Name+': '+$Message);$script:notChecked++}
+function New-P2FileSymbolicLink([string]$Link,[string]$Target){
+  try{New-Item -ItemType SymbolicLink -Path $Link -Target $Target -ErrorAction Stop|Out-Null;return}
+  catch{$newItemError=$_.Exception.Message}
+  # Try the documented unprivileged-create flag as well; if the OS still
+  # denies it, the caller records NOT CHECKED rather than claiming PASS.
+  if([IO.File]::Exists($Link) -or [IO.Directory]::Exists($Link)){throw 'Symbolic link path exists after New-Item failed; refusing to overwrite'}
+  $created=[P2BoundarySymlinkNative]::CreateSymbolicLink($Link,$Target,2)
+  if($created){return}
+  $win32=[Runtime.InteropServices.Marshal]::GetLastWin32Error()
+  throw ('SYMLINK_CREATE_UNAVAILABLE: New-Item denied; CreateSymbolicLinkW flags=2 Win32 error '+$win32+'; '+$newItemError)
+}
 function Normalize-P2Directory([string]$Path){
   $full=[IO.Path]::GetFullPath($Path);$volume=[IO.Path]::GetPathRoot($full)
   if($full.Length -gt $volume.Length){$full=$full.TrimEnd([char[]]@([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar))}
@@ -200,10 +220,10 @@ try{
   $fileSentinelHash=(Get-FileHash -LiteralPath $fileSentinel -Algorithm SHA256).Hash
   $guiPath=Join-Path $fileRoot 'Gui.ps1'
   [IO.File]::Delete($guiPath)
-  try{New-Item -ItemType SymbolicLink -Path $guiPath -Target $fileSentinel -ErrorAction Stop|Out-Null;$guiLinkCreated=$true}
+  try{New-P2FileSymbolicLink $guiPath $fileSentinel;$guiLinkCreated=$true}
   catch{
     Copy-Item -LiteralPath (Join-Path $src 'Gui.ps1') -Destination $guiPath -ErrorAction Stop
-    NotChecked-P2 'P2A-GUI-FILE-REPARSE' ('Windows refused a test-owned file symlink: '+$_.Exception.Message)
+    NotChecked-P2 'P2A-GUI-FILE-REPARSE' ('File symlink unavailable in this environment: '+$_.Exception.Message)
   }
   if($guiLinkCreated){
     $helperRejected=Test-P2HelperRefusal $fileRoot 'reparse point in Gui.ps1'
@@ -283,8 +303,8 @@ try{
   [void](Wait-P2State $pulseHost {param($s) $s.guiPid -eq 0} 6000)
   Assert-P2 (([IO.File]::GetAttributes($pulse) -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'Initial pulse unexpectedly reparse'
   [IO.File]::Delete($pulse)
-  try{New-Item -ItemType SymbolicLink -Path $pulse -Target $pulseSentinel -ErrorAction Stop|Out-Null;$pulseLinkCreated=$true}
-  catch{NotChecked-P2 'P2A-GUI-PULSE-REPARSE' ('Windows refused a test-owned pulse symlink: '+$_.Exception.Message)}
+  try{New-P2FileSymbolicLink $pulse $pulseSentinel;$pulseLinkCreated=$true}
+  catch{NotChecked-P2 'P2A-GUI-PULSE-REPARSE' ('Pulse file symlink unavailable in this environment: '+$_.Exception.Message)}
   if($pulseLinkCreated){
     $before=Send-P2Host $pulseHost 'TEST_STATE'
     [void](Send-P2Host $pulseHost 'TEST_OPEN')
