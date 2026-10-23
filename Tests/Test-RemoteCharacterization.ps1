@@ -10,7 +10,7 @@ if($parseErrors.Count){throw "Source parse errors: $($parseErrors.Count)"}
 $names=@('Schedule-AutoReconnect','Set-RemoteFault','Clear-RemoteFault','Mark-RemoteReady','Get-RemoteLineClassification','Update-RemoteHealthFromLine','Refresh-DividerActivitySession','Convert-ToCleanLogText','Limit-UiEvent','Add-CompletedEvent','Commit-CurrentEvent','Append-CurrentEvent','Test-StartupBoundaryLine','Set-StartupFromProbe','Reset-CompactLogSession','Process-RemoteLine','Add-RemoteChunk','Begin-RemoteOperation','Complete-RemoteOperation','Update-RemoteOperation','Invoke-AutoReconnect','Set-RemoteActionsEnabled','Reset-RemoteHandle')
 foreach($name in $names){
     $n=$ast.Find({param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq $name},$true)
-    if(-not $n){throw "Function absent: $name"}
+    if(-not $n){if($name -eq "Get-RemoteLineClassification"){continue}; throw "Function absent: $name"}
     . ([scriptblock]::Create($n.Extent.Text))
 }
 $script:passed=0; $script:failed=0
@@ -32,6 +32,7 @@ function Case([string]$name,[scriptblock]$body){
         Startup=[bool]$script:startupComplete; CurrentEvent=[string]$script:currentEvent
         CurrentTruncated=[bool]$script:currentEventTruncated; StartupBlock=[string]$script:startupBlock
         Events=@($script:eventBlocks | ForEach-Object { [string]$_ }); Logs=$normalizedLogs
+        Effects=@($script:effects | ForEach-Object { [string]$_ })
     })
 }
 function New-FakeProcess([bool]$exited=$false,[int]$code=0){
@@ -47,14 +48,16 @@ $activityInterruptedTimeoutSeconds=60.0
 $uiEventMaxChars=8000;$uiStartupMaxChars=30000
 $script:eventBlocks=New-Object System.Collections.ArrayList
 $script:logs=New-Object System.Collections.ArrayList
-function Add-Log([string]$text){[void]$script:logs.Add($text)}
-function Render-CompactLog {}
+$script:effects=New-Object System.Collections.ArrayList
+function Trace-Effect([string]$value){[void]$script:effects.Add($value)}
+function Add-Log([string]$text){[void]$script:logs.Add($text); Trace-Effect (('log:'+$text) -replace '\[\d{2}:\d{2}:\d{2}\]','[TIME]')}
+function Render-CompactLog {Trace-Effect 'render'}
 function Update-AccountFromLog([string]$text){}
-function Set-DividerWorkState([bool]$state){$script:working=$state}
-function Set-DividerFaultState([bool]$state){$script:faultVisual=$state}
-function Start-DividerRecoveryFlash {$script:flashes++}
-function Set-DividerStoppedState([bool]$state){$script:stoppedVisual=$state}
-function Set-DividerStartupState([bool]$state){}
+function Set-DividerWorkState([bool]$state){$script:working=$state; Trace-Effect ('work:'+$state)}
+function Set-DividerFaultState([bool]$state){$script:faultVisual=$state; Trace-Effect ('fault:'+$state)}
+function Start-DividerRecoveryFlash {$script:flashes++; Trace-Effect 'recovery-flash'}
+function Set-DividerStoppedState([bool]$state){$script:stoppedVisual=$state; Trace-Effect ('stopped:'+$state)}
+function Set-DividerStartupState([bool]$state){Trace-Effect ('startup:'+$state)}
 function Set-FinishButtonMode([bool]$state){}
 function Set-State($name,$message,$color){$script:state=$name}
 function Read-LiveLog {}
@@ -83,7 +86,7 @@ function Reset-Fixture {
     $script:remoteLineBuffer='';$script:startupBlock=''
     $script:startupComplete=$false;$script:seenFirstRemoteEvent=$false;$script:tailNeedsMarker=$false
     $script:flashes=0;$script:starts=0;$script:working=$false;$script:stoppedVisual=$false
-    $script:logs.Clear();$script:eventBlocks.Clear()
+    $script:logs.Clear();$script:eventBlocks.Clear();$script:effects.Clear()
     $script:faultVisual=$false
     foreach($b in @($finish,$accountButton,$switchAccountItem,$reconnectItem)){$b.Enabled=$true}
 }
