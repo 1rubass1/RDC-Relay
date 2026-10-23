@@ -1,8 +1,8 @@
 # RDC Relay — coordination board
 
 **Stage:** Playbook refresh and reversible core stabilization · **Updated:** 2026-10-23
-**Status:** Architect accepts REV-002 verdict: PROG-003 is a completed **conditional characterization baseline**, not a production safety proof. Remaining parser-boundary fixtures are delegated as PROG-003A; PROG-004 remains blocked until independent follow-up review.
-**Next:** Programmer executes PROG-003A on an isolated branch based on the PROG-003 fixture; Reviewer executes REV-003, then Architect decides PROG-004 GO/NO-GO. Nothing touches live Remote.
+**Status:** PROG-003 conditional baseline retained; PROG-003A expanded with 21 isolated cases. STARMER Windows PowerShell 5.1: **33 PASS, 0 FAIL, exit 0**; two negative runner controls exit 1. No runtime source changes. Awaiting independent REV-003.
+**Next:** Reviewer independently performs REV-003 on PROG-003A branch, then Architect makes a new GO/NO-GO decision. PROG-004 and PROG-005 remain blocked; live Remote untouched.
 
 ## REV-002 — independent findings (2026-10-23)
 
@@ -35,7 +35,7 @@
 | ARCH-012 | Update RDC Relay to latest Playbook entrypoint and delegated-execution rules | Architect | review | Private Playbook `main@5cae0136c5eb`; renamed agent entrypoint, mode/model selection, permission and budget guardrails; this isolated docs branch |
 | ARCH-013 | Stage owner-approved incremental behavior-preserving core-refactor plan | Architect | review | [Roadmap Stage B1](../docs/dev/planning/ROADMAP.md), [ADR-004](../DECISIONS.md); no product source changes |
 | PROG-003 | Characterize existing Remote lifecycle and log/health behavior with isolated deterministic tests; no core refactor | Programmer | done | **CONDITIONAL baseline accepted**: 12 PASS/0 FAIL, exit 0 repeated by Programmer, Architect and Reviewer on STARMER; fixture-only, live routes NOT CHECKED. [Draft PR #5](https://github.com/1rubass1/RDC-Relay/pull/5). Additional coverage tracked separately in PROG-003A. |
-| PROG-003A | Expand **pre-refactor** fixture with mandatory Reviewer cases, without changing Source | Programmer (not yet launched) | ready | Depends on [PROG-003](../Tests/PROG-003-BASELINE.md), [REV-002 note](https://github.com/1rubass1/RDC-Relay/pull/5); tests duplicates/ordering, near-match/health, Unicode decoded strings/CRLF/startup/event ordering, fail-fast; then REV-003. |
+| PROG-003A | Expand **pre-refactor** fixture with mandatory Reviewer cases, without changing Source | Programmer | review | **33 PASS / 0 FAIL / exit 0** on STARMER PowerShell 5.1; 12 original + 21 new; injected assertion and minimum-count violation each exit 1. [Evidence](../Tests/PROG-003-BASELINE.md) · [fixture](../Tests/Test-RemoteCharacterization.ps1) · branch `tests/prog-003a-characterization-edge-cases`; awaiting REV-003. Real paths NOT CHECKED. |
 | PROG-004 | Extract minimal pure `Remote observation` parser with equivalence tests | Programmer (not yet launched) | blocked | **NO-GO until PROG-003A + REV-003 + Architect decision.** Scope: only decoded complete-line classification; no IO reader/process/GUI changes; maintain semantics. |
 | PROG-005 | Introduce explicit owned/adopted/external process contract and guarded lifecycle | Programmer (not yet launched) | blocked | **Not authorized by REV-002 / this decision.** Separate ownership contract and isolated real-process evidence required; never stop user's Remote. |
 | REV-002 | Independently review PROG-003 fixture fidelity and safety before narrow PROG-004 | Reviewer | done | **CONDITIONAL PASS** (characterization only); STARMER PowerShell 5.1: 12 PASS / 0 FAIL / exit 0; source/static/fixture review completed. Critical fixture gaps listed above; no live process touched. [PR #5](https://github.com/1rubass1/RDC-Relay/pull/5). |
