@@ -26,7 +26,7 @@
 
 ## RDC-ADR-005 — Hide RDC Relay window to system tray, keep Remote active
 
-**Accepted direction:** 2026-10-23, owner. Normal user **X** should dismiss the visible RDC Relay window into the Windows notification area without stopping the existing Remote process **or** the background GUI-host supervisor. An icon in the tray opens the **current live window** again. The owner confirmed the Programmer prompt for PROG-005A has **not** been sent; no implementation started.
+**Accepted direction:** 2026-10-23, owner. Normal user **X** should dismiss the visible RDC Relay window into the Windows notification area without stopping the existing Remote process **or** the background GUI-host supervisor. An icon in the tray opens the **current live window** again. At the decision's original capture, PROG-005A had not started; its mock-only baseline and independent review were subsequently completed and accepted in development. Tray/runtime implementation has not started.
 
 **Implementation recommendation:** WinForms `NotifyIcon` + safe `FormClosing(UserClosing)` cancellation and `Form.Hide()`; tray `Open` shows/reactivates the same Form. Do not destroy/recreate it or start new Remote just to reopen the UI: that risks losing timers, readers, mutex ownership, updater state and live process handles. Standard Minimize remains unchanged.
 
