@@ -15,10 +15,25 @@ function Run-Negative([string]$name,[string]$mutated,[bool]$expectGuiCleanup) {
     try {
         [void](New-Item -ItemType Directory -Path $logFolder -ErrorAction Stop)
         [IO.File]::WriteAllText($copy,$mutated,(New-Object Text.UTF8Encoding($true)))
-        $process=Start-Process -FilePath $psExe -ArgumentList ('-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File "'+$copy+'"') -WindowStyle Hidden -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+        # Start-Process -RedirectStandardOutput does not reliably expose ExitCode
+        # under Windows PowerShell 5.1. Use an owned .NET process handle with
+        # asynchronous stream draining and bounded WaitForExit instead.
+        $process=New-Object Diagnostics.Process
+        $process.StartInfo.FileName=$psExe
+        $process.StartInfo.Arguments='-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File "'+$copy+'"'
+        $process.StartInfo.UseShellExecute=$false
+        $process.StartInfo.CreateNoWindow=$true
+        $process.StartInfo.RedirectStandardOutput=$true
+        $process.StartInfo.RedirectStandardError=$true
+        Assert ($process.Start()) 'negative fixture process failed to start'
+        $outTask=$process.StandardOutput.ReadToEndAsync()
+        $errTask=$process.StandardError.ReadToEndAsync()
         if(-not $process.WaitForExit(65000)){throw ('OWNED_NEGATIVE_RUNNER_REMAINS_PID='+$process.Id+'; NO FORCE KILL')}
+        Assert ($outTask.Wait(2000) -and $errTask.Wait(2000)) 'negative output drain exceeded deadline'
+        [IO.File]::WriteAllText($out,$outTask.Result,(New-Object Text.UTF8Encoding($false)))
+        [IO.File]::WriteAllText($err,$errTask.Result,(New-Object Text.UTF8Encoding($false)))
         $exitCode=$process.ExitCode
-        $output=[IO.File]::ReadAllText($out,[Text.Encoding]::UTF8)
+        $output=$outTask.Result
         Assert ($exitCode -eq 1) ('expected exit 1; actual '+$exitCode)
         Assert ($output.Contains('CLEANUP_HOST_IDENTITY=VERIFIED')) 'host PID identity was not verified'
         Assert ($output.Contains('CLEANUP_REMAINING_PROCESS_COUNT=0')) 'owned-process inventory not empty'
