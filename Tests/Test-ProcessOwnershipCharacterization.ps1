@@ -108,7 +108,13 @@ Case 'find ignores unrelated executable, partial command, other installation and
         (New-Wmi 105 'cmd.exe' ('desktop-commander remotely '+$logPath))
     )
     Assert ($null -eq (Find-ExistingRemote)) 'nonmatching candidate adopted'
-    Assert ($script:processQueries -eq 0) 'unneeded Get-Process'
+    Assert ($script:processQueries -eq 1) 'legacy substring also matches remotely, then missing PID is swallowed'
+}
+Case 'find accepts remotely as a false-positive substring when process exists' {
+    Reset-Fixture
+    $script:wmiRows=@(New-Wmi 105 'cmd.exe' ('desktop-commander remotely '+$logPath))
+    $script:fakeProcesses[105]=New-FakeProcess 105
+    Assert ((Find-ExistingRemote).Id -eq 105) 'substring remotely no longer matches'
 }
 Case 'find adopts first matching process even with two indistinguishable candidates' {
     Reset-Fixture;Set-Candidates
@@ -250,7 +256,7 @@ Case 'supervisor reconnect preserves state of fault only until operation dispatc
     Assert ($script:commandCalls.Count -eq 1 -and $script:stopping) 'reconnect did not stop'
     Assert ($script:state -eq 'Переподключение…') 'wrong reconnect label'
 }
-$minimum=21
+$minimum=22
 $executed=$script:passed+$script:failed
 if($executed -lt $minimum){Write-Output ('FAIL: test count '+$executed+' below '+$minimum);exit 1}
 Write-Output ('TOTAL PROG-005A PROCESS: PASS='+$script:passed+' FAIL='+$script:failed)
