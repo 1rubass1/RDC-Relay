@@ -84,7 +84,7 @@ Run-Negative 'skipped-case coverage guard' $skip $false
 # Crash before normal close while an owned GUI is still running.
 $crashAnchor="[void](Send 'OPEN');[void](Send 'OPEN')"
 Assert ($source.Contains($crashAnchor)) 'injected failure anchor missing'
-$crash=$source.Replace($crashAnchor,"Assert $false 'P0A deliberate early failure with GUI still running'"+[Environment]::NewLine+'    '+$crashAnchor)
+$crash=$source.Replace($crashAnchor,('Assert $false '+[char]39+'P0A deliberate early failure with GUI still running'+[char]39)+[Environment]::NewLine+'    '+$crashAnchor)
 Run-Negative 'failing assertion with live test GUI' $crash $true
 Write-Output ('TOTAL ARCH-016-P0A NEGATIVE: PASS='+$passed+' FAIL='+$failed)
 if($failed){exit 1}
