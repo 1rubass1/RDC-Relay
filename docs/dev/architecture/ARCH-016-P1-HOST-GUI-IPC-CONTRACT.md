@@ -1,6 +1,6 @@
 # ARCH-016-P1 — контракт Host ↔ GUI, безопасность IPC и приёмочные испытания
 
-**Статус:** Architect design baseline · 2026-10-23 · B1.  
+**Статус:** Architect design baseline · 2026-10-23 · B1.
 **Основание:** утверждённая владельцем модель X = уничтожить GUI, но сохранить живые Tray Host и Desktop Commander Remote; double-click tray = новый GUI из обновлённых файлов; явный «Завершить RDC Relay» = в будущем безопасно завершить **всю проверенно управляемую** группу процессов. [ADR-005](../../../DECISIONS.md), [ARCH-016-P0 boundary](ARCH-016-P0-HOST-GUI-BOUNDARY.md), [Architect/Reviewer verdict](ARCH-016-P0-ARCHITECT-ASSESSMENT.md).
 
 **Область:** архитектурный контракт и матрица испытаний. **НЕ доказательство готовой IPC-защиты и НЕ разрешение трогать реальный Remote.** P0/REV-016 подтвердили 15 PASS + два отрицательных сценария только на fake Remote в [PR #15](https://github.com/1rubass1/RDC-Relay/pull/15). P0-код `TrayHost.ps1` нельзя переносить в рабочий Host как есть: blocking `ReadLine`, слабая авторизация и отсутствие session/rendezvous.
