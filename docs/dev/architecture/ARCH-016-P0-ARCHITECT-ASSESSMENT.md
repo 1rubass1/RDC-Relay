@@ -2,6 +2,18 @@
 
 **2026-10-23 · Architect · Stage B1 · PR #15 · PRELIMINARY, awaiting REV-016-P0.**
 
+## Final Architect decision after REV-016-P0 — 2026-10-23
+
+**Verdict: CONDITIONAL ACCEPTANCE of the fake-only architectural feasibility proof.** The independently observed `15 PASS / 0 FAIL / exit 0`, separate GUI process A→B source reload, unchanged fake Host PID/Remote UUID and real child process teardown establish that **the two-process Host/GUI boundary is a viable design candidate**. Reviewer independently injected an intentional assertion failure: `14 PASS / 1 FAIL / exit 1`; negative test Host and named pipe terminated without affecting live Remote. [Independent report in PR #15](https://github.com/1rubass1/RDC-Relay/pull/15#issuecomment-6367930859).
+
+**P0 runner-quality gate before merging PR #15:** ask Programmer to add an explicit **minimum 15-case guard**, track fixture-owned Host/GUI process identity, implement **bounded cooperative cleanup and precise failure-path reporting**, and add a disposable negative run proving runner failure exit and safe cleanup. If a child/Host fails to stop within deadline, mark FAIL, retain isolated diagnostics and escalate; **do not use uncontrolled `taskkill`/`Stop-Process` or target any live user process**. Reviewer then verifies the narrow changes. This is **ARCH-016-P0A, not PROG-006A**; P0 security code need not be redesigned just to merge a historical experiment, provided all current security risks remain prominently marked prototype-only.
+
+**Approved:** two separate processes as the *working architectural direction*, not finished product implementation. Durable tray host must own Remote observation and lifecycle in the future; GUI is replaceable and cannot terminate Remote by closing. Host ↔ GUI IPC must be separately hardened before handling live Remote data/controls.
+
+**Not approved:** merging PR #15 now, changing shipped `Source/`, launching/probing real Remote, `PROG-006A`, `PROG-006B`, `PROG-005B`, `PROG-005`, changing installer or release. Draft PR #15 stays draft pending ARCH-016-P0A plus Reviewer acceptance. Once P0A is accepted, Architect may integrate research-only P0; PROG-006A still needs its own fake-only specification and explicit GO.
+
+**Production IPC gate remains separate:** non-blocking bounded frame transport with timeouts/cancellation outside WinForms timers; authenticated Windows pipe peer identity + process lifetime and Windows logon session; remote client rejection; GUI verifies Host; per-command authorization, version/revision/resync and hostile-client failure injection. Reviewer specifically confirmed the host/GUI `ReadLine` blocking and fake client PID loopholes; neither is acceptable in a production Host.
+
 ## Decision at this checkpoint
 
 **Architecture choice: CONDITIONAL TECHNICAL GO for further design** of a **durable WinForms Tray Host process + independently replaceable GUI process**. The alternative of hiding and showing an old `Form` inside the existing PowerShell process does **not** meet the owner's central requirement to load modified GUI source while Remote remains live.
