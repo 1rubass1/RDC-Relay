@@ -24,6 +24,18 @@
 
 **Not decided:** A self-hosted gateway, active network exposure, specific parser/event interface, paid provider, model configuration or delegation of CLI executors. Each requires appropriate evidence and authorization. The user's original goal of an unmetered-by-Remote transport remains intact.
 
+## RDC-ADR-005 — Hide RDC Relay window to system tray, keep Remote active
+
+**Accepted direction:** 2026-10-23, owner. Normal user **X** should dismiss the visible RDC Relay window into the Windows notification area without stopping the existing Remote process **or** the background GUI-host supervisor. An icon in the tray opens the **current live window** again. The owner confirmed the Programmer prompt for PROG-005A has **not** been sent; no implementation started.
+
+**Implementation recommendation:** WinForms `NotifyIcon` + safe `FormClosing(UserClosing)` cancellation and `Form.Hide()`; tray `Open` shows/reactivates the same Form. Do not destroy/recreate it or start new Remote just to reopen the UI: that risks losing timers, readers, mutex ownership, updater state and live process handles. Standard Minimize remains unchanged.
+
+**Safety gates:** existing single-instance fallback uses `MainWindowHandle=0` after ~5 seconds as a reason to force-stop a GUI peer. This heuristic is **incompatible with an intentionally hidden window**. Before shipping tray behavior, make duplicate launcher handling **non-destructive**, preferably same-user IPC reactivation; no live process kill. Add isolated tests for X, restore, updater/WindowsShutdown and second launch while hidden, with Reviewer and owner UX acceptance.
+
+**Not yet decided:** behavior of explicit tray command **Exit RDC Relay…** while Remote runs (keep Remote alive without a supervisor vs separate safe stop for demonstrably owned processes). Full Exit must not silently destroy an adopted/unknown Remote or unexpectedly log out. PROG-005 process-ownership refactor and disposable-process tests remain blocked and need separate decisions.
+
+**Trace:** [Tray lifetime contract](docs/dev/architecture/TRAY-LIFECYCLE-DESIGN.md), [ownership safety plan](docs/dev/architecture/PROG-005-PROCESS-OWNERSHIP-PLAN.md), [board](COORDINATION/BOARD.md).
+
 ## Pending architectural decisions
 - Whether ChatGPT custom MCP / Sites can securely access the owner's environment: actual entitlement and authenticated end-to-end route unproven.
 - Provider architecture and concrete auth/transport choices remain conditional on a controlled GO/NO-GO research gate, not endorsed by migration.

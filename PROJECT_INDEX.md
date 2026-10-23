@@ -19,7 +19,7 @@
 | --- | --- |
 | Scope and acceptance | [Product brief](docs/dev/requirements/PROJECT_BRIEF.md) |
 | Phase sequencing | [Roadmap](docs/dev/planning/ROADMAP.md) |
-| System contracts and proposals | [Architecture overview](docs/dev/architecture/OVERVIEW.md), [PROG-005 process ownership/test plan — proposal](docs/dev/architecture/PROG-005-PROCESS-OWNERSHIP-PLAN.md), [legacy technical proposal](docs/dev/architecture/PROVIDER_TECHNICAL_DESIGN_LEGACY.md) |
+| System contracts and proposals | [Architecture overview](docs/dev/architecture/OVERVIEW.md), [PROG-005 process ownership/test plan — proposal](docs/dev/architecture/PROG-005-PROCESS-OWNERSHIP-PLAN.md), [tray lifecycle contract — owner UX decision](docs/dev/architecture/TRAY-LIFECYCLE-DESIGN.md), [legacy technical proposal](docs/dev/architecture/PROVIDER_TECHNICAL_DESIGN_LEGACY.md) |
 | Verified transport experiments | [Results matrix](docs/dev/research/RESULTS_MATRIX.md), [research archive](docs/dev/research/) |
 | Editable GUI concept and geometry | [Design reference](docs/dev/design/README.md) |
 | Dev branch / release / credential separation | [Release boundary](docs/dev/operations/RELEASE_BOUNDARY.md) |
