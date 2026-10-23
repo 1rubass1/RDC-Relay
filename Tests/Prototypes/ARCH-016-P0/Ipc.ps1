@@ -20,7 +20,11 @@ function Invoke-ProbePipe {
         $writer=New-Object IO.StreamWriter($client,$encoding,1024,$true)
         $writer.AutoFlush=$true
         $writer.WriteLine($Command)
-        $raw=$reader.ReadLine()
+        # Bound the fixture client's response wait as well as Connect. This is
+        # cooperative test reliability, not a production IPC framing protocol.
+        $responseTask=$reader.ReadLineAsync()
+        if (-not $responseTask.Wait($TimeoutMs)) { throw 'Prototype IPC response timeout' }
+        $raw=$responseTask.Result
         if (-not $raw) { throw 'Pipe response missing' }
         return ($raw | ConvertFrom-Json -ErrorAction Stop)
     } finally {
