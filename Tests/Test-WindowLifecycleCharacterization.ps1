@@ -10,7 +10,7 @@ if($errs.Count){throw "source parse errors: $($errs.Count)"}
 function Extract-FormHandler([string]$name){
     $match=[regex]::Match($raw,('(?s)\$form\.Add_'+$name+'\(\{(?<body>.*?)\r?\n\}\)'))
     if(-not $match.Success){throw ('Form handler not found: '+$name)}
-    return [scriptblock]::Create('{'+$match.Groups['body'].Value+'}')
+    return [scriptblock]::Create($match.Groups['body'].Value)
 }
 $closing=Extract-FormHandler 'FormClosing'
 $closed=Extract-FormHandler 'FormClosed'
@@ -26,6 +26,8 @@ if(-not $node){throw 'GUI singleton ownership branch not found in source AST'}
 $singletonText=$node.Extent.Text
 if(([regex]::Matches($singletonText,'exit 0')).Count -ne 2){throw 'Unexpected singleton exit count'}
 $singletonText=$singletonText.Replace('exit 0',"throw 'FIXTURE_DUPLICATE_LAUNCHER_EXIT'")
+$singletonText=$singletonText.Replace('$PSScriptRoot','$script:fixtureScriptRoot')
+$script:fixtureScriptRoot=Split-Path -Parent $source
 $singleton=[scriptblock]::Create($singletonText)
 # Purely managed API stand-ins, never call Win32/user32 or display a real Form.
 Add-Type -TypeDefinition @'
@@ -169,7 +171,7 @@ function Reset-Singleton {
     [RdcShellIdentity]::ShowCount=0;[RdcShellIdentity]::ActivateCount=0
 }
 function Add-Peer([int]$id,[int]$handle=0,[int]$age=20,[string]$suffix=''){
-    $needle=Join-Path $PSScriptRoot 'remote-window.ps1'
+    $needle=Join-Path $script:fixtureScriptRoot 'remote-window.ps1'
     $p=[pscustomobject]@{ProcessId=$id;Name='powershell.exe';CommandLine=('-File "'+$needle+'" '+$suffix)}
     $script:wmiRows+=,$p
     $proc=Fake-Process $id $handle $age
