@@ -6,7 +6,7 @@ $source = Join-Path (Split-Path -Parent $PSScriptRoot) 'Source/remote-window.ps1
 $tokens=$null; $parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($source,[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw "Source parse errors: $($parseErrors.Count)"}
-$names=@('Schedule-AutoReconnect','Set-RemoteFault','Clear-RemoteFault','Mark-RemoteReady','Update-RemoteHealthFromLine','Refresh-DividerActivitySession','Convert-ToCleanLogText','Limit-UiEvent','Add-CompletedEvent','Commit-CurrentEvent','Append-CurrentEvent','Test-StartupBoundaryLine','Process-RemoteLine','Add-RemoteChunk','Begin-RemoteOperation','Complete-RemoteOperation','Update-RemoteOperation','Invoke-AutoReconnect','Set-RemoteActionsEnabled','Reset-RemoteHandle')
+$names=@('Schedule-AutoReconnect','Set-RemoteFault','Clear-RemoteFault','Mark-RemoteReady','Update-RemoteHealthFromLine','Refresh-DividerActivitySession','Convert-ToCleanLogText','Limit-UiEvent','Add-CompletedEvent','Commit-CurrentEvent','Append-CurrentEvent','Test-StartupBoundaryLine','Set-StartupFromProbe','Reset-CompactLogSession','Process-RemoteLine','Add-RemoteChunk','Begin-RemoteOperation','Complete-RemoteOperation','Update-RemoteOperation','Invoke-AutoReconnect','Set-RemoteActionsEnabled','Reset-RemoteHandle')
 foreach($name in $names){
     $n=$ast.Find({param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq $name},$true)
     if(-not $n){throw "Function absent: $name"}
@@ -170,5 +170,262 @@ Case 'retry action is scheduled but does not run in test mode' {
     Assert ($script:starts -eq 0 -and $script:autoReconnectAttempt -eq 0) 'self-test reconnect launched'
     $SelfTest=$false
 }
+
+# PROG-003A: these tests intentionally preserve anomalies; do not correct source.
+# Only already-decoded strings enter AST-loaded functions. Real reader is NOT CHECKED.
+Case 'duplicate starts and matching duplicate successes use a global count' {
+    Reset-Fixture
+    Process-RemoteLine '🔧 Received tool call repeated: begin'
+    Process-RemoteLine '🔧 Received tool call repeated: begin'
+    Assert ($script:activeToolCalls -eq 2 -and $script:working) 'duplicate starts counted'
+    Process-RemoteLine '✅ Tool call repeated completed:'
+    Assert ($script:activeToolCalls -eq 1 -and -not $script:remoteReady -and -not $script:activityHoldUntil) 'first completion'
+    Process-RemoteLine '✅ Tool call repeated completed:'
+    Assert ($script:activeToolCalls -eq 0 -and $script:remoteReady -and $script:flashes -eq 1) 'second completion'
+    Assert ($script:activityHoldUntil -and $script:working) 'completion hold'
+    Commit-CurrentEvent
+    Assert ($script:eventBlocks.Count -eq 4) 'marker event count'
+}
+Case 'orphan completion and duplicate establish ready without a start' {
+    Reset-Fixture
+    Process-RemoteLine '✅ Tool call orphan completed:'
+    Assert ($script:activeToolCalls -eq 0 -and $script:remoteReady -and $script:flashes -eq 1) 'orphan completion'
+    Assert ($script:activityHoldUntil -and $script:working) 'orphan hold/activity'
+    $before=$script:logs.Count
+    Process-RemoteLine '✅ Tool call orphan completed:'
+    Assert ($script:activeToolCalls -eq 0 -and $script:flashes -eq 1 -and $script:logs.Count -eq $before) 'repeated orphan'
+}
+Case 'failure after success relatches fault then late success clears it' {
+    Reset-Fixture
+    Process-RemoteLine '✅ Tool call x completed:'
+    Process-RemoteLine '❌ Tool call x failed: delayed'
+    Assert ($script:activeToolCalls -eq 0 -and -not $script:remoteReady -and -not $script:working) 'late failure'
+    Assert ($script:remoteFaultKind -eq 'tool-failed' -and $script:faultVisual -and -not $script:activityHoldUntil) 'fault visuals'
+    $faultAt=$script:remoteFaultAt;$before=$script:logs.Count
+    Process-RemoteLine '❌ Tool call x failed: repeated'
+    Assert ($script:logs.Count -eq $before -and $script:remoteFaultAt -eq $faultAt) 'duplicate fault logging'
+    Process-RemoteLine '✅ Tool call x completed:'
+    Assert ($script:remoteReady -and -not $script:remoteFaultLatched -and $script:flashes -eq 2) 'success recovery'
+    Assert ($script:logs.Count -gt $before) 'recovery log missing'
+}
+Case 'overlapping calls clear another failure on the last completion' {
+    Reset-Fixture
+    Process-RemoteLine '🔧 Received tool call alpha: begin'
+    Process-RemoteLine '🔧 Received tool call beta: begin'
+    Process-RemoteLine '❌ Tool call alpha failed: error'
+    Assert ($script:activeToolCalls -eq 1 -and $script:working -and $script:remoteFaultKind -eq 'tool-failed') 'overlap failure'
+    Process-RemoteLine '✅ Tool call beta completed:'
+    Assert ($script:activeToolCalls -eq 0 -and $script:remoteReady -and -not $script:remoteFaultLatched) 'overlap recovery'
+    Assert ($script:flashes -eq 1 -and $script:activityHoldUntil) 'overlap side effects'
+    Process-RemoteLine '❌ Tool call beta failed: late contradiction'
+    Assert ($script:activeToolCalls -eq 0 -and $script:remoteFaultKind -eq 'tool-failed' -and -not $script:remoteReady) 'late contradiction'
+}
+Case 'mismatched tool IDs are not correlated' {
+    Reset-Fixture
+    Process-RemoteLine '🔧 Received tool call alpha: start'
+    Process-RemoteLine '✅ Tool call unrelated completed:'
+    Assert ($script:activeToolCalls -eq 0 -and $script:remoteReady) 'wrong ID completion'
+    Process-RemoteLine '❌ Tool call alpha failed: arrived late'
+    Assert ($script:activeToolCalls -eq 0 -and $script:remoteFaultLatched) 'late ID failure'
+}
+Case 'duplicate failures consume count but log once for same fault' {
+    Reset-Fixture
+    Process-RemoteLine '🔧 Received tool call alpha: start'
+    Process-RemoteLine '🔧 Received tool call beta: start'
+    Process-RemoteLine '❌ Tool call alpha failed: first'
+    Process-RemoteLine '❌ Tool call alpha failed: duplicate'
+    Assert ($script:activeToolCalls -eq 0 -and $script:remoteFaultKind -eq 'tool-failed') 'duplicate consumed beta'
+    Assert ($script:logs.Count -eq 1 -and -not $script:working) 'duplicate logs and activity'
+}
+Case 'near-match and embedded emoji tool markers are not classified' {
+    Reset-Fixture;$script:startupComplete=$true
+    $near=@(
+        '🔧Received tool call x: begin',
+        '🔧 received tool call x: begin',
+        ' 🔧 Received tool call x: begin',
+        'quoted 🔧 Received tool call x: begin',
+        '✅ Tool call x completed',
+        '✅ Tool call x Completed:',
+        '✅  Tool call x completed:',
+        '❌ Tool call x failed',
+        '❌ Tool call x Failed:',
+        '{"text":"🔧 Received tool call x: begin"}'
+    )
+    foreach($line in $near){Process-RemoteLine $line}
+    Assert ($script:activeToolCalls -eq 0 -and -not $script:remoteReady -and -not $script:remoteFaultLatched) 'near marker state'
+    Assert ($script:currentEvent.Contains('quoted 🔧')) 'nonmarkers disappeared'
+    Process-RemoteLine '🔧 Received tool call x: begin'
+    Assert ($script:activeToolCalls -eq 1) 'exact marker missed'
+    Process-RemoteLine '✅ Tool call x completed:'
+    Assert ($script:activeToolCalls -eq 0 -and $script:remoteReady) 'exact success missed'
+}
+Case 'braced, bracketed and non-JSON payload have asymmetric health classification' {
+    Reset-Fixture;Mark-RemoteReady
+    Process-RemoteLine '   {"text":"Channel error: payload"}'
+    Process-RemoteLine ' [{"text":"Device marked as offline"}]'
+    Process-RemoteLine '[stdout] Channel error: payload'
+    Assert ($script:remoteReady -and -not $script:remoteFaultLatched) 'bracketed escaped payload'
+    Process-RemoteLine 'tool stdout: Channel error: fabricated payload'
+    Assert ($script:remoteFaultKind -eq 'transport-offline' -and -not $script:remoteReady) 'non-JSON substring missed'
+    Process-RemoteLine 'tool output: Presence tracked (device invented online)'
+    Assert ($script:remoteReady -and -not $script:remoteFaultLatched -and $script:flashes -eq 2) 'non-JSON restore'
+}
+Case 'embedded health text inside user output causes real health transitions' {
+    Reset-Fixture
+    Process-RemoteLine 'tool output says: Presence tracked (device demo online)'
+    Assert ($script:remoteReady -and $script:flashes -eq 1) 'embedded presence'
+    Process-RemoteLine 'the document contains "Remote session expired and could not be renewed"'
+    Assert ($script:remoteFaultKind -eq 'session-lost' -and -not $script:remoteReady -and $script:autoReconnectAt) 'embedded session'
+    Assert ($script:logs.Count -ge 3) 'embedded health side effects absent'
+}
+Case 'ready dominates channel error within one contradictory line' {
+    Reset-Fixture
+    Process-RemoteLine 'Channel error: broken; Presence tracked (device fake online)'
+    Assert ($script:remoteReady -and -not $script:remoteFaultLatched -and $script:flashes -eq 1) 'channel-first'
+    Process-RemoteLine 'Presence tracked (device fake online); Channel error: broken'
+    Assert ($script:remoteReady -and -not $script:remoteFaultLatched -and $script:flashes -eq 1) 'presence-first'
+    Process-RemoteLine 'Channel error: broken'
+    Assert ($script:remoteFaultKind -eq 'transport-offline' -and -not $script:remoteReady) 'separate later fault'
+}
+Case 'opposite ordering of separate channel and Presence signals changes state' {
+    Reset-Fixture
+    Process-RemoteLine 'Channel error: broken'
+    Process-RemoteLine 'Presence tracked (device fake online)'
+    Assert ($script:remoteReady -and -not $script:remoteFaultLatched -and $script:flashes -eq 1) 'loss then ready'
+    Reset-Fixture
+    Process-RemoteLine 'Presence tracked (device fake online)'
+    Process-RemoteLine 'Channel error: broken'
+    Assert (-not $script:remoteReady -and $script:remoteFaultKind -eq 'transport-offline' -and $script:flashes -eq 1) 'ready then loss'
+    Process-RemoteLine 'Channel subscribed (recovered after 1 attempt)'
+    Process-RemoteLine 'Device marked as online'
+    Assert (-not $script:remoteReady -and $script:remoteFaultLatched) 'intermediate signals wrongly restored'
+}
+Case 'expiry then ready clears pending retry, reverse order schedules' {
+    Reset-Fixture
+    Process-RemoteLine 'Remote session expired and could not be renewed'
+    Assert ($script:remoteFaultKind -eq 'session-lost' -and $script:autoReconnectAt) 'expiry'
+    Process-RemoteLine 'Desktop Commander Remote is connected'
+    Assert ($script:remoteReady -and -not $script:remoteFaultLatched -and -not $script:autoReconnectAt) 'ready cancellation'
+    Reset-Fixture
+    Process-RemoteLine 'Desktop Commander Remote is connected'
+    Process-RemoteLine 'Remote session expired and could not be renewed'
+    Assert (-not $script:remoteReady -and $script:remoteFaultKind -eq 'session-lost' -and $script:autoReconnectAt) 'reverse expiry'
+}
+Case 'local executor restart needs prior local-mcp fault, handshake is not ready' {
+    Reset-Fixture; Mark-RemoteReady
+    Process-RemoteLine 'Local Desktop Commander MCP went away (stdio closed)'
+    Assert ($script:remoteFaultKind -eq 'local-mcp' -and -not $script:remoteReady) 'executor loss'
+    Process-RemoteLine 'Connected to Desktop Commander MCP'
+    Assert ($script:remoteFaultLatched -and -not $script:remoteReady) 'premature handshake'
+    Process-RemoteLine 'Local Desktop Commander MCP restarted; device is online again'
+    Assert ($script:remoteReady -and -not $script:remoteFaultLatched -and $script:flashes -eq 2) 'executor recovery'
+    Process-RemoteLine 'Channel closed'
+    Process-RemoteLine 'Local Desktop Commander MCP restarted; device is online again'
+    Assert ($script:remoteFaultKind -eq 'transport-offline' -and -not $script:remoteReady) 'other fault mistaken for executor'
+}
+Case 'UTF-8 roundtrip and already-decoded Unicode split across chunks' {
+    Reset-Fixture
+    $start='🔧 Received tool call имя🚀: начало'
+    $success='✅ Tool call имя🚀 completed:'
+    $eol=[string][char]13+[string][char]10
+    $wire=$start+$eol+$success+$eol
+    $decoded=[Text.Encoding]::UTF8.GetString([Text.Encoding]::UTF8.GetBytes($wire))
+    Assert ($wire -ceq $decoded) 'synthetic UTF-8 roundtrip'
+    # Split inside the initial emoji surrogate pair and within the first line.
+    Add-RemoteChunk $decoded.Substring(0,1)
+    Assert ($script:activeToolCalls -eq 0) 'half surrogate consumed'
+    Add-RemoteChunk $decoded.Substring(1,$start.Length-2)
+    Assert ($script:activeToolCalls -eq 0) 'unterminated line consumed'
+    Add-RemoteChunk $decoded.Substring($start.Length-1)
+    Assert ($script:activeToolCalls -eq 0 -and $script:remoteReady) 'marker sequence'
+    Commit-CurrentEvent
+    Assert ($script:eventBlocks.Count -eq 2) 'unicode marker count'
+    Assert ($script:eventBlocks[0] -ceq ($start+$nl)) 'unicode start'
+    Assert ($script:eventBlocks[1] -ceq ($success+$nl)) 'unicode success'
+}
+Case 'split CR LF adds an extra blank line through early normalization' {
+    Reset-Fixture
+    $start='🔧 Received tool call splitcr: begin'
+    $cr=[string][char]13;$lf=[string][char]10
+    Add-RemoteChunk ($start+$cr+$lf)
+    $single=$script:currentEvent
+    Reset-Fixture
+    Add-RemoteChunk ($start+$cr)
+    Assert ($script:activeToolCalls -eq 1) 'early CR'
+    Add-RemoteChunk $lf
+    Assert ($script:activeToolCalls -eq 1) 'second LF affected count'
+    Assert ($script:currentEvent -ceq ($single+$nl)) 'expected duplicated EOL'
+}
+Case 'startup footer freezes header, marker-free live episode committed' {
+    Reset-Fixture
+    $footer='Run these in a new Terminal, or after disconnecting.'
+    $eol=[string][char]13+[string][char]10
+    Add-RemoteChunk ('START HEADER'+$eol+$footer+$eol)
+    Assert ($script:startupComplete -and $script:startupBlock.Contains($footer)) 'footer state'
+    Assert ($script:eventBlocks.Count -eq 0) 'startup recorded as event'
+    Add-RemoteChunk ('Channel error: broken'+$eol+'Recreating channel...'+$eol+'Presence tracked (device demo online)'+$eol)
+    Assert ($script:remoteReady -and -not $script:remoteFaultLatched) 'runtime health'
+    Assert ($script:eventBlocks.Count -eq 1 -and -not $script:currentEvent) 'episode not committed'
+    Assert ($script:eventBlocks[0].Contains('Channel error:') -and $script:eventBlocks[0].Contains('Recreating channel...') -and $script:eventBlocks[0].Contains('Presence tracked')) 'runtime missing'
+    Assert (-not $script:startupBlock.Contains('Channel error:')) 'runtime leaked to header'
+}
+Case 'marker before footer ends startup; late footer is activity text' {
+    Reset-Fixture
+    $lf=[string][char]10
+    Add-RemoteChunk ('BOOT'+$lf+'🔧 Received tool call early: begin'+$lf)
+    Assert ($script:startupComplete -and $script:startupBlock.Contains('BOOT')) 'marker startup boundary'
+    Assert (-not $script:startupBlock.Contains('Received tool call')) 'marker in header'
+    Add-RemoteChunk ('Run these in a new Terminal, or after disconnecting.'+$lf)
+    Assert ($script:currentEvent.Contains('Run these in a new Terminal')) 'late footer misplaced'
+    Process-RemoteLine '✅ Tool call early completed:'
+    Commit-CurrentEvent
+    Assert ($script:eventBlocks.Count -eq 2 -and $script:eventBlocks[0].StartsWith('🔧') -and $script:eventBlocks[1].StartsWith('✅')) 'event order'
+}
+Case 'startup probe boundary stops on footer or embedded Received text' {
+    Reset-Fixture
+    $eol=[string][char]13+[string][char]10
+    Set-StartupFromProbe ('BOOT'+$eol+'Run these in a new Terminal, or after disconnecting.'+$eol+'Channel error: not header')
+    Assert ($script:startupComplete -and -not $script:startupBlock.Contains('Channel error:')) 'footer probe'
+    Reset-Fixture
+    Set-StartupFromProbe ('BOOT'+$eol+'Some Received tool call x inside text'+$eol+'AFTER')
+    Assert ($script:startupComplete -and -not $script:startupBlock.Contains('Received tool call') -and -not $script:startupBlock.Contains('AFTER')) 'embedded text probe'
+}
+Case 'event ring keeps exact last six events in chronological order' {
+    Reset-Fixture; $script:startupComplete=$true
+    for($i=0;$i -lt 8;$i++){
+        Process-RemoteLine ('🔧 Received tool call seq'+$i+': begin')
+        Commit-CurrentEvent
+    }
+    Assert ($script:eventBlocks.Count -eq 6 -and $script:activeToolCalls -eq 8) 'ring count'
+    for($i=0;$i -lt 6;$i++){
+        $expected='🔧 Received tool call seq'+($i+2)+': begin'
+        Assert ($script:eventBlocks[$i].StartsWith($expected)) ('ring order '+$i)
+    }
+}
+Case 'long event truncates at 8000 and startup header caps at 30000' {
+    Reset-Fixture; $script:startupComplete=$true
+    Process-RemoteLine ('Payload: '+('Ж'*9000))
+    Process-RemoteLine 'ignored continuation'
+    Assert ($script:currentEventTruncated -and $script:currentEvent.Length -le 8000) 'event stream max'
+    Commit-CurrentEvent
+    Assert ($script:eventBlocks.Count -eq 1 -and $script:eventBlocks[0].Contains('полный вывод')) 'truncation marker'
+    Assert ($script:eventBlocks[0].Length -le 8000) 'visible event max'
+    Reset-Fixture
+    Add-RemoteChunk (('H'*30050)+[string][char]10)
+    Assert ($script:startupBlock.Length -eq 30000) 'header cap'
+}
+Case 'near-full appended event overflows internally, then commit clamps' {
+    Reset-Fixture; $script:startupComplete=$true
+    Process-RemoteLine ('x'*7995)
+    Process-RemoteLine 'second'
+    Assert ($script:currentEventTruncated -and $script:currentEvent.Length -gt 8000) 'internal overflow anomaly'
+    Commit-CurrentEvent
+    Assert ($script:eventBlocks.Count -eq 1 -and $script:eventBlocks[0].Length -le 8000) 'visible max'
+}
+
+# The minimum is an explicit coverage tripwire, not an assertion of real-system safety.
+$expectedMinimumCases=33
+$executedCases=$script:passed+$script:failed
+if($executedCases -lt $expectedMinimumCases){Write-Output "FAIL: only $executedCases cases; minimum $expectedMinimumCases"; exit 1}
 Write-Output "TOTAL: PASS=$script:passed FAIL=$script:failed"
 if($script:failed){exit 1}
