@@ -1,8 +1,8 @@
 # RDC Relay — coordination board
 
 **Stage:** Playbook refresh and reversible core stabilization · **Updated:** 2026-10-23
-**Status:** Architect **restricted GO** for PROG-004 pure complete-line classifier only. PROG-003A/REV-003 conditionally accepted; Architect independently re-ran 33 PASS/0 FAIL/exit 0 on STARMER. No real system tests.
-**Next:** Programmer may begin PROG-004 on separate branch based on PR #6 tests, with mandatory before-change full affected-branch matrix; independent REV-004 and Architect gate required before integration. PROG-005 blocked.
+**Status:** Programmer submitted restricted PROG-004 pure complete-line classifier for independent review: 46 fixture PASS/0 FAIL (33 retained + 13 added), 32 pure-classifier PASS, deterministic before/after states and ordered synthetic effects byte-identical; all scripts exit 0. Real system NOT CHECKED.
+**Next:** Reviewer independently performs REV-004 against PROG-004 chain PR and [evidence](../Tests/PROG-004-EQUIVALENCE.md); Architect then decides integration GO/NO-GO. PROG-005 blocked.
 
 ## REV-002 — independent findings (2026-10-23)
 
@@ -53,7 +53,7 @@
 | ARCH-013 | Stage owner-approved incremental behavior-preserving core-refactor plan | Architect | review | [Roadmap Stage B1](../docs/dev/planning/ROADMAP.md), [ADR-004](../DECISIONS.md); no product source changes |
 | PROG-003 | Characterize existing Remote lifecycle and log/health behavior with isolated deterministic tests; no core refactor | Programmer | done | **CONDITIONAL baseline accepted**: 12 PASS/0 FAIL, exit 0 repeated by Programmer, Architect and Reviewer on STARMER; fixture-only, live routes NOT CHECKED. [Draft PR #5](https://github.com/1rubass1/RDC-Relay/pull/5). Additional coverage tracked separately in PROG-003A. |
 | PROG-003A | Expand pre-refactor isolated characterization suite | Programmer | done | **Conditional PASS accepted by Architect**; 33 PASS / 0 FAIL / exit 0 re-run on STARMER, negative probes exit 1 checked by Reviewer; [PR #6](https://github.com/1rubass1/RDC-Relay/pull/6); actual system NOT CHECKED. |
-| PROG-004 | Pure classification of already-decoded complete Remote log lines with before/after parity | Programmer (not yet launched) | ready | **Architect restricted GO for task only:** all affected health/marker branches characterized *before* Source change; preserve quirks, ordering and side effects; no I/O, lifecycle, process, GUI or release; independent REV-004. |
+| PROG-004 | Pure classification of already-decoded complete Remote log lines with before/after parity | Programmer | review | Restricted extraction on `refactor/prog-004-remote-line-classifier`; **46 PASS / 0 FAIL / exit 0** old and new, **32** pure-classifier PASS, trace SHA-256 matches including ordered fake effects; existing UI lifecycle and Npx fixture PASS; [equivalence report](../Tests/PROG-004-EQUIVALENCE.md). REV-004/Architect gate pending, real process/I/O/UI NOT CHECKED. |
 | PROG-005 | Introduce explicit owned/adopted/external process contract and guarded lifecycle | Programmer (not yet launched) | blocked | **Not authorized by REV-002 / this decision.** Separate ownership contract and isolated real-process evidence required; never stop user's Remote. |
 | REV-002 | Independently review PROG-003 fixture fidelity and safety before narrow PROG-004 | Reviewer | done | **CONDITIONAL PASS** (characterization only); STARMER PowerShell 5.1: 12 PASS / 0 FAIL / exit 0; source/static/fixture review completed. Critical fixture gaps listed above; no live process touched. [PR #5](https://github.com/1rubass1/RDC-Relay/pull/5). |
 | REV-003 | Independent PROG-003A verification | Reviewer | done | **CONDITIONAL PASS** accepted for narrow parser gate; 33 PASS/0 FAIL/exit 0, negative controls exit 1, Source unchanged; [review](https://github.com/1rubass1/RDC-Relay/pull/6#issuecomment-6359740911). |
