@@ -1,5 +1,7 @@
 # PROG-006A-P1 — fake Host/GUI protected IPC, Windows PowerShell 5.1
 
+> **Updated P1A acceptance evidence (2026-10-23):** The 21 PASS / 3 NOT CHECKED below are historical **P1-only** results, not the current security acceptance classification. Following REV-006A-P1 and Architect M1–M4, the corrected [PROG-006A-P1A results](PROG-006A-P1A-RESULTS.md) report **20 PASS / 0 FAIL / 1 PARTIAL / 3 NOT CHECKED**, exit 0, plus a separate simulated ACL-creation failure PASS. P1-20 is PARTIAL; cross-session/SMB, physical UI and release remain NOT CHECKED. Two historical TEMP artifacts remain NOT CLEAN and were not modified. PR #18 stays Draft until REV-006A-P1A and Architect decision.
+
 **Programmer evidence, STARMER, 2026-10-23.** Branch `prototype/prog-006a-p1-secure-ipc-fake-host`, forked from `development@256532abc61df4666fadc26d418664d5b35fbb51`. Scope: **`Tests/Prototypes/ARCH-016-P1/` and test/documentation only**. No `Source/` modification, installed RDC Relay, Desktop Commander Remote, npx, network settings, `main`, `stable`, release or real Remote ownership.
 
 ## Implementation boundary

@@ -8,28 +8,40 @@ $psExe=Join-Path $PSHOME 'powershell.exe'
 $id=[guid]::NewGuid().ToString('N')
 $dir=Join-Path ([IO.Path]::GetTempPath()) ('RDC-P1-'+$id)
 $hostProcess=$null
-$pass=0;$fail=0;$notChecked=0
+$pass=0;$fail=0;$notChecked=0;$partial=0;$extraPass=0
+$script:ctrlSeq=0
 function Assert([bool]$ok,[string]$why){if(-not $ok){throw $why}}
+function CheckExtra([string]$code,[scriptblock]$body){
+    try{& $body;Write-Output ('PASS EXTRA '+$code);$script:extraPass++}
+    catch{Write-Output ('FAIL EXTRA '+$code+': '+$_.Exception.Message);$script:fail++}
+}
 function Check([string]$code,[scriptblock]$body){
     try{& $body;Write-Output ('PASS '+$code);$script:pass++}
     catch{Write-Output ('FAIL '+$code+': '+$_.Exception.Message);$script:fail++}
 }
 function NotChecked([string]$code,[string]$why){Write-Output ('NOT CHECKED '+$code+': '+$why);$script:notChecked++}
+function Partial([string]$code,[string]$why){Write-Output ('PARTIAL '+$code+': '+$why);$script:partial++}
+function CheckPartial([string]$code,[scriptblock]$body,[string]$limitation){
+    try{& $body;Partial $code $limitation}catch{Write-Output ('FAIL '+$code+': '+$_.Exception.Message);$script:fail++}
+}
 function Await([scriptblock]$predicate,[int]$deadline=11000) {
     $watch=[Diagnostics.Stopwatch]::StartNew()
     do {
         try{
             $r=Send 'TEST_STATE'
+            if($r.type -eq 'ERROR'){throw ('P1_SERVER_ERROR_'+$r.code)}
             if(& $predicate $r.payload){return $r.payload}
-        }catch{}
+        }catch{if($_.Exception.Message -like 'P1_SERVER_ERROR_*'){throw}}
         Start-Sleep -Milliseconds 140
     }while($watch.ElapsedMilliseconds -lt $deadline)
     throw ('Timed out: '+$deadline+'ms')
 }
 function Send([string]$verb,[long]$after=0,[string]$requestId=''){
     if(-not $script:auth){throw 'fixture control auth not initialized'}
-    if(-not $requestId){$requestId=[guid]::NewGuid().ToString('N')}
-    $raw=[P1Wire]::Request($verb,[string]$script:auth.nonce,[string]$script:auth.hostGeneration,$after,$requestId)
+    # P1Wire binds the requestId prefix to the monotonic sequence.
+    $script:ctrlSeq++
+    $raw=[P1Wire]::Request($verb,[string]$script:auth.nonce,[string]$script:auth.hostGeneration,$after,$requestId,[long]$script:ctrlSeq)
+    $script:lastRaw=$raw
     return [P1Wire]::Decode([P1Wire]::Call([string]$script:auth.pipe,$script:identity,$raw,900))
 }
 function RawFrame([byte[]]$header,[byte[]]$body) {
@@ -62,7 +74,7 @@ try {
     }
     $guiPath=Join-Path $dir 'Gui.ps1'
     $hostPath=Join-Path $dir 'Host.ps1'
-    $script:hostArgs='-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File "'+$hostPath+'" -FixtureRoot "'+$dir+'" -Instance '+$id+' -ControllerPid '+$PID+' -ControllerTicks '+[P1Wire]::Born($PID)
+    $script:hostArgs='-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File "'+$hostPath+'" -FixtureRoot "'+$dir+'" -Instance '+$id+' -ControllerPid '+$PID+' -ControllerTicks '+[P1Wire]::Born($PID)+' -ReplayLimit 8'
     $hostProcess=Start-Process -FilePath $psExe -ArgumentList $script:hostArgs -WindowStyle Hidden -PassThru
     $script:hostBirth=$hostProcess.StartTime.ToUniversalTime().Ticks
     $watch=[Diagnostics.Stopwatch]::StartNew()
@@ -77,9 +89,46 @@ try {
     $initial=Await {param($s) $s.tick -gt 1}
     Write-Output ('FIXTURE_HOST_PID='+$initial.hostPid+' GENERATION='+$initial.hostGeneration+' FAKE_REMOTE='+$initial.remoteId)
     Check 'P1-01' { Assert ($initial.guiPid -eq 0 -and $initial.fake -and $initial.tick -ge 2) 'fake-only host not ticking' }
+    CheckExtra 'P1A-ACL-AT-CREATION' {
+        $acl=Get-Acl -LiteralPath $controlPath
+        $rules=$acl.GetAccessRules($true,$false,[Security.Principal.SecurityIdentifier])
+        $sid=[P1Wire]::LogonSid()
+        $allowed=@($rules|Where-Object{$_.IdentityReference.Value -eq $sid -and $_.AccessControlType -eq 'Allow'})
+        $networkDenied=@($rules|Where-Object{$_.IdentityReference.Value -eq 'S-1-5-2' -and $_.AccessControlType -eq 'Deny'})
+        Assert ($acl.AreAccessRulesProtected -and $allowed.Count -gt 0 -and $networkDenied.Count -gt 0) 'private-on-create DACL not established'
+        # Separate disposable Host intentionally throws BEFORE file creation.
+        # No global ACL, existing directory, or user process is modified.
+        $otherId=[guid]::NewGuid().ToString('N')
+        $otherRoot=Join-Path $dir ('RDC-P1-'+$otherId)
+        [void](New-Item -ItemType Directory -Path $otherRoot -ErrorAction Stop)
+        foreach($name in @('P1Wire.cs','P1Core.cs','Host.ps1','Gui.ps1')){
+            Copy-Item -LiteralPath (Join-Path $src $name) -Destination $otherRoot
+        }
+        $otherHost=Join-Path $otherRoot 'Host.ps1'
+        $arg='-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File "'+$otherHost+'" -FixtureRoot "'+$otherRoot+'" -Instance '+$otherId+' -ControllerPid '+$PID+' -ControllerTicks '+[P1Wire]::Born($PID)+' -ReplayLimit 8 -FailAclBeforeWrite'
+        $bad=New-Object Diagnostics.Process
+        $bad.StartInfo.FileName=$psExe
+        $bad.StartInfo.Arguments=$arg
+        $bad.StartInfo.UseShellExecute=$false
+        $bad.StartInfo.CreateNoWindow=$true
+        try{
+            Assert ($bad.Start()) 'fault-injected Host process did not start'
+            Assert ($bad.WaitForExit(6000)) 'ACL-fault Host did not terminate within bounded time'
+            Assert ($bad.ExitCode -ne 0) 'simulated ACL failure erroneously passed'
+            Assert (-not(Test-Path -LiteralPath (Join-Path $otherRoot 'controller-auth.json'))) 'secret file created despite ACL failure'
+            Assert (@(Get-ChildItem -LiteralPath $otherRoot -Filter '*.secured').Count -eq 0) 'secret temporary file left after ACL failure'
+        }finally{if($bad.HasExited){$bad.Dispose()}}
+        Remove-Item -LiteralPath $otherRoot -Recurse -Force -ErrorAction Stop
+    }
     $opened=(Send 'TEST_OPEN').payload
     $a=GuiReady
-    Check 'P1-05' { Assert ($opened.hostGeneration -eq $initial.hostGeneration -and $a.guiBuild -eq 'A') 'valid framed snapshot / GUI A' }
+    $script:guiPipe='rdc-p1-gui-'+$id
+    Check 'P1-05' {
+        $reply=Send 'TEST_STATE'
+        $sent=[P1Wire]::Decode($script:lastRaw)
+        Assert ($reply.requestId -ceq $sent.requestId -and $reply.type -eq 'SNAPSHOT') 'response/requestId mismatch'
+        Assert ($opened.hostGeneration -eq $initial.hostGeneration -and $a.guiBuild -eq 'A') 'valid framed snapshot / GUI A'
+    }
     $same=(Send 'TEST_OPEN').payload
     Check 'P1-03' {Assert ($same.guiStarts -eq 1 -and $same.guiPid -eq $a.guiPid) 'duplicate open'}
     Check 'P1-10' {
@@ -95,6 +144,19 @@ try {
         $err=$false
         try{[void][P1Wire]::Call([string]$auth.pipe,$invalid,[P1Wire]::Request('TEST_STATE',[string]$auth.nonce,[string]$auth.hostGeneration),700)}catch{$err=$true}
         Assert $err 'GUI/fixture allowed a false Host OS PID'
+        # A live competing fake pipe server, hosted by THIS disposable test
+        # process, must not impersonate the real expected Host PID.
+        $rogueName='rdc-p1-gui-'+[guid]::NewGuid().ToString('N')
+        $rogue=[IO.Pipes.NamedPipeServerStream]::new($rogueName,[IO.Pipes.PipeDirection]::InOut,1,[IO.Pipes.PipeTransmissionMode]::Byte,[IO.Pipes.PipeOptions]::Asynchronous)
+        try {
+            $rejected=$false
+            try {
+                [void][P1Wire]::Call($rogueName,$script:identity,[P1Wire]::Request('GET_SNAPSHOT',[string]$auth.nonce,[string]$auth.hostGeneration),700)
+            }catch{
+                $rejected=($_.Exception.ToString().Contains('HOST_OS_IDENTITY'))
+            }
+            Assert $rejected 'actual rogue server process ID not rejected'
+        } finally {$rogue.Dispose()}
     }
     Check 'P1-13' {
         foreach($verb in @('STOP','LOGOUT','END_TEST_HOST','SCRIPT_EXEC','RESTART')){
@@ -104,10 +166,15 @@ try {
         Assert ((Send 'TEST_STATE').payload.hostPid -eq $initial.hostPid) 'host stopped by unknown verb'
     }
     Check 'P1-14' {
-        $idempotent=[guid]::NewGuid().ToString('N')
-        $first=Send 'TEST_STATE' 0 $idempotent
-        $again=Send 'TEST_STATE' 0 $idempotent
-        Assert ($first.type -eq 'SNAPSHOT' -and $again.code -eq 'REPLAY') 'repeated request ID allowed'
+        $first=Send 'TEST_STATE'
+        $replayBytes=$script:lastRaw
+        $script:veryOldRequest=$replayBytes
+        $again=[P1Wire]::Decode([P1Wire]::Call([string]$auth.pipe,$script:identity,$replayBytes,900))
+        Assert ($first.type -eq 'SNAPSHOT' -and $again.code -eq 'REPLAY') 'replayed wire request allowed'
+        $changed=[P1Wire]::Decode($replayBytes)
+        $changed['requestSequence']=[long]$script:ctrlSeq+1
+        $reused=[P1Wire]::Decode([P1Wire]::Call([string]$auth.pipe,$script:identity,[P1Wire]::Json.Serialize($changed),900))
+        Assert ($reused.code -eq 'REQUEST_ID_SEQUENCE') 'old request ID accepted with forged new sequence'
         $old=[P1Wire]::Request('TEST_STATE','expired-token',[string]$auth.hostGeneration)
         $r=[P1Wire]::Decode([P1Wire]::Call([string]$auth.pipe,$script:identity,$old,900))
         Assert ($r.code -eq 'UNAUTHORIZED') 'stale nonce allowed'
@@ -129,27 +196,64 @@ try {
         Assert ($r.type -eq 'SNAPSHOT') 'oversized/invalid frame froze host'
     }
     Check 'P1-07' {
-        RawFrame ([byte[]](1,2)) @()
-        RawFrame ([BitConverter]::GetBytes([uint32]16)) ([byte[]](123,34,120))
-        $before=(Send 'TEST_STATE').payload.tick
-        Start-Sleep -Milliseconds 1450
-        Assert ((Send 'TEST_STATE').payload.tick -gt $before) 'partial frame stalled heartbeat'
+        $t0=(Send 'TEST_STATE').payload
+        foreach($fragment in @('header','body')){
+            $c=New-Object IO.Pipes.NamedPipeClientStream('.',[string]$auth.pipe,[IO.Pipes.PipeDirection]::InOut)
+            try{
+                $c.Connect(900)
+                if($fragment -eq 'header'){$c.Write([byte[]](4,0),0,2)}
+                else{
+                    $part=[BitConverter]::GetBytes([uint32]32)
+                    $c.Write($part,0,4)
+                    $c.Write([byte[]](123,34,120),0,3)
+                }
+                $c.Flush()
+                # Deliberately HOLD the incomplete request open past server timeout.
+                Start-Sleep -Milliseconds 1450
+                $current=(Send 'TEST_STATE').payload
+                Assert ($current.tick -gt $t0.tick) ('Host heartbeat stalled for partial '+$fragment)
+                $t0=$current
+            } finally {$c.Dispose()}
+        }
+        $afterTimeout=Await {param($s) $s.ctlTimeouts -ge 2} 1500
+        Assert ($afterTimeout.ctlTimeouts -ge 2) 'held partial header/body did not reach server deadline'
     }
     Check 'P1-08' {
-        $c=New-Object IO.Pipes.NamedPipeClientStream('.',[string]$auth.pipe,[IO.Pipes.PipeDirection]::InOut)
+        $pulsePath=Join-Path $dir 'gui-pulse.txt'
+        $watch=[Diagnostics.Stopwatch]::StartNew()
+        while(-not(Test-Path $pulsePath) -and $watch.ElapsedMilliseconds -lt 3000){Start-Sleep -Milliseconds 100}
+        Assert (Test-Path $pulsePath) 'GUI timer pulse unavailable'
+        $before=[int]([IO.File]::ReadAllText($pulsePath))
+        # Two held GUI-pipe clients occupy the available workers. GUI IPC cannot
+        # be guaranteed a reply, but its WinForms Timer MUST still run.
+        $stalled=New-Object Collections.ArrayList
         try{
-            $c.Connect(800)
-            $start=(Send 'TEST_STATE').payload.tick
-            [void](Send 'TEST_DROP')
-            Start-Sleep -Milliseconds 1600
-            Assert ((Send 'TEST_STATE').payload.tick -gt $start) 'held connection stopped WinForms timer'
-        } finally {$c.Dispose()}
+            for($i=0;$i -lt 2;$i++){
+                $c=New-Object IO.Pipes.NamedPipeClientStream('.',[string]$script:guiPipe,[IO.Pipes.PipeDirection]::InOut)
+                $c.Connect(750);[void]$stalled.Add($c)
+            }
+            $hostBefore=(Send 'TEST_STATE').payload.tick
+            Start-Sleep -Milliseconds 650
+            $after=[int]([IO.File]::ReadAllText($pulsePath))
+            $hostAfter=(Send 'TEST_STATE').payload.tick
+            Assert ($after -gt $before -and $hostAfter -gt $hostBefore) 'GUI render timer or Host heartbeat blocked by silent IPC peers'
+        } finally {foreach($c in $stalled){$c.Dispose()}}
     }
     Check 'P1-09' {
+        $held=New-Object Collections.ArrayList
+        try{
+            for($i=0;$i -lt 2;$i++){
+                $c=New-Object IO.Pipes.NamedPipeClientStream('.',[string]$script:guiPipe,[IO.Pipes.PipeDirection]::InOut)
+                $c.Connect(800);[void]$held.Add($c)
+            }
+            Start-Sleep -Milliseconds 230
+            $s=Send 'TEST_STATE'
+            Assert ($s.payload.guiWorkerActive -le 2 -and $s.payload.guiWorkerPeak -le 2) 'concurrency limiter exceeded'
+            Assert ($s.payload.guiWorkerPeak -ge 2) 'simultaneous held clients were not exercised'
+        } finally {foreach($c in $held){$c.Dispose()}}
         $ticks=(Send 'TEST_STATE').payload.tick
         for($i=0;$i -lt 15;$i++){RawFrame ([BitConverter]::GetBytes([uint32]0)) @()}
-        $live=(Send 'TEST_STATE').payload
-        Assert ($live.tick -ge $ticks -and $live.guiWorkerActive -le 2) 'unbounded accept workers'
+        Assert ((Send 'TEST_STATE').payload.tick -ge $ticks) 'host unresponsive to frame flood'
     }
     Check 'P1-16' {
         $base=(Send 'TEST_STATE').payload
@@ -160,11 +264,18 @@ try {
     Check 'P1-17' {
         [void](Send 'TEST_BLOCK_EVENTS')
         for($i=0;$i -lt 270;$i++){[void](Send 'TEST_EVENT')}
+        [void](Send 'TEST_LARGE_EVENT')
         $now=(Send 'TEST_STATE').payload
-        Assert ($now.eventCount -le 256 -and $now.lastEventSeq -gt 256) 'event ring unbounded'
+        Assert ($now.eventCount -le 256 -and $now.lastEventSeq -gt 256 -and $now.lastEventTextLen -le 100) 'event ring or 200k synthetic log payload unbounded'
         [void](Send 'TEST_UNBLOCK_EVENTS')
         $recovered=Await {param($s) $s.guiGapReports -gt 0 -and $s.guiResyncSnapshots -gt 0} 6000
         Assert ($recovered.guiConnected -and $recovered.hostPid -eq $initial.hostPid) 'GUI event gap snapshot recovery'
+        Assert ($recovered.controllerEpoch -ge 10 -and $recovered.guiEpoch -ge 1 -and $recovered.replayLimit -eq 8) 'epoch rollover not exercised'
+        Assert ($recovered.remoteId -eq $initial.remoteId) 'fake session changed during rollovers'
+        $oldWire=$script:veryOldRequest
+        Assert (-not [string]::IsNullOrWhiteSpace($oldWire)) 'pre-rollover request not recorded'
+        $outdated=[P1Wire]::Decode([P1Wire]::Call([string]$auth.pipe,$script:identity,$oldWire,900))
+        Assert ($outdated.code -eq 'REPLAY') 'old epoch wire request accepted after multiple rotations'
     }
     Check 'P1-18' {
         $second=Start-Process -FilePath $psExe -ArgumentList $script:hostArgs -WindowStyle Hidden -PassThru
@@ -178,11 +289,11 @@ try {
         try{[void][P1Wire]::Call([string]$auth.pipe,$invalid,[P1Wire]::Request('TEST_STATE',[string]$auth.nonce,[string]$auth.hostGeneration),700)}catch{$blocked=$true}
         Assert $blocked 'stale rendezvous accepted'
     }
-    Check 'P1-20' {
+    CheckPartial 'P1-20' {
         $blocked=$false
         try{[void][P1Core]::new($dir,(Join-Path $env:windir 'notepad.exe'),[guid]::NewGuid().ToString('N'),$PID,[P1Wire]::Born($PID))}catch{$blocked=$true}
         Assert $blocked 'external GUI path accepted'
-    }
+    } 'Outside-root rejection verified. Real reparse/TOCTOU swap not performed.'
     $after=CloseGui
     $gsrc=[IO.File]::ReadAllText($guiPath,[Text.Encoding]::UTF8)
     Assert ($gsrc.Contains("$"+"GuiBuild='A'")) 'version marker absent'
@@ -311,6 +422,6 @@ try {
         catch{Write-Output ('CLEANUP_FAIL: '+$_.Exception.Message);$fail++}
     } else {Write-Output ('DIAGNOSTIC_DIR='+$dir)}
 }
-if(-not $InjectFailureAtGui -and ($pass+$fail+$notChecked) -lt 24){$fail++;Write-Output 'FAIL: incomplete 24-row acceptance matrix'}
-Write-Output ('TOTAL ARCH-016-P1 MATRIX: PASS='+$pass+' FAIL='+$fail+' NOT_CHECKED='+$notChecked)
+if(-not $InjectFailureAtGui -and ($pass+$fail+$partial+$notChecked) -ne 24){$fail++;Write-Output 'FAIL: expected exactly 24 distinct acceptance outcomes'}
+Write-Output ('TOTAL ARCH-016-P1 MATRIX: PASS='+$pass+' FAIL='+$fail+' PARTIAL='+$partial+' NOT_CHECKED='+$notChecked+' EXTRA_PASS='+$extraPass)
 if($fail){exit 1}

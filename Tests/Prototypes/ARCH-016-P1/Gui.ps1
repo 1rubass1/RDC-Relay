@@ -7,7 +7,8 @@ try {
   Add-Type -Path (Join-Path $PSScriptRoot 'P1Wire.cs') -ReferencedAssemblies @('System.Core.dll','System.Web.Extensions.dll','System.dll','System.Security.dll')
   $ticket=[P1Wire]::Decode([IO.File]::ReadAllText($TicketPath,[Text.Encoding]::UTF8))
   $serverIdentity=([string]$ticket.hostPid)+'|'+([string]$ticket.hostTicks)+'|'+([string]$ticket.hostSession)
-  $req=[P1Wire]::Decode([P1Wire]::Request('HELLO',[string]$ticket.nonce,[string]$ticket.hostGeneration))
+  $script:sequence=1
+  $req=[P1Wire]::Decode([P1Wire]::Request('HELLO',[string]$ticket.nonce,[string]$ticket.hostGeneration,0,$null,$script:sequence))
   $req['guiBuild']=$GuiBuild
   $joined=[P1Wire]::Decode([P1Wire]::Call([string]$ticket.pipe,$serverIdentity,[P1Wire]::Json.Serialize($req),1200))
   if($joined.type -ne 'WELCOME'){throw ('Host rejected HELLO: '+$joined.code)}
@@ -31,9 +32,15 @@ $script:lastEvent=0
 $script:resyncs=0
 $script:nextVerb='GET_SNAPSHOT'
 $script:expectedGeneration=[string]$ticket.hostGeneration
+$script:guiTimerTicks=0
+$script:pulseFile=Join-Path $PSScriptRoot 'gui-pulse.txt'
 $timer=New-Object Windows.Forms.Timer
 $timer.Interval=115
 $timer.Add_Tick({
+  $script:guiTimerTicks++
+  if($TestMode -and $script:guiTimerTicks%2 -eq 0){
+    try{[IO.File]::WriteAllText($script:pulseFile,[string]$script:guiTimerTicks)}catch{}
+  }
   # Timer only checks COMPLETED tasks. Never synchronous frame I/O on UI thread.
   if($script:poll -and $script:poll.IsCompleted) {
     try {
@@ -69,7 +76,8 @@ $timer.Add_Tick({
     $script:poll=$null
   }
   if(-not $script:poll) {
-    $request=[P1Wire]::Request($script:nextVerb,[string]$ticket.nonce,[string]$ticket.hostGeneration,[long]$script:lastEvent)
+    $script:sequence++
+    $request=[P1Wire]::Request($script:nextVerb,[string]$ticket.nonce,[string]$ticket.hostGeneration,[long]$script:lastEvent,$null,[long]$script:sequence)
     $script:poll=[P1Wire]::CallBackground([string]$ticket.pipe,$serverIdentity,$request,750)
   }
 })

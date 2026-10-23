@@ -16,8 +16,12 @@ public sealed class P1Core : IDisposable {
   readonly long controllerTicks;
   readonly string gen=Guid.NewGuid().ToString("N"),remote=Guid.NewGuid().ToString("N"),hostId=Guid.NewGuid().ToString("N");
   readonly string ctlNonce=Guid.NewGuid().ToString("N");
+  readonly int replayLimit;
+  readonly bool failAclForTests;
+  long lastCtlSeq=0,lastGuiSeq=0;
+  int ctlEpoch=0,guiEpoch=0;
   readonly List<Dictionary<string,object>> events=new List<Dictionary<string,object>>();
-  readonly HashSet<string> seen=new HashSet<string>();
+  readonly HashSet<string> seenCtl=new HashSet<string>(),seenGui=new HashSet<string>();
   readonly ApplicationContext context=new ApplicationContext();
   readonly NotifyIcon icon=new NotifyIcon();
   readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();
@@ -29,13 +33,15 @@ public sealed class P1Core : IDisposable {
   bool stopRequested=false,drop=false,needSnapshot=false,suspendEvents=false;
   int guiGapReports=0,guiResyncSnapshots=0;
   Mutex onlyHost;
-  public P1Core(string dir,string gui,string id,int parentPid,long parentTicks) {
+  public P1Core(string dir,string gui,string id,int parentPid,long parentTicks,int epochLimit,bool simulateAclFailure) {
+    if(epochLimit<4||epochLimit>8192)throw new ArgumentOutOfRangeException("epochLimit");
+    replayLimit=epochLimit;failAclForTests=simulateAclFailure;
     root=Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar)+Path.DirectorySeparatorChar;
     guiFile=Path.GetFullPath(gui);
     instance=id;controllerPid=parentPid;controllerTicks=parentTicks;controllerSession=P1Wire.Session(parentPid);
     ctlFile=Path.Combine(root,"controller-auth.json");
     if(!System.Text.RegularExpressions.Regex.IsMatch(id,@"^[0-9a-f]{32}$")||
-       !Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar)).StartsWith("RDC-P1-",StringComparison.Ordinal)||
+       !System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar)),@"^RDC-P1-[0-9a-f]{32}$")||
        !guiFile.StartsWith(root,StringComparison.OrdinalIgnoreCase)||!File.Exists(guiFile)||ContainsReparsePoint(root,guiFile))
       throw new InvalidOperationException("DISPOSABLE_ROOT_ONLY");
     bool created;
@@ -53,13 +59,32 @@ public sealed class P1Core : IDisposable {
     }
     return false;
   }
-  static void PrivateFile(string path,string json){
-    File.WriteAllText(path,json,new System.Text.UTF8Encoding(false));
+  void PrivateFile(string path,string json){
+    // ACL is built and validated BEFORE opening/creating the file. Windows
+    // FileStream(CreateNew,...,FileSecurity) applies the DACL at creation.
+    // Never write secrets to an inherited-ACL file then attempt to tighten.
     FileSecurity acl=new FileSecurity();acl.SetAccessRuleProtection(true,false);
     var sid=new SecurityIdentifier(P1Wire.LogonSid());
     acl.AddAccessRule(new FileSystemAccessRule(sid,FileSystemRights.FullControl,AccessControlType.Allow));
     acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid,null),FileSystemRights.Read,AccessControlType.Deny));
-    File.SetAccessControl(path,acl);
+    if(failAclForTests)throw new UnauthorizedAccessException("SIMULATED_ACL_BEFORE_CREATE");
+    string temp=path+"."+Guid.NewGuid().ToString("N")+".secured";
+    try{
+      byte[] raw=new System.Text.UTF8Encoding(false,true).GetBytes(json);
+      using(FileStream stream=new FileStream(temp,FileMode.CreateNew,FileSystemRights.Write,
+           FileShare.None,4096,FileOptions.WriteThrough,acl)){
+        stream.Write(raw,0,raw.Length);stream.Flush(true);
+      }
+      if(File.Exists(path)){
+        // Atomic swap to an already-private file; do not transiently expose
+        // the new nonce via a public preexisting path.
+        File.Replace(temp,path,null);
+      }else{
+        File.Move(temp,path);
+      }
+    }finally{
+      if(File.Exists(temp))File.Delete(temp);
+    }
   }
   Dictionary<string,object> Snapshot() {
     return new Dictionary<string,object> {
@@ -71,8 +96,10 @@ public sealed class P1Core : IDisposable {
       {"guiBuild",guiVersion},{"guiStarts",guiStarts},{"guiCloses",guiCloses},
       {"guiFailures",guiFailures},{"guiConnected",guiConnected==1},{"guiState",state},
       {"closeGeneration",closeGen},{"eventCount",events.Count},
-      {"guiWorkerActive",guiServer==null?0:guiServer.Active},{"guiRejected",guiServer==null?0:guiServer.Rejected},
-      {"guiTimeouts",guiServer==null?0:guiServer.Timeouts},{"guiGapReports",guiGapReports},{"guiResyncSnapshots",guiResyncSnapshots}
+      {"guiWorkerActive",guiServer==null?0:guiServer.Active},{"guiWorkerPeak",guiServer==null?0:guiServer.PeakActive},{"guiRejected",guiServer==null?0:guiServer.Rejected},
+      {"ctlTimeouts",ctlServer==null?0:ctlServer.Timeouts},{"lastEventTextLen",events.Count>0?((string)events[events.Count-1]["text"]).Length:0},
+      {"guiTimeouts",guiServer==null?0:guiServer.Timeouts},{"guiGapReports",guiGapReports},{"guiResyncSnapshots",guiResyncSnapshots},
+      {"replayLimit",replayLimit},{"controllerEpoch",ctlEpoch},{"guiEpoch",guiEpoch},{"controllerLastSeq",lastCtlSeq},{"guiLastSeq",lastGuiSeq}
     };
   }
   static string Err(string code,string id){
@@ -91,6 +118,7 @@ public sealed class P1Core : IDisposable {
       if(guiConnected==0&&state=="SPAWNING")guiFailures++;
       guiCloses++;
       child.Dispose();child=null;guiPid=0;guiTicks=0;guiNonce="";guiConnected=0;guiVersion="";state="NONE";
+      lastGuiSeq=0;guiEpoch=0;seenGui.Clear();
       Event("gui","exited");
     }
   }
@@ -137,16 +165,28 @@ public sealed class P1Core : IDisposable {
         if(!Registered(pid,session)||P1Wire.String(req,"nonce")!=guiNonce)return Err("UNAUTHORIZED",id);
       }
       if(P1Wire.String(req,"hostGeneration")!=gen)return Err("STALE_GENERATION",id);
-      if(seen.Contains(id))return Err("REPLAY",id);
-      // Fail closed if the bounded replay ledger is exhausted; never clear it
-      // and silently authorize a previously seen requestId in this generation.
-      if(seen.Count>=8192)return Err("REKEY_REQUIRED",id);
-      seen.Add(id);
+      // Sequence is monotonic per verified OS client. Epoch = floor((seq-1)/N).
+      // An old-epoch request is ALWAYS rejected by lastSeq, even after the
+      // bounded per-epoch requestId ledger rotates. A reused requestId with a
+      // freshly forged sequence fails the requestId/sequence binding.
+      long sequence=P1Wire.Number(req,"requestSequence");
+      long prior=control?lastCtlSeq:lastGuiSeq;
+      if(sequence<=prior)return Err("REPLAY",id);
+      if(sequence<=0||sequence==long.MaxValue||sequence-prior>1000000)return Err("INVALID_SEQUENCE",id);
+      if(id.Substring(0,16)!=sequence.ToString("x16"))return Err("REQUEST_ID_SEQUENCE",id);
+      int epoch=checked((int)((sequence-1)/replayLimit));
+      HashSet<string> ledger=control?seenCtl:seenGui;
+      int priorEpoch=control?ctlEpoch:guiEpoch;
+      if(epoch<priorEpoch)return Err("STALE_EPOCH",id);
+      if(epoch>priorEpoch){ledger.Clear();if(control)ctlEpoch=epoch;else guiEpoch=epoch;}
+      if(!ledger.Add(id))return Err("REPLAY",id);
+      if(control)lastCtlSeq=sequence;else lastGuiSeq=sequence;
       if(control){
         if(verb=="TEST_STATE")return Ok("SNAPSHOT",id,Snapshot());
         if(verb=="TEST_OPEN"){Open();return Ok("SNAPSHOT",id,Snapshot());}
         if(verb=="TEST_CLOSE"){closeGen++;return Ok("SNAPSHOT",id,Snapshot());}
         if(verb=="TEST_EVENT"){Event("fixture","synthetic");return Ok("SNAPSHOT",id,Snapshot());}
+        if(verb=="TEST_LARGE_EVENT"){Event("fixture",new string('X',200000));return Ok("SNAPSHOT",id,Snapshot());}
         if(verb=="TEST_END"){
           if(guiPid!=0)return Err("GUI_STILL_ALIVE",id);
           stopRequested=true;return Ok("ACK",id,Snapshot());

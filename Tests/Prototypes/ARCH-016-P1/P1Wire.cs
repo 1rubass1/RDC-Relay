@@ -112,9 +112,10 @@ public static class P1Wire {
     object x;if(!d.TryGetValue(key,out x)||x==null)return fallback;
     try {return Convert.ToInt64(x);}catch{return fallback;}
   }
-  public static string Request(string verb,string nonce,string generation,long after=0,string id=null){
+  public static string Request(string verb,string nonce,string generation,long after=0,string id=null,long sequence=0){
+    string requestId=System.String.IsNullOrEmpty(id)?(sequence.ToString("x16")+Guid.NewGuid().ToString("N").Substring(0,16)):id;
     return Json.Serialize(new Dictionary<string,object>(){
-      {"type",verb},{"protocol",1},{"requestId",id??Guid.NewGuid().ToString("N")},
+      {"type",verb},{"protocol",1},{"requestId",requestId},{"requestSequence",sequence},
       {"nonce",nonce},{"hostGeneration",generation},{"afterSequence",after}
     });
   }
@@ -130,6 +131,9 @@ public static class P1Wire {
       if(!t.Wait(timeout+100))throw new TimeoutException("CLIENT_WRITE");
       Task<string> reply=Read(client,MaxResponse,timeout);
       if(!reply.Wait(timeout+100))throw new TimeoutException("CLIENT_READ");
+      // Failure must not silently associate a stale/unrelated response.
+      var sent=Decode(json);var received=Decode(reply.Result);
+      if(String(sent,"requestId")!=String(received,"requestId"))throw new InvalidDataException("RESPONSE_ID_MISMATCH");
       return reply.Result;
     }
   }
@@ -141,7 +145,7 @@ public sealed class P1Server : IDisposable {
   readonly CancellationTokenSource stop=new CancellationTokenSource();
   readonly SemaphoreSlim slots=new SemaphoreSlim(2,2);
   readonly List<Task> listeners=new List<Task>();
-  public int Active=0,Rejected=0,Timeouts=0;
+  public int Active=0,Rejected=0,Timeouts=0,PeakActive=0;
   public P1Server(string pipe,Func<Dictionary<string,object>,int,int,string> handler){
     if(!System.Text.RegularExpressions.Regex.IsMatch(pipe,@"^rdc-p1-(gui|ctl)-[a-f0-9]{32}$"))throw new ArgumentException("prototype pipe prefix");
     name=pipe;dispatch=handler;
@@ -163,7 +167,9 @@ public sealed class P1Server : IDisposable {
   }
   async Task ServeOwned(NamedPipeServerStream p) {try{await Serve(p);}finally{p.Dispose();try{slots.Release();}catch{}}}
   async Task Serve(NamedPipeServerStream p) {
-    Interlocked.Increment(ref Active);
+    int current=Interlocked.Increment(ref Active);
+    int previous;
+    while((previous=PeakActive)<current && Interlocked.CompareExchange(ref PeakActive,current,previous)!=previous){}
     try {
       // Windows kernel-observed peer identity is checked BEFORE parsing JSON.
       int clientPid=P1Wire.PeerPid(p,true),clientSession=P1Wire.PeerSession(p,true);
