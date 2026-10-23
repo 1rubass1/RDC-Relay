@@ -7,7 +7,7 @@ $source=Join-Path (Split-Path -Parent $PSScriptRoot) 'Source/remote-window.ps1'
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($source,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw "Source parser errors: $($errors.Count)"}
-$functionNames=@('Find-ExistingRemote','Start-Remote','Stop-Remote','Begin-RemoteOperation','Update-RemoteOperation','Complete-RemoteOperation','Set-RemoteActionsEnabled','Reset-RemoteHandle')
+$functionNames=@('Find-ExistingRemote','Start-Remote','Stop-Remote','Begin-RemoteOperation','Update-RemoteOperation','Complete-RemoteOperation','Set-RemoteActionsEnabled','Reset-RemoteHandle','Refresh-Window')
 foreach($name in $functionNames){
     $n=$ast.Find({param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -eq $name},$true)
     if(-not $n){throw "Missing source function: $name"}
@@ -20,7 +20,7 @@ function Case([string]$name,[scriptblock]$action){
     catch { Write-Output ('FAIL: '+$name+' :: '+$_.Exception.Message);$script:failed++ }
 }
 function New-FakeProcess([int]$id=101,[bool]$exited=$false,[int]$exitCode=0) {
-    $p=[pscustomobject]@{Id=$id;StartTime=[datetime]'2025-01-01';HasExited=$exited;ExitCode=$exitCode;Disposed=$false;RefreshCount=0}
+    $p=[pscustomobject]@{Id=$id;StartTime=[datetime]'2025-01-01';HasExited=$exited;ExitCode=$exitCode;Disposed=$false;RefreshCount=0;MainWindowHandle=[IntPtr]::Zero}
     $p|Add-Member ScriptMethod Dispose {$this.Disposed=$true}
     $p|Add-Member ScriptMethod Refresh {$this.RefreshCount++}
     return $p
@@ -56,6 +56,12 @@ function Clear-RemoteFault {$script:faultKind='';$script:faultCleared++}
 function Set-RemoteFault($kind,$reason,$retry){$script:faultKind=$kind;$script:faultRetry=[bool]$retry}
 function Schedule-AutoReconnect($reason){$script:scheduled++}
 function Set-DividerFaultState([bool]$on){$script:faultVisual=$on}
+function Apply-SystemFrameTheme {}
+function Refresh-DividerActivitySession {$script:activityRefreshes++}
+function Invoke-AutoReconnect {$script:reconnectInvocations++}
+function Update-RdcUpdateNoticePolling {throw 'updater forbidden in fixture'}
+function Repair-DesktopCommanderMissingNpxPackageJson {return $false}
+function Test-DesktopCommanderBootstrapFailure {return $false}
 $logPath='C:\Fixture\RDC-mock-only-remote.log'
 $root='C:\Fixture'
 $desktopCommanderPackage='mock-package-only'
@@ -66,6 +72,8 @@ $finish=[pscustomobject]@{Enabled=$true}
 $accountButton=[pscustomobject]@{Enabled=$true}
 $switchAccountItem=[pscustomobject]@{Enabled=$true}
 $reconnectItem=[pscustomobject]@{Enabled=$true}
+$vScroll=[pscustomobject]@{IsDragging=$false}
+$hScroll=[pscustomobject]@{IsDragging=$false}
 $log=[pscustomobject]@{}
 $log|Add-Member ScriptMethod GetViewPosition {return [Drawing.Point]::new(11,22)}
 $form=[pscustomobject]@{CloseCount=0}
@@ -86,6 +94,7 @@ function Reset-Fixture {
     $script:faultRetry=$false;$script:readCalls=0;$script:scheduled=0;$script:accountCleared=0
     $script:state='';$script:runtimeDisplay='';$script:stopped=$false;$script:starting=$false
     $script:finishMode=$false;$script:freezeViewport=$false;$script:smartFollow=$true
+    $script:enableUpdateNotice=$false;$script:uiInteracting=$false;$script:activityRefreshes=0;$script:reconnectInvocations=0
     $script:userHorizontalX=0;$script:closeRequested=$false;$script:startTime=(Get-Date)
     $form.CloseCount=0
     foreach($button in @($finish,$accountButton,$switchAccountItem,$reconnectItem)){$button.Enabled=$true}
@@ -256,7 +265,59 @@ Case 'supervisor reconnect preserves state of fault only until operation dispatc
     Assert ($script:commandCalls.Count -eq 1 -and $script:stopping) 'reconnect did not stop'
     Assert ($script:state -eq 'Переподключение…') 'wrong reconnect label'
 }
-$minimum=22
+Case 'refresh alive hidden process is monitored without window-handle check or hang kill' {
+    Reset-Fixture
+    $script:proc=New-FakeProcess 701
+    $script:proc.MainWindowHandle=[IntPtr]::Zero
+    $script:remoteConnectDeadline=(Get-Date).AddSeconds(-1)
+    Refresh-Window
+    Assert ($script:proc.RefreshCount -eq 1 -and $script:state -eq 'Подключается…') 'alive no-window monitor'
+    Assert (-not $script:remoteConnectDeadline -and $script:reconnectInvocations -eq 0) 'deadline wrongly treated as transport fault'
+    Assert ($script:commandCalls.Count -eq 0 -and $script:faultKind -eq '') 'hung/no-window started process action'
+}
+Case 'refresh alive Remote ready is healthy despite hidden GUI' {
+    Reset-Fixture
+    $script:proc=New-FakeProcess 702;$script:remoteReady=$true
+    Refresh-Window
+    Assert ($script:state -eq 'Работает' -and $script:proc.RefreshCount -eq 1) 'ready state'
+    Assert ($script:commandCalls.Count -eq 0 -and $script:reconnectInvocations -eq 0) 'undesired supervisor action'
+}
+Case 'refresh alive process displays fault/auth before connecting state' {
+    Reset-Fixture
+    $script:proc=New-FakeProcess 703;$script:remoteFaultLatched=$true
+    $script:remoteFaultReason='mock transport fault'
+    Refresh-Window
+    Assert ($script:state -eq 'Проблема связи') 'fault priority'
+    $script:remoteFaultLatched=$false;$script:remoteInteractiveAuth=$true
+    Refresh-Window
+    Assert ($script:state -eq 'Ожидание авторизации…') 'auth priority'
+}
+Case 'refresh exited process latches process-exit fault exactly once' {
+    Reset-Fixture;$script:proc=New-FakeProcess 704 $true 9
+    Refresh-Window
+    Assert ($script:faultKind -eq 'process-exit' -and $script:faultRetry -and $script:exitHandled) 'process-exit classification'
+    Assert ($script:proc.RefreshCount -eq 1 -and $script:logCalls.Count -eq 1) 'exit log'
+    Refresh-Window
+    Assert ($script:proc.RefreshCount -eq 2 -and $script:logCalls.Count -eq 1) 'double exit report'
+}
+Case 'refresh returns early during initialization, active operation or UI drag' {
+    Reset-Fixture;$script:proc=New-FakeProcess 705
+    $script:initializing=$true
+    function Complete-RuntimeInitialization {$script:initPolls++}
+    $script:initPolls=0
+    Refresh-Window
+    Assert ($script:initPolls -eq 1 -and $script:proc.RefreshCount -eq 0) 'initializing case'
+    $script:initializing=$false;$script:remoteOperation=[pscustomobject]@{Action='close';Stage='stopping';Process=$null;Deadline=(Get-Date).AddSeconds(3);Failure=''}
+    # Do not invoke an operation against any PID: mock the operation update.
+    function Update-RemoteOperation {$script:opPolls++}
+    $script:opPolls=0
+    Refresh-Window
+    Assert ($script:opPolls -eq 1 -and $script:proc.RefreshCount -eq 0) 'operation priority'
+    $script:remoteOperation=$null;$script:uiInteracting=$true
+    Refresh-Window
+    Assert ($script:proc.RefreshCount -eq 0 -and $script:logCalls.Count -eq 0) 'UI drag priority'
+}
+$minimum=27
 $executed=$script:passed+$script:failed
 if($executed -lt $minimum){Write-Output ('FAIL: test count '+$executed+' below '+$minimum);exit 1}
 Write-Output ('TOTAL PROG-005A PROCESS: PASS='+$script:passed+' FAIL='+$script:failed)
