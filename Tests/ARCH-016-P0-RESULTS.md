@@ -51,3 +51,29 @@ Automated result: **15 PASS, 0 FAIL, exit 0**. GUI source build B SHA-256 and pr
 - No physical UI visibility, accessibility or DPI acceptance in headless automation; test mode leaves icon hidden.
 
 This is **technical feasibility**, not authorization for PROG-006A integration or release. The separate PROG-006B full Exit and PROG-005 process-ownership scopes remain BLOCKED. Reviewer and Architect must evaluate the limits above.
+
+## ARCH-016-P0A — bounded fixture cleanup and runner validation (2026-10-23)
+
+P0A modifies **only prototype test utilities and evidence** in the same draft PR #15. No changes to `Source/`, shipped launcher, installed RDC Relay or live Remote. Target remains STARMER Windows PowerShell **5.1.26100.9711**.
+
+- `Tests/Test-Arch016P0Lifecycle.ps1` now requires **at least 15 executed test cases** (`$expectedMinimumCases=15`). The final exit code is nonzero for *any failed assertion*, early harness exception, incomplete case count, failed host cleanup, remaining fixture process, unverifiable ownership or unreleased IPC.
+- Failure-path cleanup validates the **specific child Host handle returned by the test's `Start-Process`** against PID, creation-time and read-only `Win32_Process` command line (unique disposable `TrayHost.ps1`, `Gui.ps1`, `-PipeName` and `-TestMode`). Only the verified fixture Host receives its existing cooperative `CLOSE_GUI` and `END_TEST_HOST` test commands. **No `Stop-Process`, `taskkill`, forced termination or operations on unrelated processes.**
+- The host is given **7000 ms** to exit after a bounded cooperative request; GUI close is polled for **4500 ms**. An independent read-only WMI scan waits up to **3500 ms** for all processes executing the **unique test TEMP scripts** to disappear, including GUI children if Host crashed. Exit without residuals is recorded as `CLEANUP_REMAINING_PROCESS_COUNT=0`; any remaining PID and parent PID is reported. The test additionally probes local Named Pipe connection availability without waiting for a response and checks that the Host has exited. Unverifiable ownership/cleanup → FAIL, **retain diagnostics**, escalate; never kill.
+- Prototype client in `Ipc.ps1` now also applies a deadline to `ReadLineAsync().Wait(TimeoutMs)`, so a missing response cannot block the harness indefinitely. **Server-side synchronous unbounded `ReadLine`, post-read frame-size guard and weak production IPC identity remain unchanged and unsafe for product use**; this is **not** an IPC security fix.
+
+### Reproduced controls on STARMER
+
+| Route | Measured outcome | Status |
+| --- | --- | --- |
+| Full positive lifecycle | **15 PASS, 0 FAIL, exit 0**; `CLEANUP_HOST_IDENTITY=VERIFIED`, `CLEANUP_REMAINING_PROCESS_COUNT=0`, `CLEANUP_PIPE_RELEASED=PASS`, `CLEANUP_RESULT=PASS` | PASS |
+| Disposable runner copy with one skipped check | **14 PASS, 1 FAIL, process exit 1**; explicit `FAIL: coverage minimum 15 but only 14 cases executed`; host/pipe/children cleaned | PASS (negative control) |
+| Disposable runner copy with injected failing assertion **while GUI A is running** | Expected runner FAIL/exit 1, cooperative GUI close requested for its owned PID, host/pipe/children cleaned | PASS (negative control, independently rerunnable) |
+| `Test-Arch016P0ANegative.ps1` control harness | Validates both nonzero exit codes, exact runner failure signatures and zero fixture-owned processes/pipe before deleting **only its own** temporary negative scripts and evidence folders | PASS |
+| Old negative-harness implementation flaw (diagnostic history) | Initial negative runner used PowerShell 5.1 `Start-Process -RedirectStandardOutput -PassThru`, which returned a blank `ExitCode` despite the subprocess printing FAIL; changed **test driver only** to .NET `Diagnostics.Process`, async stdout/stderr draining and `WaitForExit(65000)`. The unsuccessful early run's uniquely tagged artifacts were independently checked for no live process and removed by exact path. | Fixed in test driver |
+
+To repeat:
+
+    powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File Tests/Test-Arch016P0Lifecycle.ps1
+    powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File Tests/Test-Arch016P0ANegative.ps1
+
+**NOT CHECKED / still blocked:** active user Remote or production process cleanup, real cross-session or remote named pipe misuse, malicious client hanging server-side `ReadLine`, real Explorer icon / user X, installed GUI, release and actual production ownership semantics. The prototype never force-stops even a verified test-owned PID if graceful exit fails. This is a **deliberate explicit FAIL/escalation boundary**, not silent cleanup. Await **REV-016-P0A** and an Architect merge decision; PR #15 stays draft.
