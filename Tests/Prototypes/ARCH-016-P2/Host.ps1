@@ -5,14 +5,15 @@ param([Parameter(Mandatory=$true)][string]$FixtureRoot,
       [Parameter(Mandatory=$true)][long]$ControllerTicks,
       [int]$ReplayLimit=8192,
       [switch]$FailAclBeforeWrite,
-      [switch]$InteractiveDemo)
+      [switch]$InteractiveDemo,
+      [switch]$FailGuiTicketBeforeWrite)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 Add-Type -Path (Join-Path $PSScriptRoot 'P1Wire.cs'),(Join-Path $PSScriptRoot 'P1Core.cs') -ReferencedAssemblies @('System.Core.dll','System.Web.Extensions.dll','System.dll','System.Security.dll','System.Windows.Forms.dll','System.Drawing.dll')
 $gui=Join-Path $FixtureRoot 'Gui.ps1'
 $core=$null
 try {
-  $core=[P1Core]::new($FixtureRoot,$gui,$Instance,$ControllerPid,$ControllerTicks,$ReplayLimit,[bool]$FailAclBeforeWrite,[bool]$InteractiveDemo)
+  $core=[P1Core]::new($FixtureRoot,$gui,$Instance,$ControllerPid,$ControllerTicks,$ReplayLimit,[bool]$FailAclBeforeWrite,[bool]$InteractiveDemo,[bool]$FailGuiTicketBeforeWrite)
   $core.Run()
 } catch {
   [Console]::Error.WriteLine(('P1_HOST_FAILED: '+$_.Exception.Message))

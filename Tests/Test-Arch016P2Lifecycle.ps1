@@ -68,7 +68,7 @@ function WmiResidual {
     })
 }
 try {
-    [void](New-Item -ItemType Directory -Force -Path $dir)
+    [void](New-Item -ItemType Directory -Path $dir -ErrorAction Stop)
     foreach($name in @('P1Wire.cs','P1Core.cs','Host.ps1','Gui.ps1')){
         Copy-Item -LiteralPath (Join-Path $src $name) -Destination $dir
     }
@@ -303,9 +303,9 @@ try {
     }
     CheckPartial 'P1-20' {
         $blocked=$false
-        try{[void][P1Core]::new($dir,(Join-Path $env:windir 'notepad.exe'),[guid]::NewGuid().ToString('N'),$PID,[P1Wire]::Born($PID))}catch{$blocked=$true}
+        try{[void][P1Core]::new($dir,(Join-Path $env:windir 'notepad.exe'),[guid]::NewGuid().ToString('N'),$PID,[P1Wire]::Born($PID),8192,$false,$false,$false)}catch{$blocked=$true}
         Assert $blocked 'external GUI path accepted'
-    } 'Outside-root rejection verified. Real reparse/TOCTOU swap not performed.'
+    } 'Outside-root and root-junction rejection verified by P2A. File-symlink and true TOCTOU race remain NOT CHECKED.'
     $after=CloseGui
     $gsrc=[IO.File]::ReadAllText($guiPath,[Text.Encoding]::UTF8)
     Assert ($gsrc.Contains("$"+"GuiBuild='A'")) 'version marker absent'
@@ -419,6 +419,18 @@ try {
                 throw 'baseline immutable source unavailable for parity; P1-23 cannot pass'
             }
         }}
+    }
+    if(-not $InjectFailureAtGui) {
+        CheckExtra 'P2A-BOUNDARY-AND-TICKET-FAULTS' {
+            $boundary=@(& $psExe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Test-P2BoundaryGuards.ps1') 2>&1)
+            $boundaryExit=$LASTEXITCODE
+            foreach($line in $boundary){Write-Output $line}
+            $boundaryText=@($boundary|ForEach-Object{[string]$_}) -join [Environment]::NewLine
+            Assert ($boundaryExit -eq 0) ('P2A boundary/fault suite exit '+$boundaryExit)
+            Assert ($boundaryText.Contains('PASS P2A-ROOT-JUNCTION-HOST-AND-HELPER-REFUSAL')) 'P2A root junction negative not confirmed'
+            Assert ($boundaryText.Contains('PASS P2A-TICKET-FAILURE-CONTROLLED-NO-SECRET-NO-GUI-HOST-RESPONSIVE')) 'P2A ticket fault path not confirmed'
+            Assert ($boundaryText -notmatch '(?m)^FAIL ') 'P2A child suite reported a failure'
+        }
     }
     NotChecked 'P1-11' 'Different Windows logon / remote SMB peer requires separately approved session/network sandbox'
     NotChecked 'P1-21' 'Physical tray mouse/X, DPI, Explorer restart require approved UI-only desktop session'

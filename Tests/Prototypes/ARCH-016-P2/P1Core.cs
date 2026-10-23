@@ -19,7 +19,7 @@ public sealed class P1Core : IDisposable {
   readonly string gen=Guid.NewGuid().ToString("N"),remote=Guid.NewGuid().ToString("N"),hostId=Guid.NewGuid().ToString("N");
   readonly string ctlNonce=Guid.NewGuid().ToString("N");
   readonly int replayLimit;
-  readonly bool failAclForTests;
+  readonly bool failAclForTests,failGuiTicketForTests;
   long lastCtlSeq=0,lastGuiSeq=0;
   int ctlEpoch=0,guiEpoch=0;
   readonly List<Dictionary<string,object>> events=new List<Dictionary<string,object>>();
@@ -35,34 +35,108 @@ public sealed class P1Core : IDisposable {
   bool stopRequested=false,drop=false,needSnapshot=false,suspendEvents=false;
   int guiGapReports=0,guiResyncSnapshots=0;
   Mutex onlyHost;
-  public P1Core(string dir,string gui,string id,int parentPid,long parentTicks,int epochLimit,bool simulateAclFailure,bool showInteractiveTray) {
+  public P1Core(string dir,string gui,string id,int parentPid,long parentTicks)
+    : this(dir,gui,id,parentPid,parentTicks,8192,false,false,false) {}
+  public P1Core(string dir,string gui,string id,int parentPid,long parentTicks,int epochLimit,bool simulateAclFailure,bool showInteractiveTray)
+    : this(dir,gui,id,parentPid,parentTicks,epochLimit,simulateAclFailure,showInteractiveTray,false) {}
+  public P1Core(string dir,string gui,string id,int parentPid,long parentTicks,int epochLimit,bool simulateAclFailure,bool showInteractiveTray,bool failTicketBeforeWrite) {
     interactiveDemo=showInteractiveTray;
     if(epochLimit<4||epochLimit>8192)throw new ArgumentOutOfRangeException("epochLimit");
-    replayLimit=epochLimit;failAclForTests=simulateAclFailure;
-    root=Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar)+Path.DirectorySeparatorChar;
+    replayLimit=epochLimit;failAclForTests=simulateAclFailure;failGuiTicketForTests=failTicketBeforeWrite;
+    root=CanonicalDirectory(dir);
     guiFile=Path.GetFullPath(gui);
     instance=id;controllerPid=parentPid;controllerTicks=parentTicks;controllerSession=P1Wire.Session(parentPid);
     ctlFile=Path.Combine(root,"controller-auth.json");
-    if(!System.Text.RegularExpressions.Regex.IsMatch(id,@"^[0-9a-f]{32}$")||
-       !System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar)),@"^RDC-P2-[0-9a-f]{32}$")||
-       !guiFile.StartsWith(root,StringComparison.OrdinalIgnoreCase)||!File.Exists(guiFile)||ContainsReparsePoint(root,guiFile))
+    if(!System.Text.RegularExpressions.Regex.IsMatch(id,@"^[0-9a-f]{32}$")||!IsSafeFixturePath(root,guiFile))
       throw new InvalidOperationException("DISPOSABLE_ROOT_ONLY");
     bool created;
     onlyHost=new Mutex(true,@"Local\rdc-p2-host-"+id,out created);
     if(!created)throw new InvalidOperationException("HOST_ALREADY_RUNNING");
   }
-  static bool ContainsReparsePoint(string root,string file){
-    // Refuse junctions/symlinks anywhere on the disposable GUI path.
-    string part=Path.GetFullPath(file);
-    while(part.StartsWith(root,StringComparison.OrdinalIgnoreCase)){
-      if((File.GetAttributes(part)&FileAttributes.ReparsePoint)!=0)return true;
-      string parent=Path.GetDirectoryName(part);
-      if(parent==null||parent==part)break;
-      part=parent;
+  static string CanonicalDirectory(string path){
+    string full=Path.GetFullPath(path);
+    string volume=Path.GetPathRoot(full);
+    return full.Length>volume.Length?full.TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar):full;
+  }
+  static bool IsSameOrChildPath(string parent,string candidate){
+    string p=CanonicalDirectory(parent);
+    string c=Path.GetFullPath(candidate);
+    if(String.Equals(p,c,StringComparison.OrdinalIgnoreCase))return true;
+    string prefix=p.EndsWith(Path.DirectorySeparatorChar.ToString(),StringComparison.Ordinal)?p:p+Path.DirectorySeparatorChar;
+    return c.StartsWith(prefix,StringComparison.OrdinalIgnoreCase);
+  }
+  static bool HasReparsePointInPath(string path,bool allowMissingLeaf){
+    string current=Path.GetFullPath(path);
+    string volume=Path.GetPathRoot(current);
+    bool leaf=true;
+    while(!String.IsNullOrEmpty(current)){
+      try{
+        if((File.GetAttributes(current)&FileAttributes.ReparsePoint)!=0)return true;
+      }catch{
+        if(!(leaf&&allowMissingLeaf))return true;
+        string parent=Path.GetDirectoryName(current);
+        if(String.IsNullOrEmpty(parent)||!Directory.Exists(parent))return true;
+        string name=Path.GetFileName(current);
+        string[] entries;
+        try{entries=Directory.GetFileSystemEntries(parent);}catch{return true;}
+        foreach(string entry in entries){
+          if(String.Equals(Path.GetFileName(entry),name,StringComparison.OrdinalIgnoreCase))return true;
+        }
+      }
+      if(String.Equals(current,volume,StringComparison.OrdinalIgnoreCase))break;
+      string next=Path.GetDirectoryName(current);
+      if(String.IsNullOrEmpty(next)||String.Equals(next,current,StringComparison.OrdinalIgnoreCase))return true;
+      current=next;leaf=false;
     }
     return false;
   }
+  static bool IsSafeFixtureRoot(string dir){
+    try{
+      string full=CanonicalDirectory(dir);
+      string temp=CanonicalDirectory(Path.GetTempPath());
+      if(!Directory.Exists(full))return false;
+      if(!String.Equals(Path.GetDirectoryName(full),temp,StringComparison.OrdinalIgnoreCase))return false;
+      if(!System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(full),@"^RDC-P2-[0-9a-f]{32}$"))return false;
+      return !HasReparsePointInPath(full,false);
+    }catch{return false;}
+  }
+  static bool IsSafeFixturePath(string dir,string gui){
+    try{
+      string fullRoot=CanonicalDirectory(dir);
+      string fullGui=Path.GetFullPath(gui);
+      if(!IsSafeFixtureRoot(fullRoot))return false;
+      if(!String.Equals(fullGui,Path.Combine(fullRoot,"Gui.ps1"),StringComparison.OrdinalIgnoreCase))return false;
+      if(!File.Exists(fullGui)||(File.GetAttributes(fullGui)&FileAttributes.Directory)!=0)return false;
+      return !HasReparsePointInPath(fullGui,false);
+    }catch{return false;}
+  }
+  static bool IsSafeFixtureChildPath(string dir,string path,string expectedName,bool allowMissingLeaf){
+    try{
+      string fullRoot=CanonicalDirectory(dir);
+      string fullPath=Path.GetFullPath(path);
+      if(!IsSafeFixtureRoot(fullRoot))return false;
+      if(!String.Equals(Path.GetDirectoryName(fullPath),fullRoot,StringComparison.OrdinalIgnoreCase))return false;
+      if(!String.Equals(Path.GetFileName(fullPath),expectedName,StringComparison.OrdinalIgnoreCase))return false;
+      return !HasReparsePointInPath(fullPath,allowMissingLeaf);
+    }catch{return false;}
+  }
+  static bool ContainsReparsePoint(string dir,string path){
+    return ContainsReparsePoint(dir,path,false);
+  }
+  static bool ContainsReparsePoint(string dir,string path,bool allowMissingLeaf){
+    try{
+      string fullRoot=CanonicalDirectory(dir);
+      string fullPath=Path.GetFullPath(path);
+      if(!IsSafeFixtureRoot(fullRoot)||!IsSameOrChildPath(fullRoot,fullPath))return true;
+      return HasReparsePointInPath(fullPath,allowMissingLeaf);
+    }catch{return true;}
+  }
   void PrivateFile(string path,string json){
+    string name=Path.GetFileName(path);
+    if((name!="controller-auth.json"&&name!="gui-ticket.json")||
+       !IsSafeFixturePath(root,guiFile)||
+       !IsSafeFixtureChildPath(root,path,name,true))
+      throw new UnauthorizedAccessException("UNSAFE_FIXTURE_FILE");
     // ACL is built and validated BEFORE opening/creating the file. Windows
     // FileStream(CreateNew,...,FileSecurity) applies the DACL at creation.
     // Never write secrets to an inherited-ACL file then attempt to tighten.
@@ -71,22 +145,30 @@ public sealed class P1Core : IDisposable {
     acl.AddAccessRule(new FileSystemAccessRule(sid,FileSystemRights.FullControl,AccessControlType.Allow));
     acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid,null),FileSystemRights.Read,AccessControlType.Deny));
     if(failAclForTests)throw new UnauthorizedAccessException("SIMULATED_ACL_BEFORE_CREATE");
-    string temp=path+"."+Guid.NewGuid().ToString("N")+".secured";
+    string temp=Path.GetFullPath(path+"."+Guid.NewGuid().ToString("N")+".secured");
     try{
+      if(!IsSafeFixturePath(root,guiFile)||
+         !IsSafeFixtureChildPath(root,path,name,true)||
+         !IsSafeFixtureChildPath(root,temp,Path.GetFileName(temp),true))
+        throw new UnauthorizedAccessException("UNSAFE_FIXTURE_FILE");
       byte[] raw=new System.Text.UTF8Encoding(false,true).GetBytes(json);
       using(FileStream stream=new FileStream(temp,FileMode.CreateNew,FileSystemRights.Write,
            FileShare.None,4096,FileOptions.WriteThrough,acl)){
         stream.Write(raw,0,raw.Length);stream.Flush(true);
       }
+      if(!IsSafeFixtureChildPath(root,temp,Path.GetFileName(temp),false)||
+         !IsSafeFixtureChildPath(root,path,name,true))
+        throw new UnauthorizedAccessException("UNSAFE_FIXTURE_FILE");
       if(File.Exists(path)){
         // Atomic swap to an already-private file; do not transiently expose
-        // the new nonce via a public preexisting path.
+        // the new nonce via an inherited-ACL path.
         File.Replace(temp,path,null);
       }else{
         File.Move(temp,path);
       }
     }finally{
-      if(File.Exists(temp))File.Delete(temp);
+      // Never follow a redirected root while cleaning a temporary path.
+      try{if(!ContainsReparsePoint(root,temp,true)&&File.Exists(temp))File.Delete(temp);}catch{}
     }
   }
   Dictionary<string,object> Snapshot() {
@@ -126,28 +208,68 @@ public sealed class P1Core : IDisposable {
       Event("gui","exited");
     }
   }
+  void ClearGuiLaunchState(){
+    guiPid=0;guiTicks=0;guiSession=0;guiConnected=0;guiNonce="";guiVersion="";state="NONE";
+    lastGuiSeq=0;guiEpoch=0;seenGui.Clear();
+  }
   void Open() {
     RefreshChild();
     if(child!=null)return;
-    // Revalidate the disposable GUI path on EACH launch, not just Host boot.
-    if(!File.Exists(guiFile)||!guiFile.StartsWith(root,StringComparison.OrdinalIgnoreCase)||
-       ContainsReparsePoint(root,guiFile)){
-      guiFailures++;Event("gui","unsafe-path-refused");return;
+    // Validate the exact direct-child fixture and every path component before
+    // ticket creation, then repeat immediately before starting the GUI process.
+    if(!IsSafeFixturePath(root,guiFile)){
+      guiFailures++;ClearGuiLaunchState();Event("gui","unsafe-path-refused");return;
     }
-    var ticket=Path.Combine(root,"gui-ticket.json");
+    string ticket=Path.Combine(root,"gui-ticket.json");
     guiNonce=Guid.NewGuid().ToString("N");
     var identity=new Dictionary<string,object>{{"pipe","rdc-p2-gui-"+instance},
       {"hostPid",Process.GetCurrentProcess().Id},{"hostTicks",P1Wire.Born(Process.GetCurrentProcess().Id)},
       {"hostSession",P1Wire.Session(Process.GetCurrentProcess().Id)},{"hostGeneration",gen},{"nonce",guiNonce}};
-    PrivateFile(ticket,P1Wire.Json.Serialize(identity));
-    ProcessStartInfo psi=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell\\v1.0\\powershell.exe"),
-      "-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File \""+guiFile+"\" -TicketPath \""+ticket+"\""+(interactiveDemo?"":" -TestMode"));
-    psi.UseShellExecute=false;psi.CreateNoWindow=true;
+    bool ticketCreated=false;
     try{
-      child=Process.Start(psi);if(child==null)throw new InvalidOperationException("GUI_START");
+      if(!IsSafeFixturePath(root,guiFile)||
+         !IsSafeFixtureChildPath(root,ticket,"gui-ticket.json",true))
+        throw new UnauthorizedAccessException("UNSAFE_FIXTURE_PATH");
+      // Test-only fault is injected before serialization, temp-file creation,
+      // ACL/file creation, or any ticket bytes are written.
+      if(failGuiTicketForTests)
+        throw new UnauthorizedAccessException("SIMULATED_GUI_TICKET_CREATE_FAILURE");
+      PrivateFile(ticket,P1Wire.Json.Serialize(identity));
+      ticketCreated=true;
+    }catch{
+      // Ticket creation failures are a controlled state transition. The
+      // exception and nonce are never logged or propagated to tray/IPC callers.
+      guiFailures++;ClearGuiLaunchState();Event("gui","launch-failed");return;
+    }
+    Process started=null;
+    try{
+      if(!IsSafeFixturePath(root,guiFile)||
+         !IsSafeFixtureChildPath(root,ticket,"gui-ticket.json",false))
+        throw new UnauthorizedAccessException("UNSAFE_FIXTURE_PATH");
+      ProcessStartInfo psi=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell\\v1.0\\powershell.exe"),
+        "-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File \""+guiFile+"\" -TicketPath \""+ticket+"\""+(interactiveDemo?"":" -TestMode"));
+      psi.UseShellExecute=false;psi.CreateNoWindow=true;
+      started=Process.Start(psi);
+      if(started==null)throw new InvalidOperationException("GUI_START");
+      child=started;
       guiPid=child.Id;guiTicks=child.StartTime.ToUniversalTime().Ticks;guiSession=child.SessionId;
       guiStarts++;state="SPAWNING";Event("gui","spawned");
-    }catch{guiFailures++;guiPid=0;state="NONE";Event("gui","launch-failed");}
+    }catch{
+      guiFailures++;
+      if(started==null){
+        child=null;ClearGuiLaunchState();
+        if(ticketCreated){
+          try{if(!ContainsReparsePoint(root,ticket,false)&&File.Exists(ticket))File.Delete(ticket);}catch{}
+        }
+      }else{
+        // If process creation succeeded but later metadata retrieval failed,
+        // retain ownership rather than losing a live child reference.
+        child=started;
+        try{guiPid=started.Id;guiTicks=started.StartTime.ToUniversalTime().Ticks;guiSession=started.SessionId;}catch{guiPid=started.Id;}
+        state="SPAWNING";
+      }
+      Event("gui","launch-failed");
+    }
   }
   bool Registered(int pid,int session){
     if(pid==0||pid!=guiPid||session!=guiSession||child==null||child.HasExited)return false;
@@ -187,6 +309,10 @@ public sealed class P1Core : IDisposable {
       if(control)lastCtlSeq=sequence;else lastGuiSeq=sequence;
       if(control){
         if(verb=="TEST_STATE")return Ok("SNAPSHOT",id,Snapshot());
+        if(verb=="TEST_LAST_EVENT"){
+          object last=events.Count>0?(object)events[events.Count-1]:null;
+          return Ok("EVENT",id,last);
+        }
         if(verb=="TEST_OPEN"){Open();return Ok("SNAPSHOT",id,Snapshot());}
         if(verb=="TEST_TRAY_DOUBLE_CLICK"){TrayOpen();return Ok("SNAPSHOT",id,Snapshot());}
         if(verb=="TEST_CLOSE"){closeGen++;return Ok("SNAPSHOT",id,Snapshot());}

@@ -165,12 +165,75 @@ $script:expectedGeneration=[string]$ticket.hostGeneration
 $script:guiTimerTicks=0
 $script:pulseFile=Join-Path $PSScriptRoot 'gui-pulse.txt'
 $script:pauseFile=Join-Path $PSScriptRoot 'pause-gui-ipc.flag'
+function Test-P2NoReparsePath([string]$Candidate,[switch]$AllowMissingLeaf){
+  try{
+    $current=[IO.Path]::GetFullPath($Candidate)
+    $volume=[IO.Path]::GetPathRoot($current)
+    $leaf=$true
+    while(-not [string]::IsNullOrEmpty($current)){
+      try{
+        $attributes=[IO.File]::GetAttributes($current)
+        if(($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){return $false}
+      }catch{
+        if(-not ($leaf -and $AllowMissingLeaf)){return $false}
+        $parent=[IO.Path]::GetDirectoryName($current)
+        if(-not $parent -or -not [IO.Directory]::Exists($parent)){return $false}
+        $name=[IO.Path]::GetFileName($current)
+        foreach($entry in [IO.Directory]::GetFileSystemEntries($parent)){
+          if([String]::Equals([IO.Path]::GetFileName($entry),$name,[StringComparison]::OrdinalIgnoreCase)){return $false}
+        }
+      }
+      if([String]::Equals($current,$volume,[StringComparison]::OrdinalIgnoreCase)){break}
+      $next=[IO.Path]::GetDirectoryName($current)
+      if(-not $next -or $next -eq $current){return $false}
+      $current=$next;$leaf=$false
+    }
+    return $true
+  }catch{return $false}
+}
+function Test-P2PulsePathSafe {
+  try{
+    $root=[IO.Path]::GetFullPath($PSScriptRoot)
+    $volume=[IO.Path]::GetPathRoot($root)
+    if($root.Length -gt $volume.Length){$root=$root.TrimEnd([char[]]@([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar))}
+    $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    $tempVolume=[IO.Path]::GetPathRoot($temp)
+    if($temp.Length -gt $tempVolume.Length){$temp=$temp.TrimEnd([char[]]@([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar))}
+    if(-not [IO.Directory]::Exists($root)){return $false}
+    if(-not [String]::Equals([IO.Path]::GetDirectoryName($root),$temp,[StringComparison]::OrdinalIgnoreCase)){return $false}
+    if([IO.Path]::GetFileName($root) -cnotmatch '^RDC-P2-[0-9a-f]{32}$'){return $false}
+    $expected=[IO.Path]::GetFullPath([IO.Path]::Combine($root,'gui-pulse.txt'))
+    if(-not [String]::Equals([IO.Path]::GetFullPath($script:pulseFile),$expected,[StringComparison]::OrdinalIgnoreCase)){return $false}
+    if(-not (Test-P2NoReparsePath $root)){return $false}
+    if(-not (Test-P2NoReparsePath $expected -AllowMissingLeaf)){return $false}
+    if([IO.File]::Exists($expected) -and (([IO.File]::GetAttributes($expected) -band [IO.FileAttributes]::Directory) -ne 0)){return $false}
+    return $true
+  }catch{return $false}
+}
+function Write-P2Pulse([int]$Value){
+  $stream=$null
+  try{
+    if(-not (Test-P2PulsePathSafe)){return}
+    if([IO.File]::Exists($script:pulseFile)){
+      $attributes=[IO.File]::GetAttributes($script:pulseFile)
+      if(($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or ($attributes -band [IO.FileAttributes]::Directory) -ne 0){return}
+      [IO.File]::Delete($script:pulseFile)
+    }elseif([IO.Directory]::Exists($script:pulseFile)){return}
+    # CreateNew refuses an entry inserted as a file link after validation;
+    # unlike WriteAllText, it will not open/follow an existing target link.
+    if(-not (Test-P2PulsePathSafe)){return}
+    $bytes=[Text.Encoding]::UTF8.GetBytes([string]$Value)
+    $stream=New-Object IO.FileStream($script:pulseFile,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+    $stream.Write($bytes,0,$bytes.Length)
+    $stream.Flush($true)
+  }catch{}finally{if($stream){$stream.Dispose()}}
+}
 $timer=New-Object Windows.Forms.Timer
 $timer.Interval=115
 $timer.Add_Tick({
   $script:guiTimerTicks++
   if($TestMode -and $script:guiTimerTicks%2 -eq 0){
-    try{[IO.File]::WriteAllText($script:pulseFile,[string]$script:guiTimerTicks)}catch{}
+    Write-P2Pulse $script:guiTimerTicks
   }
   # Timer only checks COMPLETED tasks. Never synchronous frame I/O on UI thread.
   if($script:poll -and $script:poll.IsCompleted) {
