@@ -39,6 +39,9 @@ function Start-NoWindowCmd {
     return (New-FakeProcess (9000+$script:commandCalls.Count))
 }
 function Resolve-NpxPath {return 'C:\Fixture\npx.cmd'}
+function Test-Path {param($Path,$LiteralPath,$PathType,$ErrorAction) return $false}
+function Copy-Item {throw 'filesystem copy forbidden by fixture'}
+function Remove-Item {throw 'filesystem deletion forbidden by fixture'}
 function Repair-DesktopCommanderNpxCache {throw 'cache touch forbidden'}
 function Reset-CompactLogSession {$script:logResets++}
 function Set-DividerStoppedState([bool]$on){$script:stopped=$on}
