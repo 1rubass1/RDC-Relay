@@ -1,3 +1,9 @@
+## Architect final research-only integration acceptance — 2026-10-23
+
+[REV-016-P0](https://github.com/1rubass1/RDC-Relay/pull/15#issuecomment-6367930859) returned **CONDITIONAL PASS** for the research feasibility boundary. Independent **REV-016-P0A** gave **PASS** for the follow-up test guard and fixture-only failure cleanup. Architect repeated P0 (15 PASS) and P0A negatives (2 PASS) before and after merging, with regression and release-boundary checks before merge. [PR #15](https://github.com/1rubass1/RDC-Relay/pull/15) was then merged to **development as `c0aa7e64b70ecde193a88404a826bdba2da9b0ac`**; these files remain **prototype-only under `Tests/`**, without touching shipped `Source/`.
+
+**Final acceptance scope:** research proof only; new GUI source A→B, same fake Host PID/session and fixture-owned cooperative cleanup. **Excluded:** real Remote and PID retention, installed application, production-grade Named Pipes security, physical tray interactions, update/shutdown, full Exit, release, main/stable. IPC server unbounded synchronous `ReadLine` on UI timer and weak client authentication **remain known production blockers**. Proceed to separate Architect ARCH-016-P1 security and state contract before authorizing any PROG-006A implementation. The earlier preliminary NO-MERGE statements below describe pre-review gates that are now satisfied, **not current status**.
+
 # ARCH-016-P0 — Architect feasibility assessment and Reviewer gate
 
 **2026-10-23 · Architect · Stage B1 · PR #15 · PRELIMINARY, awaiting REV-016-P0.**
