@@ -1,8 +1,8 @@
 # RDC Relay — coordination board
 
 **Stage:** Playbook refresh and reversible core stabilization · **Updated:** 2026-10-23
-**Status:** Playbook bootstrap and core plan prepared in dev-only PR; no production source changes or new runtime tests.
-**Next:** `PROG-003` — Programmer characterizes current Remote supervisor behavior with isolated fixtures (after this plan is available on `development`).
+**Status:** PROG-003 isolated characterization fixtures executed on STARMER (12 PASS, 0 FAIL); production source and running Remote unchanged. Independent review pending.
+**Next:** Architect reviews PROG-003 baseline evidence and remaining live-route risks; PROG-004 not authorized to start.
 
 ## Roles and ownership
 | Role | Responsibility | Boundaries |
@@ -20,7 +20,7 @@
 | ARCH-004 | Sanitize, classify, migrate original records; verify links, archive, no release effect, merge only to `development` | Architect | done | [PR #1](https://github.com/1rubass1/RDC-Relay/pull/1) merged as `20b938b`; 10 local backup + 4 design-source SHA256 checks, link/secret scan PASS; local pointers created; existing v1.5.18 Portable 12 entries clean |
 | ARCH-012 | Update RDC Relay to latest Playbook entrypoint and delegated-execution rules | Architect | review | Private Playbook `main@5cae0136c5eb`; renamed agent entrypoint, mode/model selection, permission and budget guardrails; this isolated docs branch |
 | ARCH-013 | Stage owner-approved incremental behavior-preserving core-refactor plan | Architect | review | [Roadmap Stage B1](../docs/dev/planning/ROADMAP.md), [ADR-004](../DECISIONS.md); no product source changes |
-| PROG-003 | Characterize existing Remote lifecycle and log/health behavior with isolated deterministic tests; no core refactor | Programmer (not yet launched) | ready | Stage B1 step 1; preserve live Remote; use separate branch from `development`; prove baseline tests, list missing real-path checks |
+| PROG-003 | Characterize existing Remote lifecycle and log/health behavior with isolated deterministic tests; no core refactor | Programmer | review | [12 PASS, 0 FAIL; real-process routes NOT CHECKED](../Tests/PROG-003-BASELINE.md); [isolated fixture](../Tests/Test-RemoteCharacterization.ps1), branch `tests/prog-003-remote-lifecycle-baseline`; Architect contract review pending |
 | PROG-004 | Extract minimal pure `Remote observation` parser with equivalence tests | Programmer (not yet launched) | planned | Depends on PROG-003 and Architect contract review; no GUI behavior change |
 | PROG-005 | Introduce explicit owned/adopted/external process contract and guarded lifecycle | Programmer (not yet launched) | planned | Depends on baseline/process test evidence; no user process or installed Remote modified |
 | REV-002 | Independent regression/safety review of characterized behaviors and any refactor before release | Reviewer (not yet launched) | planned | Compare real routes versus fixtures and actual candidate; no self-approval |
