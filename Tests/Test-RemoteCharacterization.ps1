@@ -7,7 +7,7 @@ $source = if ($SourcePath) { [IO.Path]::GetFullPath($SourcePath) } else { Join-P
 $tokens=$null; $parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($source,[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw "Source parse errors: $($parseErrors.Count)"}
-$names=@('Schedule-AutoReconnect','Set-RemoteFault','Clear-RemoteFault','Mark-RemoteReady','Update-RemoteHealthFromLine','Refresh-DividerActivitySession','Convert-ToCleanLogText','Limit-UiEvent','Add-CompletedEvent','Commit-CurrentEvent','Append-CurrentEvent','Test-StartupBoundaryLine','Set-StartupFromProbe','Reset-CompactLogSession','Process-RemoteLine','Add-RemoteChunk','Begin-RemoteOperation','Complete-RemoteOperation','Update-RemoteOperation','Invoke-AutoReconnect','Set-RemoteActionsEnabled','Reset-RemoteHandle')
+$names=@('Schedule-AutoReconnect','Set-RemoteFault','Clear-RemoteFault','Mark-RemoteReady','Get-RemoteLineClassification','Update-RemoteHealthFromLine','Refresh-DividerActivitySession','Convert-ToCleanLogText','Limit-UiEvent','Add-CompletedEvent','Commit-CurrentEvent','Append-CurrentEvent','Test-StartupBoundaryLine','Set-StartupFromProbe','Reset-CompactLogSession','Process-RemoteLine','Add-RemoteChunk','Begin-RemoteOperation','Complete-RemoteOperation','Update-RemoteOperation','Invoke-AutoReconnect','Set-RemoteActionsEnabled','Reset-RemoteHandle')
 foreach($name in $names){
     $n=$ast.Find({param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq $name},$true)
     if(-not $n){throw "Function absent: $name"}
