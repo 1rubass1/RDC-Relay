@@ -27,6 +27,9 @@ $singletonText=$node.Extent.Text
 if(([regex]::Matches($singletonText,'exit 0')).Count -ne 2){throw 'Unexpected singleton exit count'}
 $singletonText=$singletonText.Replace('exit 0',"throw 'FIXTURE_DUPLICATE_LAUNCHER_EXIT'")
 $singletonText=$singletonText.Replace('$PSScriptRoot','$script:fixtureScriptRoot')
+# The production statement writes at top-level; the fixture executes it as
+# a nested scriptblock, so bind this top-level variable to fixture script scope.
+$singletonText=$singletonText.Replace('$ownsWindow','$script:ownsWindow')
 $script:fixtureScriptRoot=Split-Path -Parent $source
 $singleton=[scriptblock]::Create($singletonText)
 # Purely managed API stand-ins, never call Win32/user32 or display a real Form.
