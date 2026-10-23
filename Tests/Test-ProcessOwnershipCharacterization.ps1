@@ -107,7 +107,7 @@ function Set-Candidates {
     $script:fakeProcesses[201]=New-FakeProcess 201
     $script:fakeProcesses[202]=New-FakeProcess 202
 }
-Case 'find ignores unrelated executable, partial command, other installation and missing command line' {
+Case 'find filters obvious nonmatches while remotely substring still reaches PID lookup' {
     Reset-Fixture
     $script:wmiRows=@(
         (New-Wmi 101 'powershell.exe' ('desktop-commander remote '+$logPath)),
