@@ -4328,78 +4328,132 @@ function Mark-RemoteReady([string]$marker = '') {
         )
     }
 }
+# PROG-004: pure classification of already-decoded, complete Remote log lines.
+# The result describes *observations only*. The caller retains ordering and all
+# state, logging, visual and retry effects. Substring matching, priority and
+# unexpected payload matches are deliberately preserved for equivalence.
+function Get-RemoteLineClassification([string]$line,[string]$faultKind = '') {
+    $receivedPrefix = '🔧 '
+    $completedPrefix = '✅ '
+    $failedPrefix = '❌ '
+    $toolKind = ''
+    if (
+        $line.StartsWith($receivedPrefix,[StringComparison]::Ordinal) -and
+        $line.IndexOf('Received tool call ',[StringComparison]::Ordinal) -eq $receivedPrefix.Length
+    ) {
+        $toolKind = 'received'
+    }
+    elseif (
+        $line.StartsWith($completedPrefix,[StringComparison]::Ordinal) -and
+        $line.IndexOf('Tool call ',[StringComparison]::Ordinal) -eq $completedPrefix.Length -and
+        $line.IndexOf(' completed:',[StringComparison]::Ordinal) -gt $completedPrefix.Length
+    ) {
+        $toolKind = 'completed'
+    }
+    elseif (
+        $line.StartsWith($failedPrefix,[StringComparison]::Ordinal) -and
+        $line.IndexOf('Tool call ',[StringComparison]::Ordinal) -eq $failedPrefix.Length -and
+        $line.IndexOf(' failed:',[StringComparison]::Ordinal) -gt $failedPrefix.Length
+    ) {
+        $toolKind = 'failed'
+    }
+
+    $healthProbe = $line.TrimStart()
+    $isSerializedToolPayload =
+        $healthProbe.StartsWith('{',[StringComparison]::Ordinal) -or
+        $healthProbe.StartsWith('[',[StringComparison]::Ordinal)
+
+    # Match the original Update-RemoteHealthFromLine precedence exactly.
+    $healthKind = ''
+    if (-not [string]::IsNullOrWhiteSpace($line)) {
+        if (
+            $line.IndexOf('Desktop Commander Remote is connected',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('Presence tracked (device ',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            (
+                $faultKind -eq 'local-mcp' -and
+                $line.IndexOf('Local Desktop Commander MCP restarted; device is online again',[StringComparison]::OrdinalIgnoreCase) -ge 0
+            )
+        ) {
+            $healthKind = 'ready'
+        }
+        elseif (
+            $line.IndexOf('Authenticating with Remote MCP server',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('waiting for authentication',[StringComparison]::OrdinalIgnoreCase) -ge 0
+        ) {
+            $healthKind = 'auth'
+        }
+        elseif (
+            $line.IndexOf('Remote session expired and could not be renewed',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('Restart the terminal running Desktop Commander to reconnect',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('This device is now offline for remote calls',[StringComparison]::OrdinalIgnoreCase) -ge 0
+        ) {
+            $healthKind = 'session-lost'
+        }
+        elseif ($line.IndexOf('Device startup failed:',[StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            $healthKind = 'startup-failed'
+        }
+        elseif (
+            $line.IndexOf('Local Desktop Commander MCP went away (',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('Could not restart local Desktop Commander MCP:',[StringComparison]::OrdinalIgnoreCase) -ge 0
+        ) {
+            $healthKind = 'local-mcp'
+        }
+        elseif (
+            $line.IndexOf('Channel error:',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('Channel closed',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('Device marked as offline',[StringComparison]::OrdinalIgnoreCase) -ge 0
+        ) {
+            $healthKind = 'transport-offline'
+        }
+        elseif (
+            $line.IndexOf('Device registered, but NOT reachable',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('Realtime channel is not open',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('Channel subscription timed out',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('Presence track remained unavailable',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $line.IndexOf('Presence published but the device row could not be updated',[StringComparison]::OrdinalIgnoreCase) -ge 0
+        ) {
+            $healthKind = 'remote-unreachable'
+        }
+    }
+    return [pscustomobject]@{
+        ToolKind = $toolKind
+        HealthKind = $healthKind
+        IsSerializedToolPayload = [bool]$isSerializedToolPayload
+    }
+}
 function Update-RemoteHealthFromLine([string]$line) {
     if ($script:manualStopRequested -or $script:stopping) { return }
     if ([string]::IsNullOrWhiteSpace($line)) { return }
 
-    if (
-        $line.IndexOf('Desktop Commander Remote is connected',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $line.IndexOf('Presence tracked (device ',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        (
-            $script:remoteFaultKind -eq 'local-mcp' -and
-            $line.IndexOf('Local Desktop Commander MCP restarted; device is online again',[StringComparison]::OrdinalIgnoreCase) -ge 0
-        )
-    ) {
-        # A joined realtime channel is only half-ready. Upstream considers the
-        # device reachable only after Presence/capability publication succeeds
-        # and the local executor is healthy.
+    $kind = (Get-RemoteLineClassification $line $script:remoteFaultKind).HealthKind
+    if ($kind -eq 'ready') {
         Mark-RemoteReady $line
         return
     }
-
-    if (
-        $line.IndexOf('Authenticating with Remote MCP server',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $line.IndexOf('waiting for authentication',[StringComparison]::OrdinalIgnoreCase) -ge 0
-    ) {
+    if ($kind -eq 'auth') {
         $script:remoteInteractiveAuth = $true
         $script:remoteConnectDeadline = $null
         return
     }
-
-    if (
-        $line.IndexOf('Remote session expired and could not be renewed',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $line.IndexOf('Restart the terminal running Desktop Commander to reconnect',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $line.IndexOf('This device is now offline for remote calls',[StringComparison]::OrdinalIgnoreCase) -ge 0
-    ) {
+    if ($kind -eq 'session-lost') {
         Set-RemoteFault 'session-lost' 'Remote MCP потерял сессию и требует перезапуска.' $true
         return
     }
-
-    if ($line.IndexOf('Device startup failed:',[StringComparison]::OrdinalIgnoreCase) -ge 0) {
+    if ($kind -eq 'startup-failed') {
         Set-RemoteFault 'startup-failed' 'Desktop Commander не смог завершить запуск Remote MCP.' $true
         return
     }
-
-    if (
-        $line.IndexOf('Local Desktop Commander MCP went away (',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $line.IndexOf('Could not restart local Desktop Commander MCP:',[StringComparison]::OrdinalIgnoreCase) -ge 0
-    ) {
+    if ($kind -eq 'local-mcp') {
         Set-RemoteFault 'local-mcp' 'Локальный Desktop Commander MCP потерял соединение; ожидаю встроенный перезапуск executor.' $false
         $script:remoteConnectDeadline = $null
         return
     }
-
-    if (
-        -not $script:stopping -and (
-            $line.IndexOf('Channel error:',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-            $line.IndexOf('Channel closed',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-            $line.IndexOf('Device marked as offline',[StringComparison]::OrdinalIgnoreCase) -ge 0
-        )
-    ) {
-        # Realtime transport faults are recoverable inside Desktop Commander.
-        # Keep the process alive and stay red until Presence is published again.
+    if ($kind -eq 'transport-offline') {
         Set-RemoteFault 'transport-offline' 'Сетевой канал Remote MCP потерян; ожидаю встроенное восстановление.' $false
         $script:remoteConnectDeadline = $null
         return
     }
-
-    if (
-        $line.IndexOf('Device registered, but NOT reachable',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $line.IndexOf('Realtime channel is not open',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $line.IndexOf('Channel subscription timed out',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $line.IndexOf('Presence track remained unavailable',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $line.IndexOf('Presence published but the device row could not be updated',[StringComparison]::OrdinalIgnoreCase) -ge 0
-    ) {
+    if ($kind -eq 'remote-unreachable') {
         Set-RemoteFault 'remote-unreachable' 'Remote MCP временно недоступен; ожидаю встроенное восстановление.' $false
         $script:remoteConnectDeadline = $null
         return
@@ -4728,34 +4782,22 @@ function Process-RemoteLine([string]$line) {
     #   🔧 start, ✅ success, ❌ failure.
     # Use the marker as the primary classifier; validate the adjacent text so
     # marker-looking content inside JSON/tool output cannot trigger activity.
-    $receivedPrefix = '🔧 '
-    $completedPrefix = '✅ '
-    $failedPrefix = '❌ '
-    $isReceived =
-        $line.StartsWith($receivedPrefix,[StringComparison]::Ordinal) -and
-        $line.IndexOf('Received tool call ',[StringComparison]::Ordinal) -eq $receivedPrefix.Length
-    $isCompleted =
-        $line.StartsWith($completedPrefix,[StringComparison]::Ordinal) -and
-        $line.IndexOf('Tool call ',[StringComparison]::Ordinal) -eq $completedPrefix.Length -and
-        $line.IndexOf(' completed:',[StringComparison]::Ordinal) -gt $completedPrefix.Length
-    $isFailed =
-        $line.StartsWith($failedPrefix,[StringComparison]::Ordinal) -and
-        $line.IndexOf('Tool call ',[StringComparison]::Ordinal) -eq $failedPrefix.Length -and
-        $line.IndexOf(' failed:',[StringComparison]::Ordinal) -gt $failedPrefix.Length
+    # The classifier is pure; existing event/activity/health effects stay here.
+    $classification = Get-RemoteLineClassification $line $script:remoteFaultKind
+    $isReceived = $classification.ToolKind -eq 'received'
+    $isCompleted = $classification.ToolKind -eq 'completed'
+    $isFailed = $classification.ToolKind -eq 'failed'
     $isMarker = $isReceived -or $isCompleted -or $isFailed
 
-    # Health markers must come from Desktop Commander's own lifecycle stream.
-    # Tool request envelopes and serialized tool results can legitimately contain
-    # strings such as "Channel error:" while inspecting source/logs. Treating
-    # those payloads as transport telemetry leaves the UI falsely latched red.
-    $healthProbe = $line.TrimStart()
-    $isSerializedToolPayload =
-        $healthProbe.StartsWith('{',[StringComparison]::Ordinal) -or
-        $healthProbe.StartsWith('[',[StringComparison]::Ordinal)
-    if (-not $isMarker -and -not $isSerializedToolPayload) {
+    # Keep the original payload guard at the dispatch boundary: calling
+    # Update-RemoteHealthFromLine directly still inspects its input as before.
+    if (-not $isMarker -and -not $classification.IsSerializedToolPayload) {
         Update-RemoteHealthFromLine $line
     }
 
+    $receivedPrefix = '🔧 '
+    $completedPrefix = '✅ '
+    $failedPrefix = '❌ '
     if ($isReceived) {
         $now = Get-Date
         if ($script:activeToolCalls -le 0 -and $script:lastToolCompletedAt) {
