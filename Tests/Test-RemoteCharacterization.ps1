@@ -1,8 +1,9 @@
 ﻿# PROG-003: source characterization only. All process/IO hooks are fakes.
 # Run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File Tests/Test-RemoteCharacterization.ps1
+param([string]$SourcePath = '', [string]$TracePath = '')
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
-$source = Join-Path (Split-Path -Parent $PSScriptRoot) 'Source/remote-window.ps1'
+$source = if ($SourcePath) { [IO.Path]::GetFullPath($SourcePath) } else { Join-Path (Split-Path -Parent $PSScriptRoot) 'Source/remote-window.ps1' }
 $tokens=$null; $parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($source,[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw "Source parse errors: $($parseErrors.Count)"}
@@ -13,10 +14,25 @@ foreach($name in $names){
     . ([scriptblock]::Create($n.Extent.Text))
 }
 $script:passed=0; $script:failed=0
+$script:records=New-Object System.Collections.ArrayList
 function Assert([bool]$condition,[string]$why){if(-not $condition){throw $why}}
 function Case([string]$name,[scriptblock]$body){
+    $failBefore=$script:failed
     try { & $body; Write-Output "PASS: $name"; $script:passed++ }
     catch { Write-Output "FAIL: $name : $($_.Exception.Message)"; $script:failed++; }
+    $normalizedLogs=@($script:logs | ForEach-Object { ([string]$_) -replace '\[\d{2}:\d{2}:\d{2}\]','[TIME]' })
+    [void]$script:records.Add([ordered]@{
+        Case=$name; Passed=[bool]($script:failed -eq $failBefore)
+        Ready=[bool]$script:remoteReady; Latched=[bool]$script:remoteFaultLatched
+        Fault=[string]$script:remoteFaultKind; Auth=[bool]$script:remoteInteractiveAuth
+        Active=[int]$script:activeToolCalls; Working=[bool]$script:working
+        FaultVisual=[bool]$script:faultVisual; Flashes=[int]$script:flashes
+        Retry=[bool]$script:autoReconnectAt; RetryAttempt=[int]$script:autoReconnectAttempt
+        Hold=[bool]$script:activityHoldUntil; ConnectDeadline=[bool]$script:remoteConnectDeadline
+        Startup=[bool]$script:startupComplete; CurrentEvent=[string]$script:currentEvent
+        CurrentTruncated=[bool]$script:currentEventTruncated; StartupBlock=[string]$script:startupBlock
+        Events=@($script:eventBlocks | ForEach-Object { [string]$_ }); Logs=$normalizedLogs
+    })
 }
 function New-FakeProcess([bool]$exited=$false,[int]$code=0){
     $p=[pscustomobject]@{HasExited=$exited;ExitCode=$code;Id=12345;Disposed=$false}
@@ -68,6 +84,7 @@ function Reset-Fixture {
     $script:startupComplete=$false;$script:seenFirstRemoteEvent=$false;$script:tailNeedsMarker=$false
     $script:flashes=0;$script:starts=0;$script:working=$false;$script:stoppedVisual=$false
     $script:logs.Clear();$script:eventBlocks.Clear()
+    $script:faultVisual=$false
     foreach($b in @($finish,$accountButton,$switchAccountItem,$reconnectItem)){$b.Enabled=$true}
 }
 Case 'ready, duplicate ready and transition flash' {
@@ -427,5 +444,11 @@ Case 'near-full appended event overflows internally, then commit clamps' {
 $expectedMinimumCases=33
 $executedCases=$script:passed+$script:failed
 if($executedCases -lt $expectedMinimumCases){Write-Output "FAIL: only $executedCases cases; minimum $expectedMinimumCases"; exit 1}
+if ($TracePath) {
+    $dest=[IO.Path]::GetFullPath($TracePath)
+    $payload=ConvertTo-Json -InputObject @($script:records.ToArray()) -Depth 7 -Compress
+    [IO.File]::WriteAllText($dest,$payload,(New-Object Text.UTF8Encoding($false)))
+    Write-Output ("TRACE_SHA256="+(Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash)
+}
 Write-Output "TOTAL: PASS=$script:passed FAIL=$script:failed"
 if($script:failed){exit 1}
