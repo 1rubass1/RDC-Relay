@@ -1,3 +1,17 @@
+## Architect final research-only integration decision — 2026-10-23
+
+**ACCEPTED as a research-only fake Host/GUI IPC prototype, not product-safe IPC.** Following [REV-006A-P1A independent PASS](https://github.com/1rubass1/RDC-Relay/pull/18#issuecomment-6374530402), Architect merged [PR #18](https://github.com/1rubass1/RDC-Relay/pull/18) to `development` at **`0a44593b8442ead9c467509072bb1bb103fb0158`**. The NO-MERGE and P1A-pending text below records the earlier state and is superseded for **research merge only**, not product safety.
+
+**Independent reviewer evidence:** STARMER Windows PowerShell 5.1, 24 matrix rows **20 PASS / 0 FAIL / 1 PARTIAL / 3 NOT CHECKED**, runner exit 0, additional ACL-at-creation fault-injection PASS; mock GUI build A→B with stable fake Host PID and fake Remote identity, request replay epochs functioning across multiple rollover cycles, no permanent 8192-request lockout, private ACL present at file creation, hostile incomplete/flood/rogue-server fixture checks, bounded fake event logs, negative GUI-active failure and fixture-owned cooperative teardown. Reviewed source code commit **`b16c354e0152e89ad4bbc9799e0c88e3dba8c0b3`**; subsequent PR changes through merge modified only `COORDINATION/BOARD.md` and `PROJECT_CONTEXT.md`.
+
+**Architect integration verification:** GitHub comparison against `development` before merge: exactly 10 paths under `Tests/`, `docs/dev/` and coordination documentation; `Source/remote-window.ps1` Git blob **`e056e591afa0f2d49ffe4ee307bb167494b3f61f`** identical to base `development`; no `main`/`stable` or installed app update. All 37 relative internal links across review/board/context resolved; no trailing whitespace in these docs. Architect did not rerun P1 on STARMER (independent Reviewer execution was accepted). Do not claim a full distributable ZIP check.
+
+**Still explicitly NOT CHECKED / BLOCKED:** P1-20 reparse/TOCTOU path-race PARTIAL; P1-11 real cross-session and remote SMB denial NOT CHECKED; P1-21 physical tray X/double-click, DPI/Explorer restart/accessibility NOT CHECKED; P1-24 actual Setup/Portable ZIP NOT CHECKED. Runtime/installer path signing/atomic pin, full same-privileged-user malicious code threat, Windows OS hang, real Remote continuity and owned/adopted shutdown are not established. This P1 research merge **DOES NOT authorize** product `PROG-006A`, `PROG-006B`, `PROG-005B`, `PROG-005`, remote-process launch/stop, real Remote test, or release.
+
+**Historical workstation residue: NOT CLEAN.** Two old fixture directories (`%TEMP%\RDC-P1-1840a5107e624387a3e007ea92d2bef4` and `%TEMP%\RDC-P1-2e61d74ad79c41488491cfa10ee44b6c`) are left untouched. No owner approval to change ACL, take ownership, elevate, delete, run generic cleanup or touch live user processes. Separately authorize exact-path verification and narrowly-scoped cleanup later if desired. DESIGNER `DES-002` stays queued pending owner brief.
+
+---
+
 # ARCH-016-P1 — Architect decision after REV-006A-P1
 
 **2026-10-23 · RDC Relay / B1 · PR #18 · status: CONDITIONAL ACCEPTANCE of fake-only feasibility evidence; PR MERGE NO-GO until limited P1A corrections.**
