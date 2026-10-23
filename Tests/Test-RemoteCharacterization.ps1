@@ -340,8 +340,8 @@ Case 'UTF-8 roundtrip and already-decoded Unicode split across chunks' {
     Assert ($script:activeToolCalls -eq 0 -and $script:remoteReady) 'marker sequence'
     Commit-CurrentEvent
     Assert ($script:eventBlocks.Count -eq 2) 'unicode marker count'
-    Assert ($script:eventBlocks[0] -ceq ($start+$nl)) 'unicode start'
-    Assert ($script:eventBlocks[1] -ceq ($success+$nl)) 'unicode success'
+    Assert ($script:eventBlocks[0] -ceq $start) 'unicode start (Limit-UiEvent trims trailing CRLF)'
+    Assert ($script:eventBlocks[1] -ceq $success) 'unicode success (Limit-UiEvent trims trailing CRLF)'
 }
 Case 'split CR LF adds an extra blank line through early normalization' {
     Reset-Fixture
