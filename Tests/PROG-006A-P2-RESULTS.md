@@ -1,7 +1,7 @@
 # PROG-006A-P2 — interactive Tray Host and replaceable GUI results
 
 **2026-10-24 · Programmer · STARMER Windows PowerShell 5.1 · B1 · fake-only.**
-Branch: prototype/prog-006a-p2-interactive-tray-gui, based on development 27c3a98e93ff2014bc3e09c39b83034244e87a0f.
+[Draft PR #20](https://github.com/1rubass1/RDC-Relay/pull/20). Branch: prototype/prog-006a-p2-interactive-tray-gui, based on development 27c3a98e93ff2014bc3e09c39b83034244e87a0f.
 
 ## Scope and architecture
 
