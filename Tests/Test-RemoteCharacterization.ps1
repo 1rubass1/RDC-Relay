@@ -1,4 +1,4 @@
-# PROG-003: source characterization only. All process/IO hooks are fakes.
+﻿# PROG-003: source characterization only. All process/IO hooks are fakes.
 # Run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File Tests/Test-RemoteCharacterization.ps1
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
@@ -12,7 +12,7 @@ foreach($name in $names){
     if(-not $n){throw "Function absent: $name"}
     . ([scriptblock]::Create($n.Extent.Text))
 }
-$script:passed=0
+$script:passed=0; $script:failed=0
 function Assert([bool]$condition,[string]$why){if(-not $condition){throw $why}}
 function Case([string]$name,[scriptblock]$body){
     try { & $body; Write-Output "PASS: $name"; $script:passed++ }
