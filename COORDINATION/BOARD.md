@@ -1,8 +1,8 @@
 # RDC Relay — coordination board
 
 **Stage:** Playbook refresh and reversible core stabilization · **Updated:** 2026-10-23
-**Status:** **Architect ACCEPTED research-only ARCH-016-P0/P0A after independent REV-016-P0 (CONDITIONAL PASS) and REV-016-P0A (PASS)**. PR #15 merged into `development@c0aa7e64b70ecde193a88404a826bdba2da9b0ac` with 10 paths, ZERO `Source/` changes. Architect postmerge STARMER recheck: P0 15 PASS; P0A negative 2 PASS, both exit 0, cleanup 0 survivors. **NOT production IPC/Remote acceptance.**
-**Next:** Prepare Architect-only ARCH-016-P1 secure IPC/Host-GUI contract, threat model and fake-only test gates; only then separately authorize Programmer PROG-006A. Actual Remote, installed app, full Exit PROG-006B, PROG-005B and PROG-005 remain BLOCKED; no production release.
+**Status:** Architect completed ARCH-016-P1 Host/GUI IPC security and data contract (design only). 24 fake-only acceptance cases; no P1 test yet. Designer icon redesign queued as DES-002; owner/designer brief pending.
+**Next:** Hand off PROG-006A-P1 for independent fake-only IPC implementation and then REV-006A-P1. Product PROG-006A, full Exit PROG-006B and real Remote/ownership stages remain blocked. DES-002 waits for separately approved brief.
 
 ## REV-002 — independent findings (2026-10-23)
 
@@ -127,8 +127,10 @@
 | ARCH-016-P0A | Narrow test-runner hardening (minimum 15 and fixture-only cleanup) | Programmer | done | REV-016-P0A PASS; accepted and merged with research-only PR #15. Architect pre/postmerge 2 negative controls PASS (underlying intentional failures exit 1), zero fixture survivors/pipe released, no forced stop. |
 | REV-016-P0A | Independently verify minimum case count and bounded fixture-only cleanup | Reviewer | done | **PASS** for harness only. PR #15 merged **by Architect** to development. Production IPC still NO-GO; WMI itself lacks absolute timeout, hostile hang not tested. |
 | PROG-006 | Full tray UX: GUI hot-swap, continuous Remote + explicit safe Exit | Programmer (not launched) | blocked | ARCH-016 dependency added before PROG-006A. Full Exit awaits safe PROG-005/PROG-006B. No release until both reloadable UI and verified Exit. |
-| ARCH-016-P1 | Define production-grade Host/GUI IPC threat model, ownership/snapshot contract and isolated acceptance matrix | Architect (not launched) | planned | After PR #15 research integration. Include bounded async IPC outside WinForms Timer, actual client/server process + logon session checks, per-command auth, no remote pipe, rendezvous/version/sequence/resync and failure tests. **No Programmer implementation GO yet.** |
-| PROG-006A | Separate tray host + replaceable GUI, secure snapshot and IPC for future product | Programmer (not launched) | blocked | **ARCH-016-P1 architecture/specification gate first**; research-only prototype acceptance does NOT allow Source edits/live Remote, process operations or releases. Fake-only scope and robust IPC threat/timeout/auth protocol must be approved independently. |
+| ARCH-016-P1 | Design Host/GUI IPC contract and acceptance tests | Architect | done — design only | [Contract](../docs/dev/architecture/ARCH-016-P1-HOST-GUI-IPC-CONTRACT.md) covers bounded async frames, OS peer/session identity, Host validation, immutable snapshots, versioned event resync and 24 negative/fake cases. Not implemented or tested. |
+| PROG-006A-P1 | Implement hardened Host/GUI IPC with disposable fake Remote | Programmer (not launched) | ready for handoff | New branch from development; test prototype only, no Source changes; implement P1 transport, identity/session, controlled launch and versioned snapshots; report 24-case matrix PASS/FAIL/NOT CHECKED; REV-006A-P1. |
+| REV-006A-P1 | Independently verify safe fake-only Host/GUI IPC implementation | Reviewer (not launched) | planned | Verify blocked client, oversized frame, PID spoof, session refusal, version skew, event gap, GUI code A-to-B, bounded fixture cleanup. |
+| PROG-006A | Future product Host/GUI integration | Programmer (not launched) | blocked | First complete fake-only PROG-006A-P1 + independent REV-006A-P1, then Architect approval. No real Remote or Source migration yet. |
 | REV-006A | Independently verify hot-reload GUI lifecycle + tray-host/Remote continuity under fakes | Reviewer (not launched) | planned | Verify GUI process closes and new build runs, no Remote restart, no zombie GUI, same-user IPC failure, version skew, retry, updater/shutdown, UI quality/accessibility. |
 | PROG-006B | Wire explicit full tray Exit only to verified safe process shutdown, then teardown supervisor/GUI | Programmer (not launched) | blocked | Depends on approved PROG-005B/REV-005B, safe PROG-005 lifecycle + Reviewer, and PROG-006A/REV-006A. Stop all **confirmed managed** processes; never kill unknown; failure leaves controller active with error. |
 | REV-006 | Independently verify tray/window/mutex/update semantics, UI accessibility and no live process effects | Reviewer (not launched) | planned | Depends on PROG-006; includes restricted UI test in sandbox and owner visual acceptance. |
@@ -144,6 +146,7 @@
 | PROG-001 | Narrow scoped actual ChatGPT plugin connection/authorization experiment | Programmer | blocked | Requires ARCH-003 and explicitly authorized scope |
 | REV-001 | Independently check actual authentication/route behavior | Reviewer | planned | Depends on PROG-001 evidence and owner go-ahead |
 | DES-001 | Obtain user review of editable Pen and resolve any UX discrepancies | Designer | planned | `docs/dev/design/`; separate request, no automatic visual acceptance |
+| DES-002 | Future redesign of RDC Relay application, desktop shortcut and tray icon | Designer (not launched) | queued — no brief yet | User dislikes current icon and feels it does not communicate Relay/Remote. Agree full brief with owner later. Consider icon symbolism and visibility at small sizes, contrasting light/dark backgrounds. No design assets or release changes now. |
 
 **Updated Playbook delegation:** the owner starts continuing specialist chats. Architect may use a short CLI/tool executor only inside explicitly pre-authorized scope, tool/file access and budget. A task marked `ready` alone is not authorization to run an agent.
 
