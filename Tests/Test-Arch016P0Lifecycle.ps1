@@ -7,12 +7,64 @@ $fixture=Join-Path $PSScriptRoot 'Prototypes\ARCH-016-P0'
 $work=Join-Path ([IO.Path]::GetTempPath()) ('RDC-ARCH016P0-'+[guid]::NewGuid().ToString('N'))
 $pipeName='rdcrelay-arch016p0-'+[guid]::NewGuid().ToString('N')
 $hostProcess=$null
+$hostStartTime=$null
+$expectedMinimumCases=15
 $pass=0;$fail=0
+$script:directGuiStarts=New-Object Collections.ArrayList
 function Assert([bool]$cond,[string]$message) {if(-not $cond){throw $message}}
 function Check([string]$name,[scriptblock]$action) {
     try {& $action; Write-Output ('PASS: '+$name);$script:pass++}
     catch {Write-Output ('FAIL: '+$name+' :: '+$_.Exception.Message);$script:fail++}
 }
+
+# Every process the fixture recognizes must match the unique disposable script
+# directory. Read-only WMI is used only for identification/reporting, never
+# to terminate a process (no Stop-Process/taskkill).
+function Get-RemainingFixtureProcesses {
+    $rows=@(Get-CimInstance -ClassName Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop)
+    $pathPrefix=[IO.Path]::GetFullPath($work).TrimEnd([char]92)+[char]92
+    return @($rows | Where-Object {
+        $line=[string]$_.CommandLine
+        $line.IndexOf($pathPrefix,[StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+        ($line.IndexOf('TrayHost.ps1',[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+         $line.IndexOf('Gui.ps1',[StringComparison]::OrdinalIgnoreCase) -ge 0) -and
+        $_.Name -ieq 'powershell.exe'
+    })
+}
+function Confirm-OwnHost {
+    if (-not $hostProcess -or $hostProcess.HasExited) {return $false}
+    if (-not $hostStartTime) {return $false}
+    $row=@(Get-CimInstance -ClassName Win32_Process -Filter ("ProcessId="+$hostProcess.Id) -ErrorAction Stop)
+    if($row.Count -ne 1) {return $false}
+    $line=[string]$row[0].CommandLine
+    if($row[0].Name -ine 'powershell.exe' -or
+       $line.IndexOf($hostScript,[StringComparison]::OrdinalIgnoreCase) -lt 0 -or
+       $line.IndexOf($script,[StringComparison]::OrdinalIgnoreCase) -lt 0 -or
+       $line.IndexOf($pipeName,[StringComparison]::Ordinal) -lt 0 -or
+       $line.IndexOf(' -TestMode',[StringComparison]::OrdinalIgnoreCase) -lt 0) {
+       return $false
+    }
+    $current=Get-Process -Id $hostProcess.Id -ErrorAction Stop
+    return ($current.StartTime -eq $hostStartTime)
+}
+# Connection check only: never read a server-controlled reply while probing
+# for teardown, even if a simulated server has stopped processing requests.
+function Test-FixturePipePresent {
+    $client=New-Object IO.Pipes.NamedPipeClientStream(
+        '.', $pipeName,[IO.Pipes.PipeDirection]::InOut,
+        [IO.Pipes.PipeOptions]::None)
+    try {
+        $client.Connect(240)
+        return $true
+    } catch [TimeoutException] {
+        return $false
+    } catch [IO.IOException] {
+        return $false
+    } finally {
+        $client.Dispose()
+    }
+}
+
 function Send([string]$command) {
     return (Invoke-ProbePipe -Name $pipeName -Command $command -TimeoutMs 1000)
 }
@@ -44,6 +96,7 @@ try {
     $stdErr=Join-Path $work 'host-stderr.txt'
     $arguments='-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File "'+$hostScript+'" -PipeName '+$pipeName+' -GuiScript "'+$script+'" -TestMode'
     $hostProcess=Start-Process -FilePath $psexe -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdOut -RedirectStandardError $stdErr
+    $hostStartTime=$hostProcess.StartTime
     $initial=Await {param($s) $s.ok -and $s.trayAllocated}
     Write-Output ('PROTOTYPE_HOST_PID='+$initial.hostPid+' FAKE_REMOTE_ID='+$initial.remoteId)
     Check 'Host initializes fake kernel and allocates tray icon (hidden in automation)' {
@@ -68,6 +121,7 @@ try {
         Assert ($same.guiStarts -eq 1 -and $same.guiPid -eq $a.guiPid -and $same.trayDoubleClicks -eq 2) 'duplicate child'
     }
     $duplicate=Start-Process -FilePath $psexe -ArgumentList ('-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File "'+$script+'" -PipeName '+$pipeName+' -TestMode') -WindowStyle Hidden -PassThru
+    [void]$script:directGuiStarts.Add(@{Pid=$duplicate.Id;StartedAt=$duplicate.StartTime;Role='duplicate'})
     try {
         Assert ($duplicate.WaitForExit(8000)) 'stray GUI handshake did not terminate'
         $dupeExit=$duplicate.ExitCode
@@ -159,6 +213,7 @@ try {
     # Missing host: startup handshake fails, never starts an alternate host.
     $badPipe='rdcrelay-arch016p0-'+[guid]::NewGuid().ToString('N')
     $unreachable=Start-Process -FilePath $psexe -ArgumentList ('-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File "'+$script+'" -PipeName '+$badPipe+' -TestMode') -WindowStyle Hidden -PassThru
+    [void]$script:directGuiStarts.Add(@{Pid=$unreachable.Id;StartedAt=$unreachable.StartTime;Role='unreachable'})
     try {
         Assert ($unreachable.WaitForExit(6500)) 'unreachable GUI did not fail promptly'
         $badExit=$unreachable.ExitCode
@@ -173,35 +228,98 @@ try {
     $fail++
     Write-Output ('FAIL: lifecycle harness exception :: '+$_.Exception.Message)
 } finally {
+    # Fail closed. Only a Process handle returned by THIS test's Start-Process,
+    # with matching PID + StartTime + Win32_Process CommandLine, may receive
+    # the unique fixture pipe's cooperative close/shutdown requests.
+    # No real PID is killed if the host fails or refuses the request.
+    $cleanupErrors=New-Object Collections.ArrayList
+    $knownHostPid=if($hostProcess){$hostProcess.Id}else{0}
+    Write-Output ('CLEANUP_HOST_PID='+$knownHostPid)
     if($hostProcess) {
         try {
-            $state=Send 'STATE'
-            if ($state.guiPid -ne 0) {
-                [void](Send 'CLOSE_GUI')
-                try{[void](Await {param($s) $s.guiPid -eq 0} 4000)}catch{}
-            }
-            [void](Send 'END_TEST_HOST')
-            if(-not $hostProcess.WaitForExit(7000)){
-                Write-Output 'NOT CHECKED: disposable host did not exit gracefully; it was NOT force-killed'
-                $fail++
-            } else {
-                $gone=$false
-                try { [void](Send 'STATE') } catch { $gone=$true }
-                Assert $gone 'test pipe still accepts requests after host shutdown'
-                Write-Output 'PASS: disposable host exited gracefully; its named pipe is gone'
-                $pass++
+            if(-not $hostProcess.HasExited) {
+                if(-not (Confirm-OwnHost)) {
+                    throw 'Host PID/start-time/command line identity unverifiable: no IPC shutdown sent'
+                }
+                Write-Output 'CLEANUP_HOST_IDENTITY=VERIFIED'
+                # Ask only our identified host to close its own GUI. Await is
+                # bounded, and each IPC connect/response now has a deadline.
+                $current=Send 'STATE'
+                if ($current.guiPid -ne 0) {
+                    Write-Output ('CLEANUP_GUI_REQUESTED_PID='+$current.guiPid)
+                    [void](Send 'CLOSE_GUI')
+                    [void](Await {param($s) $s.guiPid -eq 0} 4500)
+                }
+                [void](Send 'END_TEST_HOST')
+                if(-not $hostProcess.WaitForExit(7000)) {
+                    throw ('Owned host PID '+$hostProcess.Id+' failed to exit within 7000 ms; no forced kill')
+                }
             }
         } catch {
-            Write-Output ('FAIL: graceful host cleanup :: '+$_.Exception.Message)
-            $fail++
+            [void]$cleanupErrors.Add($_.Exception.Message)
         }
-        if($hostProcess.HasExited){$hostProcess.Dispose()}
+    }
+    # Bound a final independent OS-level inspection; it also sees GUI children
+    # if the host is already gone and cannot report its most recent GUI PID.
+    $remaining=@()
+    try {
+        $clock=[Diagnostics.Stopwatch]::StartNew()
+        do {
+            $remaining=@(Get-RemainingFixtureProcesses)
+            if($remaining.Count -eq 0){break}
+            Start-Sleep -Milliseconds 150
+        } while($clock.ElapsedMilliseconds -lt 3500)
+        Write-Output ('CLEANUP_REMAINING_PROCESS_COUNT='+$remaining.Count)
+        foreach($row in $remaining){
+            $kind=if(([string]$row.CommandLine).IndexOf('TrayHost.ps1',[StringComparison]::OrdinalIgnoreCase) -ge 0){'Host'}else{'GUI'}
+            Write-Output ('CLEANUP_REMAINING_OWNED_PID='+$row.ProcessId+' PARENT='+$row.ParentProcessId+' KIND='+$kind)
+        }
+        if($remaining.Count -gt 0){
+            [void]$cleanupErrors.Add('Verified disposable fixture processes remain after bounded wait; escalation required')
+        }
+    } catch {
+        Write-Output ('CLEANUP_PROCESS_INVENTORY=NOT_CHECKED '+$_.Exception.Message)
+        [void]$cleanupErrors.Add('Cannot prove absence of fixture-owned processes: '+$_.Exception.Message)
+    }
+    try {
+        $pipePresent=Test-FixturePipePresent
+        $hostAlive=($hostProcess -and -not $hostProcess.HasExited)
+        if($pipePresent -or $hostAlive){
+            Write-Output ('CLEANUP_PIPE_RELEASED=FAIL; hostAlive='+[bool]$hostAlive+' pipeConnects='+[bool]$pipePresent)
+            [void]$cleanupErrors.Add('Host or named pipe remains after bounded wait')
+        } else {
+            Write-Output 'CLEANUP_PIPE_RELEASED=PASS'
+        }
+    } catch {
+        [void]$cleanupErrors.Add('Pipe-release verification failed: '+$_.Exception.Message)
+    }
+    if($hostProcess -and $hostProcess.HasExited){
+        $hostProcess.Dispose()
+    }
+    if($cleanupErrors.Count -eq 0) {
+        Write-Output 'CLEANUP_RESULT=PASS (no forced termination)'
+        $pass++
+    } else {
+        foreach($item in $cleanupErrors){Write-Output ('CLEANUP_FAIL: '+$item)}
+        Write-Output 'CLEANUP_RESULT=FAIL (no forced termination)'
+        $fail++
+    }
+    $executed=$pass+$fail
+    if($executed -lt $expectedMinimumCases){
+        Write-Output ('FAIL: coverage minimum '+$expectedMinimumCases+' but only '+$executed+' cases executed')
+        $fail++
     }
     if($fail -eq 0) {
-        # Delete only uniquely named temp directory created by this test.
-        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction Stop
-    } else {
-        Write-Output 'Diagnostics retained in unique TEMP folder for review (no user data)'
+        try {
+            # Remove only the unpredictable subdirectory created by this test.
+            Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction Stop
+        } catch {
+            Write-Output ('FAIL: own TEMP cleanup: '+$_.Exception.Message)
+            $fail++
+        }
+    }
+    if($fail -gt 0){
+        Write-Output 'DIAGNOSTICS_RETAINED=true; investigate fixture-owned PID report before manual action'
         Write-Output ('DIAGNOSTIC_DIR='+$work)
         if(Test-Path (Join-Path $work 'host-stderr.txt')){
             Get-Content -LiteralPath (Join-Path $work 'host-stderr.txt') -Tail 10
