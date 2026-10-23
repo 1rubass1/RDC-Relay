@@ -69,6 +69,8 @@ The final repeat used the reproducible Set-P2DemoBuild.ps1 helper to perform the
 
 ## PROG-006A-P2A — narrow boundary and ticket-failure corrections (2026-10-24)
 
+**Branch/commit:** `prototype/prog-006a-p2-interactive-tray-gui` / `92125f16624e739897dcb13326ac580272dc487d`; [Draft PR #20](https://github.com/1rubass1/RDC-Relay/pull/20). [Independent review handoff](https://github.com/1rubass1/RDC-Relay/pull/20#issuecomment-6376207083).
+
 **Scope:** only `Tests/Prototypes/ARCH-016-P2/P1Core.cs`, `Host.ps1`, `Gui.ps1`, `Tests/Set-P2DemoBuild.ps1`, the P2 lifecycle harness, a new `Tests/Test-P2BoundaryGuards.ps1`, and this evidence/governance update. No product `Source/`, installed app, real Remote, production branches, ACL settings, Explorer, or release files changed.
 
 ### Implemented
