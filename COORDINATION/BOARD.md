@@ -1,8 +1,8 @@
 # RDC Relay — coordination board
 
 **Stage:** Playbook refresh and reversible core stabilization · **Updated:** 2026-10-23
-**Status:** Owner accepted ARCH-015 **X → hide to tray** while keeping Remote and supervisor alive; relaunch via tray displays current Form. PROG-005A prompt not handed to Programmer; zero GUI/Source implementation. PROG-005 remains blocked.
-**Next:** Owner may hand off mock-only PROG-005A; Reviewer checks REV-005A. Then PROG-006 implements a separately reviewed narrow tray-shell feature (including safe single-instance behavior) after explicit Exit semantics and UI test scope are resolved. No live Remote changes.
+**Status:** PROG-005A completed by Programmer in isolated tests-only branch: **27 process + 21 window/singleton = 48 PASS, 0 FAIL, exit 0** on STARMER PowerShell 5.1; negative controls exit 1; inherited 46+32+parity/UI/Npx PASS. **REV-005A pending**. No Source, live Remote, GUI or production changes. PROG-006/PROG-005 remain blocked.
+**Next:** Independent Reviewer checks REV-005A against mock-only characterization and safety evidence. Architect/owner must separately resolve PROG-006 Exit semantics and authorize implementation; PROG-005B/PROG-005 still blocked. No live Remote changes.
 
 ## REV-002 — independent findings (2026-10-23)
 
@@ -73,7 +73,7 @@
 | ARCH-015 | Define accepted Windows tray X-to-hide, same Form restore and single-instance safety contract | Architect + owner | done | Owner direction captured in [ADR-005](../DECISIONS.md) and [tray design](../docs/dev/architecture/TRAY-LIFECYCLE-DESIGN.md); explicit full Exit semantics remain pending. |
 | PROG-006 | WinForms NotifyIcon + X-hide/restore without Remote stop or duplicate GUI and with non-destructive singleton fallback | Programmer (not launched) | blocked | After PROG-005A/REV-005A and separate scope/Exit decision. Isolated UI test, no real Remote. Do NOT reuse stale GUI force kill. [Contract](../docs/dev/architecture/TRAY-LIFECYCLE-DESIGN.md). |
 | REV-006 | Independently verify tray/window/mutex/update semantics, UI accessibility and no live process effects | Reviewer (not launched) | planned | Depends on PROG-006; includes restricted UI test in sandbox and owner visual acceptance. |
-| PROG-005A | Characterize process discovery/stop/mutex/operation/window-close with isolated AST mocks only | Programmer (not launched) | ready | **Prompt not yet handed to Programmer** per owner; tests/doc only; add current X→stop behavior, hidden-GUI mutex hazard to baseline; no Source edits, OS-process spawn/kill or real Remote; REV-005A. |
+| PROG-005A | Characterize process discovery/stop/mutex/operation/window-close with isolated AST mocks only | Programmer | review | **48 PASS/0 FAIL/exit 0** (27 process + 21 window), two intentional failures exit 1; inherited 46+32/parity/UI/Npx PASS on STARMER PS 5.1. [Evidence](../Tests/PROG-005A-BASELINE.md), [process fixture](../Tests/Test-ProcessOwnershipCharacterization.ps1), [window fixture](../Tests/Test-WindowLifecycleCharacterization.ps1); branch `tests/prog-005a-process-tray-lifecycle-baseline`. Source untouched; REV-005A pending. |
 | REV-005A | Independently review mock characterization fidelity and safety harness | Reviewer (not launched) | planned | After PROG-005A; verify fake `taskkill` was not executed, process identity negative cases and fail-fast. |
 | PROG-005B | Disposable Windows OS process-tree integration tests only, separate sandbox | Programmer (not launched) | blocked | Needs explicit owner authorization for OS test, safety design and REV-005A, no real Remote/user processes; independent REV-005B. |
 | REV-005B | Independently verify disposable process harness isolation/cleanup | Reviewer (not launched) | blocked | After specific authorization and PROG-005B; no production process IDs. |
