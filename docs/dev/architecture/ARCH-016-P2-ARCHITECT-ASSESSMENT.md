@@ -14,9 +14,12 @@
 
 # ARCH-016-P2 — Architect decision on REV-006A-P2
 
-**Date:** 2026-10-24  
-**Project:** RDC Relay · B1 core stabilization  
-**PR:** [#20 — interactive fake-only Tray Host / replaceable GUI](https://github.com/1rubass1/RDC-Relay/pull/20)  
+**Date:** 2026-10-24
+
+**Project:** RDC Relay · B1 core stabilization
+
+**PR:** [#20 — interactive fake-only Tray Host / replaceable GUI](https://github.com/1rubass1/RDC-Relay/pull/20)
+
 **Reviewer evidence:** [REV-006A-P2 conclusion](https://github.com/1rubass1/RDC-Relay/pull/20#issuecomment-6375321316)
 
 ## Decision
