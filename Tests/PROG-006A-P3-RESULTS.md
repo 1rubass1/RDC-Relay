@@ -1,5 +1,7 @@
 # PROG-006A-P3 — runnable owner GUI demonstration (research-only)
 
+**PR:** [Draft #22](https://github.com/1rubass1/RDC-Relay/pull/22), [Reviewer handoff](https://github.com/1rubass1/RDC-Relay/pull/22#issuecomment-6381708244).
+
 **Date:** 2026-10-24. **Machine:** STARMER. **Runtime:** Windows PowerShell 5.1, real Windows interactive WinForms HWND. **Branch:** prototype/prog-006a-p3-user-demo from development b2a51e5612dd6856f3f490d41cfd6544a156c574.
 
 ## Deliverable
