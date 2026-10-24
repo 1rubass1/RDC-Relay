@@ -1,6 +1,6 @@
 # PROG-006A-INTEGRATION — 1.6.0 RC1 G0 engineering checkpoint
 
-**2026-10-24 · Programmer · Branch:** \`feature/v1.6-host-gui-owner-pilot\` from verified \`development@fbc4527\`.
+**2026-10-24 · Programmer · [Draft PR #23](https://github.com/1rubass1/RDC-Relay/pull/23) · Branch:** \`feature/v1.6-host-gui-owner-pilot\` from verified \`development@fbc4527\`.
 **Disposition: BLOCKED — NOT A USER-INSTALLABLE 1.6.0 RC1.** Do not deliver as an installer, switch STARMER or merge without further Architect and independent Reviewer gates.
 
 ## What has actually been implemented in production files
