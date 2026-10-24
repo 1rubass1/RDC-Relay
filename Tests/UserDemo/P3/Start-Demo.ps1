@@ -4,6 +4,10 @@ $ErrorActionPreference='Stop'
 $source=Join-Path $PSScriptRoot 'Fixture'
 $state=Join-Path $PSScriptRoot 'RunState'
 $marker=Join-Path $state 'active-demo.json'
+. (Join-Path $PSScriptRoot 'P3-Ownership.ps1')
+Assert-P3NoLinks $PSScriptRoot
+if([IO.Directory]::Exists($state)){Assert-P3NoLinks $state}
+elseif([IO.File]::Exists($state)){throw 'NOT CLEAN: RunState is not a directory'}
 function Get-DemoProcess([string]$Root){
   $hostScript=Join-Path $Root 'Host.ps1'
   return @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop|Where-Object{
@@ -11,19 +15,9 @@ function Get-DemoProcess([string]$Root){
   })
 }
 if(Test-Path -LiteralPath $marker){
- try{
-  $previous=Get-Content -LiteralPath $marker -Raw -Encoding UTF8|ConvertFrom-Json
-  $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([char]92)
-  $previousRoot=[IO.Path]::GetFullPath([string]$previous.Root).TrimEnd([char]92)
-  if([IO.Path]::GetDirectoryName($previousRoot) -eq $temp -and [IO.Path]::GetFileName($previousRoot) -cmatch '^RDC-P3-[0-9a-f]{32}$'){
-    $running=Get-DemoProcess $previousRoot
-    if($running.Count){
-      Write-Output ('Тестовый Host уже работает, PID: '+($running.ProcessId -join ','))
-      Write-Output 'Используйте значок RDC Relay DEMO в системном трее.'
-      exit 0
-    }
-  }
- }catch{Write-Output 'Не удалось проверить предыдущую запись запуска. Новые процессы пока не созданы.';throw}
+  # Never silently replace a stale/altered marker or create a second Host.
+  $old=Get-P3BoundRun $state
+  throw ('NOT CLEAN: previous test run '+$old.MarkerData.RunId+' remains registered. Finish/verify cleanup first.')
 }
 $id=[guid]::NewGuid().ToString('N')
 $root=Join-Path ([IO.Path]::GetTempPath()) ('RDC-P3-'+$id)
@@ -46,8 +40,29 @@ while(-not(Test-Path -LiteralPath $auth) -and $sw.ElapsedMilliseconds -lt 9000){
 }
 if(-not(Test-Path -LiteralPath $auth)){throw ('Test Host has not created IPC rendezvous; PID '+$proc.Id)}
 [void](New-Item -Path $state -ItemType Directory -Force)
-$details=[pscustomobject]@{Root=$root;HostPID=$proc.Id;HostStartTicks=$proc.StartTime.ToUniversalTime().Ticks;DemoVersion='A'}
-[IO.File]::WriteAllText($marker,($details|ConvertTo-Json -Compress),(New-Object Text.UTF8Encoding($true)))
+Assert-P3NoLinks $state
+Assert-P3NoLinks $marker $true
+$info=[P1Wire]::Decode([IO.File]::ReadAllText($auth,[Text.Encoding]::UTF8))
+$born=$proc.StartTime.ToUniversalTime().Ticks
+if([int]$info.hostPid -ne $proc.Id -or [long]$info.hostTicks -ne $born){
+ throw 'NOT CLEAN: actual Host PID/start time differs from authenticated rendezvous'
+}
+$proof=[guid]::NewGuid().ToString('N')
+$hashes=@{}
+foreach($name in @('Host.ps1','Gui.ps1','DemoGui.ps1','P1Core.cs','P1Wire.cs','rdc-banner.png')){
+ $hashes[$name]=(Get-FileHash -LiteralPath (Join-Path $root $name) -Algorithm SHA256).Hash
+}
+$details=[pscustomobject]@{Schema=1;RunId=$id;RunProof=$proof;Root=$root;HostPID=$proc.Id;HostStartTicks=$born;HostGeneration=[string]$info.hostGeneration;DemoVersion='A'}
+$owner=[pscustomobject]@{Schema=1;RunId=$id;RunProof=$proof;Root=$root;HostPID=$proc.Id;HostStartTicks=$born;HostGeneration=[string]$info.hostGeneration;FileHashes=$hashes}
+[IO.File]::WriteAllText((Join-Path $root 'p3-owner.json'),($owner|ConvertTo-Json -Depth 5 -Compress),(New-Object Text.UTF8Encoding($true)))
+# CreateNew never opens an inserted marker/symlink between validation and write.
+Assert-P3NoLinks $state
+Assert-P3NoLinks $marker $true
+$markerBytes=[Text.Encoding]::UTF8.GetBytes(($details|ConvertTo-Json -Compress))
+$markerStream=New-Object IO.FileStream($marker,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+try{$markerStream.Write($markerBytes,0,$markerBytes.Length);$markerStream.Flush($true)}finally{$markerStream.Dispose()}
+$check=Get-P3BoundRun $state
+if($check.MarkerData.RunId -ne $id){throw 'NOT CLEAN: run marker attestation failed'}
 Write-Output ('Тестовый RDC Relay запущен. Host PID: '+$proc.Id)
 Write-Output ('Тестовый каталог: '+$root)
 Write-Output 'Закройте окно X и снова откройте его через значок RDC Relay DEMO в трее.'
@@ -73,7 +88,15 @@ if($SelfTest){
  $exitAnswer=[P1Wire]::Decode([P1Wire]::Call([string]$record.pipe,$ident,$wire,1200))
  if($exitAnswer.type -ne 'SNAPSHOT'){throw 'SELFTEST: shared menu exit route rejected'}
  if(-not $proc.WaitForExit(9000)){throw 'SELFTEST: owned demo Host did not exit'}
- & (Join-Path $PSScriptRoot 'Check-And-Cleanup.ps1')
- if(-not $?){throw 'SELFTEST: cleanup was not confirmed'}
+ $cleanOutput=@(& (Join-Path $PSHOME 'powershell.exe') -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Check-And-Cleanup.ps1') 2>&1)
+ $cleanExit=$LASTEXITCODE
+ $cleanOutput|ForEach-Object{Write-Output $_}
+ if($cleanExit -ne 0){throw ('SELFTEST: cleanup failed with exit '+$cleanExit)}
+ if([IO.Directory]::Exists($root)){throw 'SELFTEST: owned fixture directory survived'}
+ if([IO.File]::Exists($marker)){throw 'SELFTEST: own-run marker survived'}
+ if(@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'"|Where-Object{
+   ([string]$_.CommandLine).Contains(' -File "'+$hostScript+'"') -or
+   ([string]$_.CommandLine).Contains(' -File "'+(Join-Path $root 'Gui.ps1')+'"')
+ }).Count){throw 'SELFTEST: own-run Host or GUI survived'}
  Write-Output 'P3_SELFTEST_EXIT=0'
 }

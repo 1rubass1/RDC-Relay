@@ -44,3 +44,28 @@ The automated Windows tests use native owned HWND WM_CLOSE and verified fixture 
 - Production integration PROG-006A/006B/005B/005 and release remain blocked; Draft PR requires independent Reviewer and Architect disposition.
 
 **Owner instructions:** Tests/UserDemo/P3/README-RU.md, or the same README after extracting the separate portable demo ZIP.
+
+## PROG-006A-P3A — F1/F2 owner-kit safety corrections (2026-10-24)
+
+Based on [Architect assessment](../docs/dev/architecture/ARCH-016-P3-ARCHITECT-ASSESSMENT.md) and [REV-006A-P3 findings](https://github.com/1rubass1/RDC-Relay/pull/22#issuecomment-6381840407). Changes are restricted to test-kit launch/cleanup, ownership checks, related tests, README and ZIP. No Host, GUI, IPC, production Source or live Remote code changes.
+
+**F1:** `Check-And-Cleanup.ps1` exits **2** (nonzero) on an active own Host/GUI, missing or inconsistent marker, incomplete/ambiguous cleanup or retained fixture; does not kill processes. `Start-Demo.ps1 -SelfTest` checks the cleanup child exit code, exact own process inventory, temporary root and marker absence **before** printing `P3_SELFTEST_EXIT=0`. Negative control kept a test-owned Host alive: cleanup returned nonzero while marker, files and the process remained intact, then the test Host and GUI exited cooperatively.
+
+**F2:** New `P3-Ownership.ps1` enforces the canonical **direct TEMP child** `RDC-P3-<GUID>`, existing path-component/entry reparse checks, no nested or unknown entries, exact file-hash allowlist and live Host PID/creation-time checks. It binds per-run `RunId` / `RunProof` / `Root` / `HostPID` / `HostStartTicks` / `HostGeneration` in the launcher marker to separate `p3-owner.json` metadata and additionally to the Host-created private `controller-auth.json` identity (excluding secret logging). This is consistency/ownership evidence, not same-user malicious-code authentication. Launcher validates `RunState` before writing and uses `FileMode.CreateNew` for the marker. `Remove-Fixture.ps1` cannot remove a GUID-shaped foreign or nested directory merely because it contains no visible process. GUI B helper updates only the expected source hash.
+
+| Executed verification, STARMER Windows PowerShell 5.1 | Actual result |
+| --- | --- |
+| P3A script parse checks | 0 errors |
+| `Test-P3A-Cleanup.ps1`: active survivor, forged/stale marker/owner/Host ticks, foreign/nested folder, modified static file, missing marker, unchanged outside sentinel, positive cleanup | **28 PASS / 0 FAIL / exit 0** |
+| `Start-Demo.ps1 -SelfTest` after final marker guard | **PASS / exit 0**; Host PID 45296, GUI PID 2952, own processes/fixture/marker absent |
+| `Test-P3A-OwnerSwitch.ps1` | **9 PASS / 0 FAIL / exit 0**; own A→B and cooperative Exit |
+| Proven original `Test-P3VisibleWindow.ps1` | **PASS / exit 0**; GUI A PID/HWND **26256/22152462**, GUI B **33832/12911086**, Host **38196**, fake UUID **83549cff965541bda34ac27c2c84a6ba** unchanged, 10 close/reopen cycles, 11 distinct GUI PIDs, 0 survivors |
+| Rebuilt `RDCRelay-P3-UserDemo.zip` | **47,759 bytes**, SHA-256 **185B99FE4D64DE1B391A5BC4B46D947F369DFF22EB587FAD582FD70D526D19D7** |
+| ZIP contents versus current source | **20/20 file hashes identical**, 0 unexpected members, 0 secrets, 0 `RunState` entries |
+| Running freshly extracted ZIP with default Windows script security | **NOT CHECKED** — Windows blocked script execution; no elevation or bypass attempted. Test-owned extraction verified safe and cleaned |
+| Real file-symlink negative and true concurrent TOCTOU race | **NOT CHECKED / PARTIAL** |
+| Physical X/tray clicks, owner visual acceptance, other DPI and accessibility | **NOT CHECKED** |
+
+**Diagnostic transparency:** Two experimental uncommitted modifications of the long visible-window runner timed out on fixture IPC and were not accepted as regression evidence. Their verified own fake-only Hosts exited cooperatively through their WinForms message loops; only their exact test GUID folders were removed following identity/process checks. The original independently reviewed visible runner was restored, passed completely and is the version retained for this task. No Host, GUI or IPC redesign was attempted.
+
+**Boundary:** The two historical `RDC-P1-*` TEMP folders and the unknown-origin `RDC-P2-aace757df1eb4f7cb3e2e17dbeec7a5d` remain **NOT CLEAN and untouched**. `Source/remote-window.ps1`, installed RDC Relay, genuine Desktop Commander Remote, `main`, `stable`, security settings and release packages were not altered. Await independent **REV-006A-P3A** and Architect approval; PR #22 is Draft/unmerged.

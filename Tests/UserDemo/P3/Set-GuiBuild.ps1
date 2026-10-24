@@ -53,7 +53,7 @@ function Assert-P3Fixture([string]$RootPath){
     throw 'REFUSED: expected direct fixture Gui.ps1 missing'
   }
   if(-not (Test-P3NoReparsePath $gui)){throw 'REFUSED: reparse point in Gui.ps1 or its path components'}
-  $allowed=@('P1Core.cs','P1Wire.cs','Host.ps1','Gui.ps1','DemoGui.ps1','rdc-banner.png','controller-auth.json','gui-ticket.json','gui-pulse.txt','pause-gui-ipc.flag')
+  $allowed=@('P1Core.cs','P1Wire.cs','Host.ps1','Gui.ps1','DemoGui.ps1','rdc-banner.png','p3-owner.json','controller-auth.json','gui-ticket.json','gui-pulse.txt','pause-gui-ipc.flag')
   $entries=@([IO.Directory]::GetFileSystemEntries($root))
   foreach($entry in $entries){
     $name=[IO.Path]::GetFileName($entry)
