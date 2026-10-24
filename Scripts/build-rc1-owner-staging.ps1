@@ -10,14 +10,15 @@ if($gate.candidate -cne '1.6.0 RC1' -or $gate.installable -ne $false -or
   $gate.liveRemoteEnabled -ne $false -or $gate.autoUpdateEnabled -ne $false -or
   $gate.publishable -ne $false){throw 'REFUSED nonblocked candidate marker'}
 $dist=Join-Path $root 'dist'
-$out=Join-Path $dist 'v1.6.0-RC1-PRODUCT-SOURCE-NOT-INSTALLABLE'
-$zipPath=Join-Path $dist 'RDCRelay-1.6.0-RC1-PRODUCT-SOURCE-NOT-INSTALLABLE.zip'
+$out=Join-Path $dist 'v1.6.0-RC1-G4-OWNER-SOURCE-NOT-INSTALLABLE'
+$zipPath=Join-Path $dist 'RDCRelay-1.6.0-RC1-G4-OWNER-SOURCE-NOT-INSTALLABLE.zip'
 if([IO.Directory]::Exists($out) -or [IO.File]::Exists($out) -or [IO.File]::Exists($zipPath)){
  throw 'REFUSED existing owner-stage output; no implicit overwrite'
 }
 $names=@(
  'remote-window.ps1','rc1-tray-host.ps1','rc1-owner-gui.ps1',
  'RdcOwnerWire.cs','RdcOwnerRuntime.cs','RdcOwnerProcess.cs',
+ 'RdcOwnerTicketStore.cs','RdcOwnerRemoteState.cs',
  'rc1-candidate.json','RDCRelay.ico',
  'divider-caustic.ps','divider-caustic-detail.ps',
  'divider-particles.ps','divider-particles-core.ps',
@@ -44,8 +45,16 @@ if(-not $compiler){throw 'NOT CHECKED: no .NET Framework compiler'}
 $payloadDir=Join-Path $out 'Source'
 [void](New-Item -ItemType Directory -Path $payloadDir -ErrorAction Stop)
 foreach($name in $names){Copy-Item -LiteralPath (Join-Path $src $name) -Destination (Join-Path $payloadDir $name) -ErrorAction Stop}
+$ownerInstallerSources=@('Rc1CandidateSetup.cs','Rc1CandidateLauncher.cs')
+$ownerInstallerDir=Join-Path $out 'Installer'
+[void](New-Item -ItemType Directory -Path $ownerInstallerDir -ErrorAction Stop)
+foreach($file in $ownerInstallerSources){
+ $from=Join-Path (Join-Path $root 'Installer') $file
+ if(-not [IO.File]::Exists($from)){throw ('RC1 owner installer source missing '+$file)}
+ Copy-Item -LiteralPath $from -Destination (Join-Path $ownerInstallerDir $file) -ErrorAction Stop
+}
 $dll=Join-Path $out 'RdcOwnerRuntime.dll'
-& $compiler /nologo /target:library ('/out:'+$dll) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll (Join-Path $payloadDir 'RdcOwnerWire.cs') (Join-Path $payloadDir 'RdcOwnerRuntime.cs')
+& $compiler /nologo /target:library ('/out:'+$dll) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll (Join-Path $payloadDir 'RdcOwnerWire.cs') (Join-Path $payloadDir 'RdcOwnerProcess.cs') (Join-Path $payloadDir 'RdcOwnerTicketStore.cs') (Join-Path $payloadDir 'RdcOwnerRemoteState.cs') (Join-Path $payloadDir 'RdcOwnerRuntime.cs')
 if($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists($dll)){throw 'RC1 Host/IPC compile failed; output is NOT INSTALLABLE'}
 foreach($p in @(
  @{Out='RC1 BLOCKED - Launcher.exe';File='Launcher.cs'},
@@ -55,7 +64,28 @@ foreach($p in @(
  & $compiler /nologo /target:winexe /optimize+ /define:RDC_RC1_BLOCKED /reference:System.Windows.Forms.dll ('/out:'+$target) (Join-Path (Join-Path $root 'Installer') $p.File)
  if($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists($target)){throw ('RC1 guarded compile failed '+$p.Out)}
 }
-$relative=@($names|ForEach-Object{'Source/'+$_})+@('RdcOwnerRuntime.dll','RC1 BLOCKED - Launcher.exe','RC1 BLOCKED - Setup.exe')
+$rc1SourceChecks=@(
+ @{Source='Rc1CandidateSetup.cs';Binary='RC1 BLOCKED - Owner Setup.exe'},
+ @{Source='Rc1CandidateLauncher.cs';Binary='RC1 BLOCKED - Owner Launcher.exe'}
+)
+foreach($spec in $rc1SourceChecks){
+ $inputPath=Join-Path $ownerInstallerDir $spec.Source
+ $outPath=Join-Path $out $spec.Binary
+ & $compiler /nologo /target:winexe /optimize+ /define:RDC_RC1_BLOCKED /reference:System.Core.dll /reference:System.Web.Extensions.dll ('/out:'+$outPath) $inputPath
+ if($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists($outPath)){throw ('BLOCKED RC1 candidate compile failed '+$spec.Source)}
+ # Compile the inactive future transaction as source syntax verification
+ # ONLY, then remove its temporary executable before packaging.
+ $checkPath=Join-Path $out ('compilecheck-'+[Guid]::NewGuid().ToString('N')+'.exe')
+ try{
+  & $compiler /nologo /target:winexe /optimize+ /reference:System.Core.dll /reference:System.Web.Extensions.dll ('/out:'+$checkPath) $inputPath
+  if($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists($checkPath)){throw ('Future candidate code does not compile '+$spec.Source)}
+ }finally{
+  if([IO.File]::Exists($checkPath)){[IO.File]::Delete($checkPath)}
+ }
+}
+$relative=@($names|ForEach-Object{'Source/'+$_})+@('RdcOwnerRuntime.dll','RC1 BLOCKED - Launcher.exe','RC1 BLOCKED - Setup.exe',
+ 'Installer/Rc1CandidateSetup.cs','Installer/Rc1CandidateLauncher.cs',
+ 'RC1 BLOCKED - Owner Setup.exe','RC1 BLOCKED - Owner Launcher.exe')
 $manifestEntries=@()
 foreach($member in $relative){
  $p=Join-Path $out $member

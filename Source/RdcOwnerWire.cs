@@ -145,6 +145,8 @@ public sealed class RdcOwnerServer : IDisposable {
   readonly CancellationTokenSource stop=new CancellationTokenSource();
   readonly SemaphoreSlim slots=new SemaphoreSlim(2,2);
   readonly List<Task> listeners=new List<Task>();
+  readonly object pendingGate=new object();
+  readonly List<NamedPipeServerStream> pending=new List<NamedPipeServerStream>();
   public int Active=0,Rejected=0,Timeouts=0,PeakActive=0;
   public RdcOwnerServer(string pipe,Func<Dictionary<string,object>,int,int,string> handler){
     if(!System.Text.RegularExpressions.Regex.IsMatch(pipe,@"^rdc-rc1-(gui|ctl)-[a-f0-9]{32}$"))throw new ArgumentException("RC1 per-instance pipe required");
@@ -157,7 +159,9 @@ public sealed class RdcOwnerServer : IDisposable {
       try {
         await slots.WaitAsync(stop.Token);
         p=new NamedPipeServerStream(name,PipeDirection.InOut,2,PipeTransmissionMode.Byte,PipeOptions.Asynchronous,4096,4096,RdcOwnerWire.Dacl());
-        await p.WaitForConnectionAsync(stop.Token);
+        lock(pendingGate)pending.Add(p);
+        try{await p.WaitForConnectionAsync(stop.Token);}
+        finally{lock(pendingGate)pending.Remove(p);}
         var connected=p;p=null;
         Task acceptedTask=ServeOwned(connected);
       }catch(ObjectDisposedException){if(p!=null)p.Dispose();break;}
@@ -181,5 +185,12 @@ public sealed class RdcOwnerServer : IDisposable {
      catch{Interlocked.Increment(ref Rejected);}
     finally{Interlocked.Decrement(ref Active);}
   }
-  public void Dispose(){stop.Cancel();stop.Dispose();slots.Dispose();}
+  public void Dispose(){
+    stop.Cancel();
+    lock(pendingGate){foreach(var p in pending.ToArray()){try{p.Dispose();}catch{}}}
+    bool done=false;
+    try{done=Task.WaitAll(listeners.ToArray(),1500);}catch(AggregateException){done=false;}
+    if(!done || Active!=0)throw new InvalidOperationException("RC1_IPC_WORKERS_NOT_CLEAN");
+    slots.Dispose();stop.Dispose();
+  }
 }

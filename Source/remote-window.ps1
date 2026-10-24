@@ -4957,6 +4957,7 @@ function Add-RemoteChunk([string]$text) {
     Render-CompactLog
 }
 function Open-Reader {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     if ($script:reader -or -not (Test-Path $logPath)) { return }
     try {
         $stream = New-Object IO.FileStream(
@@ -5061,6 +5062,7 @@ function Move-ReaderToRecentTailIfBehind {
     } catch {}
 }
 function Read-LiveLog {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     Open-Reader
     if ($script:reader) {
         Move-ReaderToRecentTailIfBehind
@@ -5069,6 +5071,7 @@ function Read-LiveLog {
     }
 }
 function Find-ExistingRemote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     try {
         # Only attach to a launcher that writes to this installation's own log.
         # Do not adopt an arbitrary desktop-commander process started manually
@@ -5176,6 +5179,7 @@ function Start-NoWindowCmd([string]$commandLine) {
     return [Diagnostics.Process]::Start($psi)
 }
 function Start-Remote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     try {
         if ($script:proc -and -not $script:proc.HasExited) { return }
         $script:manualStopRequested = $false
@@ -5240,6 +5244,7 @@ function Start-Remote {
     }
 }
 function Stop-Remote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     if (-not $script:proc -or $script:proc.HasExited) { return }
     try {
         $freezePoint = $log.GetViewPosition()
@@ -5298,6 +5303,7 @@ function Set-RemoteActionsEnabled([bool]$enabled) {
 }
 
 function Begin-RemoteOperation([string]$action) {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     if ($script:remoteOperation -or $script:initializing) { return }
     $script:manualStopRequested = ($action -eq 'stop')
     $script:remoteOperation = [pscustomobject]@{
@@ -5352,6 +5358,7 @@ function Complete-RemoteOperation([string]$errorText = '') {
 }
 
 function Update-RemoteOperation {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $op = $script:remoteOperation
     if (-not $op) { return }
     try {
@@ -5413,6 +5420,7 @@ function Invoke-AutoReconnect {
 }
 
 function Restart-Remote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $answer = [Windows.Forms.MessageBox]::Show(
         'RDC Relay будет кратковременно отключён и запущен снова под текущим аккаунтом.',
         'Переподключить RDC Relay', [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)
@@ -5425,6 +5433,7 @@ function Restart-Remote {
 }
 
 function Switch-RemoteAccount {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $message = 'Смена аккаунта разорвёт текущее удалённое соединение.' + $nl + $nl +
         'После выхода RDC Relay запустится снова и предложит авторизоваться в браузере.' + $nl + $nl +
         'Войдите в тот же аккаунт Desktop Commander, который подключён в ChatGPT.' + $nl + $nl + 'Продолжить?'
@@ -5435,6 +5444,7 @@ function Switch-RemoteAccount {
 }
 
 function Start-RuntimeInitialization {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $script:initializing = $true
     Set-RemoteActionsEnabled $false
     $updaterPath = Join-Path $root 'update.ps1'
@@ -5556,6 +5566,14 @@ $aboutItem.Add_Click({
         'При первой авторизации подтвердите устройство в браузере, сверив код из журнала. ' +
         'Повторные запуски обычно используют сохранённую сессию. ' + $nl + $nl +
         'Пароли и токены эта оболочка не копирует и не хранит.'
+    if ($OwnerGui) {
+        $helpText = 'RDC Relay 1.6.0 RC1' + $nl +
+          'Режим проверки: настоящий Remote не подключён.' + $nl + $nl +
+          'X закрывает только текущий GUI-процесс. Tray Host сохраняет состояние.' + $nl +
+          'Открытие из трея загружает новую версию GUI с диска.' + $nl +
+          'Управление аккаунтом, Remote и обновлениями здесь отключено.' + $nl +
+          'Полный выход реального Remote заблокирован до проверки владения.'
+    }
     [Windows.Forms.MessageBox]::Show(
         $helpText,
         'RDC Relay — справка',
@@ -5587,6 +5605,7 @@ $openLogItem.Add_Click({
     }
 })
 function Refresh-Window {
+    if ($OwnerGui) { return }
     if ($script:initializing) { Complete-RuntimeInitialization; return }
     if ($script:remoteOperation) { Update-RemoteOperation; return }
     Apply-SystemFrameTheme

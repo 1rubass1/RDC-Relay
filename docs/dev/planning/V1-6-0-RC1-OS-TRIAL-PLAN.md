@@ -40,3 +40,21 @@ Every case must provide PASS / FAIL / PARTIAL / NOT CHECKED, exact test-owned PI
 If all disposable cases pass and Reviewer accepts them, obtain a **new owner authorization** for actual STARMER Remote lifecycle. Upstream [Desktop Commander Remote device docs](https://github.com/wonderwhy-er/DesktopCommanderMCP/blob/main/src/remote-device/README.md) say Ctrl+C stops the local process while retaining saved credentials, whereas remote --logout deletes locally saved credentials. This app must not use logout as an Exit shortcut. Merely finding an existing matching Remote by name never transfers authority to stop it.
 
 This document is a test plan, not an execution report.
+
+
+## 2026-10-25 — precise supplementary F2/Host resource trials (NOT AUTHORIZED)
+
+Add to the already specified OS-01..OS-18 matrix **only after explicit owner GO and independent review of the harness**:
+
+| ID | Owned disposable condition | Required measured outcome |
+| --- | --- | --- |
+| OS-19 | Host-owned ticket created, injected failure immediately before starting *its own* GUI | Host alive and responsive; exact own ticket revoked, retry GUI succeeds without Host PID or fake session change; no broad cleanup |
+| OS-20 | Same test-root ticket replaced, reparse-point or mismatched run generation/creation tick | Host refuses launch and refuses deletion; outside sentinel SHA-256 unchanged; leave unverified fixture NOT CLEAN |
+| OS-21 | Inject failure during Host constructor after mutex/run root/pipe creation | No orphaned own IPC workers, private files or test processes; mutex reacquisition only after clean confirmed, otherwise NOT CLEAN |
+| OS-22 | Test-owned GUI exits after changing original GUI source A→B | new GUI PID/start UTC and visible HWND, same Host PID/birth and fake Remote session, no second GUI/Host |
+| OS-23 | Long-lived IPC request, malformed oversized frame, delayed or lost event | UI timer responsive, deadlines enforced, bounded connections, gap recovered from authoritative Host log snapshot |
+| OS-24 | Fake Host requested full Exit, simulated Unknown or unconfirmed child process present | Refuse and report NOT CLEAN, never kill any unrelated process; only complete verified fake-only group may exit |
+
+Use a **new direct-child `%TEMP%\\RDC-RC1-OS-<GUID>` root** for every run, a **fresh static reviewed copy of the relevant Source** and unique fake-only Host/GUI command lines. Do not alter installed AppData or user Remote paths, global ACLs, Explorer, other sessions, or persisted account settings. Capture exact path, PID/birth UTC/session and parent/child evidence before starting and before cooperative closure; no broad `taskkill`, `Stop-Process -Force` or automatic restart after ambiguous ownership. Before each test, verify there is no real Remote path/command in the fixture and that `-FakeOnly` is mandatory. Abort on unknown/reparse roots, escaped file paths, failed ownership evidence or any possible collision with active RDC Relay v1.5.18. Exit nonzero on cleanup ambiguity and keep diagnostics; no cleanup of historical P1/P2 TEMP directories.
+
+**Minimal authorization request (separate):** permit only the above **new, uniquely marked disposable fake-only Host/GUI and dummy Remote process trees** on STARMER, with cooperative shutdown and read-only OS identity checks, under the existing OS-01..OS-24 acceptance matrix. Explicitly exclude the genuine Desktop Commander Remote 0.2.52, installed RDC Relay v1.5.18, system ACL policy, and RC1 installation. This document is *preparation only*: not approval and not a test result.

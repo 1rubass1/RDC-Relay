@@ -53,6 +53,9 @@ function Start-RdcOwnerGui {
     [bool]$handshake.payload.isActualRemote){throw 'RC1_OWNER_SNAPSHOT_MISMATCH'}
  $form.Text='RDC Relay 1.6.0 RC1 — Remote не подключён (режим проверки)'
  $finish.Enabled=$false;$accountButton.Enabled=$false
+ foreach($item in @($switchAccountItem,$reconnectItem,$devicesItem,$verifyDeviceItem,$openLogItem)){
+   if($item){$item.Enabled=$false}
+ }
  $helpButton.Enabled=$true
  $script:ownerCloseGeneration=[int]$handshake.payload.closeGeneration
  $script:ownerEventCursor=0
@@ -60,6 +63,8 @@ function Start-RdcOwnerGui {
  $script:ownerPending=$null
  $script:ownerStatus='FAKE_ONLY_RC1'
  $script:ownerLastShownRevision=-1
+ $script:ownerLastLogCursor=0
+ $script:ownerLastLogEpoch=-1
  Set-State 'Демонстрация RC1' 'Настоящий Desktop Commander Remote не подключён; действия недоступны.' ([Drawing.Color]::Khaki)
  Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Тестовый Host / Remote не подключён' $true
  Add-CompletedEvent 'RDC Relay 1.6.0 RC1. Авторитетный Host использует только синтетическое состояние; настоящий Remote НЕ запущен.'
@@ -75,8 +80,36 @@ function Start-RdcOwnerGui {
      if([string]$snapshot.hostGeneration -cne $script:ownerGeneration -or
         [bool]$snapshot.isActualRemote){throw 'RC1_OWNER_GENERATION_OR_MODE_CHANGED'}
      if([int]$snapshot.closeGeneration -gt $script:ownerCloseGeneration){$form.Close();return}
+     # The Host, never this GUI, owns the monotonic fake log cursor/state.
+     # A fresh GUI reconstructs its journal from the bounded Host snapshot.
+     $remoteSnapshot=$snapshot.remote
+     if(-not $remoteSnapshot -or [bool]$remoteSnapshot.isActualRemote){
+      throw 'RC1_FAKE_SNAPSHOT_REQUIRED'
+     }
+     $epoch=[long]$remoteSnapshot.logStreamEpoch
+     if($epoch -ne $script:ownerLastLogEpoch){
+      $script:ownerLastLogEpoch=$epoch
+      $script:ownerLastLogCursor=0
+      Reset-CompactLogSession
+      Add-CompletedEvent 'RC1: Host synthetic journal snapshot (not a real Remote log).'
+     }
+     $lastCursor=[long]$remoteSnapshot.logCursor
+     if($lastCursor -lt $script:ownerLastLogCursor){throw 'RC1_LOG_CURSOR_REGRESSED'}
+     $hasNewLog=$false
+     foreach($entry in @($remoteSnapshot.tail)){
+      $line=[string]$entry
+      if($line -notmatch '^([0-9]{6,18}) \| '){throw 'RC1_INVALID_LOG_TAIL'}
+      $lineCursor=[long]$Matches[1]
+      if($lineCursor -le $script:ownerLastLogCursor){continue}
+      if($lineCursor -gt $lastCursor){throw 'RC1_LOG_CURSOR_MISMATCH'}
+      Add-CompletedEvent ('[Host fake '+[string]$lineCursor+'] '+$line.Substring($Matches[0].Length))
+      $script:ownerLastLogCursor=$lineCursor
+      $hasNewLog=$true
+     }
+     if($hasNewLog){Render-CompactLog}
      if([long]$snapshot.revision -ne $script:ownerLastShownRevision){
       $script:ownerLastShownRevision=[long]$snapshot.revision
+      Set-State 'Remote отключён (RC1)' ('Host: '+[string]$remoteSnapshot.state+'; только синтетические данные.') ([Drawing.Color]::Khaki)
       Set-RuntimeDisplay ('Host PID '+[string]$snapshot.hostPid) 'Remote НЕ подключён | RC1' $true
      }
      $script:ownerNextVerb='GET_EVENTS'

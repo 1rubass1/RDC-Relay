@@ -3,8 +3,8 @@
 param([switch]$InjectFailure)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
-$folder=Join-Path $root 'dist\v1.6.0-RC1-PRODUCT-SOURCE-NOT-INSTALLABLE'
-$zipFile=Join-Path $root 'dist\RDCRelay-1.6.0-RC1-PRODUCT-SOURCE-NOT-INSTALLABLE.zip'
+$folder=Join-Path $root 'dist\v1.6.0-RC1-G4-OWNER-SOURCE-NOT-INSTALLABLE'
+$zipFile=Join-Path $root 'dist\RDCRelay-1.6.0-RC1-G4-OWNER-SOURCE-NOT-INSTALLABLE.zip'
 $pass=0;$fail=0
 function Check([bool]$ok,[string]$label){
  if($ok){$script:pass++;Write-Output ('PASS '+$label)}
@@ -17,10 +17,13 @@ try{
    $man.installable -eq $false -and $man.liveRemoteEnabled -eq $false -and
    $man.publishable -eq $false -and $man.autoUpdateEnabled -eq $false) 'source bundle explicitly noninstallable'
  $payload=@('remote-window.ps1','rc1-tray-host.ps1','rc1-owner-gui.ps1',
-  'RdcOwnerWire.cs','RdcOwnerRuntime.cs','RdcOwnerProcess.cs','rc1-candidate.json',
+  'RdcOwnerWire.cs','RdcOwnerRuntime.cs','RdcOwnerProcess.cs',
+ 'RdcOwnerTicketStore.cs','RdcOwnerRemoteState.cs','rc1-candidate.json',
   'RDCRelay.ico','divider-caustic.ps','divider-caustic-detail.ps',
   'divider-particles.ps','divider-particles-core.ps','update-notice.ps1','update.ps1')
- $allowed=@($payload|ForEach-Object{'Source/'+$_})+@('RdcOwnerRuntime.dll','RC1 BLOCKED - Launcher.exe','RC1 BLOCKED - Setup.exe')
+ $allowed=@($payload|ForEach-Object{'Source/'+$_})+@('RdcOwnerRuntime.dll','RC1 BLOCKED - Launcher.exe','RC1 BLOCKED - Setup.exe',
+  'Installer/Rc1CandidateSetup.cs','Installer/Rc1CandidateLauncher.cs',
+  'RC1 BLOCKED - Owner Setup.exe','RC1 BLOCKED - Owner Launcher.exe')
  $allowedAll=@($allowed)+@('owner-source-manifest.json')
  $records=@($man.files)
  $names=@($records|ForEach-Object{[string]$_.name})

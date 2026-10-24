@@ -42,12 +42,14 @@ try{
         $owner.Contains('if([bool]$eventData.gap)')) 'bounded monotonic ring and lost-event recovery'
  Check ($runtime.Contains('INCOMPATIBLE_GUI') -and
         $owner.Contains('RC1_OWNER_HELLO_REJECTED')) 'incompatible GUI build refused'
- Check ($runtime.Contains('FileMode.CreateNew') -and $runtime.Contains('FileSecurity') -and
-        $runtime.Contains('RC1_REPARSE_PARENT')) 'private ticket ACL before bytes and canonical path protection'
+ $ticketSource=Get-Content -LiteralPath (Join-Path $src 'RdcOwnerTicketStore.cs') -Raw -Encoding UTF8
+ Check ($ticketSource.Contains('FileMode.CreateNew') -and $ticketSource.Contains('FileSecurity') -and
+        $ticketSource.Contains('RevokeOnlyOwned') -and
+        $runtime.Contains('RdcOwnerTicketStore')) 'private ticket ACL before bytes, owned-only retry cleanup'
  Check ($runtime.Contains('Process.Start(info)') -and $runtime.Contains('sourceRoot') -and
         $runtime.Contains('remote-window.ps1')) 'Host uses current original GUI source, not a new demo window'
  Check ($runtime.Contains('exitRequested=true;closeGeneration++') -and
-        $runtime.Contains('if(exitRequested && gui==null)context.ExitThread();') -and
+        $runtime.Contains('if(exitRequested && gui==null && guiState=="NONE")context.ExitThread();') -and
         $runtime.Contains('if(!fakeOnly)throw')) 'fake-only Exit waits for GUI process; real Remote Exit remains blocked'
  # C# compiler never executes the generated DLL, WinForms or any process.
  $compiler=@((Join-Path $env:WINDIR 'Microsoft.NET\Framework64/v4.0.30319/csc.exe'),
@@ -56,7 +58,7 @@ try{
  $dll=Join-Path $root 'dist\v1.6.0-RC1-BLOCKED-PREFLIGHT\RdcOwnerRuntime.STATIC_TEST.dll'
  if([IO.File]::Exists($dll)){throw 'Unrecognized previous DLL; refuse overwrite'}
  try{
-  & $compiler /nologo /target:library ('/out:'+$dll) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll (Join-Path $src 'RdcOwnerWire.cs') (Join-Path $src 'RdcOwnerRuntime.cs')
+  & $compiler /nologo /target:library ('/out:'+$dll) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll (Join-Path $src 'RdcOwnerWire.cs') (Join-Path $src 'RdcOwnerProcess.cs') (Join-Path $src 'RdcOwnerTicketStore.cs') (Join-Path $src 'RdcOwnerRemoteState.cs') (Join-Path $src 'RdcOwnerRuntime.cs')
   Check ($LASTEXITCODE -eq 0 -and [IO.File]::Exists($dll)) 'real product Host+IPC source compiled into .NET Framework DLL'
  }finally{if([IO.File]::Exists($dll)){[IO.File]::Delete($dll)}}
 }catch{$fail++;Write-Output ('FAIL unexpected '+$_.Exception.Message)}

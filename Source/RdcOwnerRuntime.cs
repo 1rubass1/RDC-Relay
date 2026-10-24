@@ -17,6 +17,9 @@ public sealed class RdcOwnerRuntime : IDisposable {
  readonly object gate=new object();
  readonly string sourceRoot, guiScript, stateRoot, ticketFile, instance, generation;
  readonly string pipeName, logonSid;
+ readonly RdcOwnerTicketStore ticketStore;
+ readonly RdcOwnerRemoteState remoteSupervisor=new RdcOwnerRemoteState();
+ bool runRootCreated=false;
  readonly int hostPid, hostSession; readonly long hostBorn;
  readonly Mutex singleton;
  readonly ApplicationContext context=new ApplicationContext();
@@ -69,8 +72,10 @@ public sealed class RdcOwnerRuntime : IDisposable {
      PropagationFlags.None,AccessControlType.Allow));
    Directory.CreateDirectory(pilotRoot);
    Directory.CreateDirectory(stateRoot,acl);
+   runRootCreated=true;
    CheckPath(stateRoot);
-   ticketFile=Path.Combine(stateRoot,"gui-ticket.json");
+   ticketStore=new RdcOwnerTicketStore(stateRoot,generation,logonSid);
+   ticketFile=ticketStore.PathName;
    server=new RdcOwnerServer(pipeName,Dispatch);
    server.Start();
    tray.Icon=SystemIcons.Information; // deliberately not installed v1.5.18 icon
@@ -100,14 +105,25 @@ public sealed class RdcOwnerRuntime : IDisposable {
     lock(gate){
      RefreshGui();
      // GUI is asked via closeGeneration; no process kill or orphan.
-     if(exitRequested && gui==null)context.ExitThread();
+     // An unverified ticket/child is NOT a clean full exit.
+     if(exitRequested && gui==null && guiState=="NONE")context.ExitThread();
     }
    };
    pulse.Start();
+   remoteSupervisor.AddSyntheticLogLine("RDC Relay 1.6 RC1: Remote disabled until owner OS trial approval.");
    Append("host","RC1 fake-only owner startup");
   }catch{
+   // Fail-closed unwind of partly created host-owned resources.
+   try{pulse.Stop();pulse.Dispose();}catch{}
+   try{tray.Visible=false;tray.Dispose();}catch{}
+   bool ipcClean=true;
+   try{if(server!=null)server.Dispose();}catch{ipcClean=false;}
+   bool ownTicketClean=true;
+   try{if(ticketStore!=null)ownTicketClean=ticketStore.RevokeOnlyOwned();}catch{ownTicketClean=false;}
+   bool cleaned=ownTicketClean && RemoveEmptyOwnedRunRoot();
    try{singleton.ReleaseMutex();}catch{}
    singleton.Dispose();
+   if(!cleaned || !ipcClean)throw new InvalidOperationException("RC1_CONSTRUCTOR_NOT_CLEAN_IPC_OR_RUN_ROOT");
    throw;
   }
  }
@@ -126,31 +142,30 @@ public sealed class RdcOwnerRuntime : IDisposable {
  static void CheckPath(string path) {
   CheckParents(path);
  }
- void WritePrivateTicket(){
-  CheckPath(stateRoot);CheckParents(ticketFile);
-  if(File.Exists(ticketFile) || Directory.Exists(ticketFile))throw new InvalidOperationException("RC1_TICKET_EXISTS");
-  FileSecurity acl=new FileSecurity();acl.SetAccessRuleProtection(true,false);
-  acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(logonSid),
-    FileSystemRights.FullControl,AccessControlType.Allow));
-  acl.AddAccessRule(new FileSystemAccessRule(
-    new SecurityIdentifier(WellKnownSidType.NetworkSid,null),FileSystemRights.Read,
-    AccessControlType.Deny));
-  var data=RdcOwnerWire.Json.Serialize(new Dictionary<string,object>{
+ string TicketPayload(){
+  return RdcOwnerWire.Json.Serialize(new Dictionary<string,object>{
     {"pipe",pipeName},{"nonce",nonce},{"hostPid",hostPid},{"hostTicks",hostBorn},
     {"hostSession",hostSession},{"hostGeneration",generation},
     {"remoteMode","FAKE_ONLY_RC1"},{"protocol",1}});
-  byte[] bytes=new UTF8Encoding(false,true).GetBytes(data);
-  // ACL before secret bytes; CreateNew cannot follow a pre-planted leaf.
-  using(var f=new FileStream(ticketFile,FileMode.CreateNew,FileSystemRights.Write,
-   FileShare.None,4096,FileOptions.WriteThrough,acl)){
-   f.Write(bytes,0,bytes.Length);f.Flush(true);
-  }
+ }
+ bool RemoveEmptyOwnedRunRoot(){
+  if(!runRootCreated)return String.IsNullOrEmpty(stateRoot) || !Directory.Exists(stateRoot);
+  try{
+   if(String.IsNullOrEmpty(stateRoot) || instance==null ||
+      Path.GetFileName(stateRoot)!="run-"+instance)return false;
+   CheckPath(stateRoot);
+   if(!Directory.Exists(stateRoot))return true;
+   if(Directory.GetFileSystemEntries(stateRoot).Length!=0)return false;
+   Directory.Delete(stateRoot,false);
+   return !Directory.Exists(stateRoot);
+  }catch{return false;}
  }
  void Append(string src,string message){
   sequence++;
   if(message==null)message="";
   if(message.Length>120)message=message.Substring(0,120);
   events.Add(new Dictionary<string,object>{{"sequence",sequence},{"source",src},{"text",message}});
+  remoteSupervisor.NoteHostEvent(src+": "+message);
   if(events.Count>128)events.RemoveAt(0);
  }
  void RefreshGui(){
@@ -160,13 +175,14 @@ public sealed class RdcOwnerRuntime : IDisposable {
   }catch{guiState="UNVERIFIED";Append("gui","identity probe failed");return;}
   gui.Dispose();gui=null;childPid=0;childBorn=0;childSession=0;guiAuthenticated=false;
   nonce="";lastRequestSequence=0;requestIds.Clear();requestOrder.Clear();
+  if(!ticketStore.RevokeOnlyOwned()){
+   guiState="UNVERIFIED";Append("gui","ticket ownership unverified; relaunch denied");return;
+  }
   guiState="NONE";Append("gui","process exited");
-  // Don't delete a redirected/symlinked ticket under ambiguous provenance.
-  try{CheckPath(ticketFile);if(File.Exists(ticketFile))File.Delete(ticketFile);}catch{Append("gui","ticket cleanup not confirmed");}
  }
  public void OpenGui(){
   lock(gate){
-   if(disposed||exitRequested)return;
+   if(disposed||exitRequested || guiState=="UNVERIFIED")return;
    RefreshGui();
    if(gui!=null){
     try{
@@ -180,7 +196,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    try{
     CheckPath(guiScript);
     CheckPath(stateRoot);
-    nonce=Guid.NewGuid().ToString("N");WritePrivateTicket();
+    nonce=Guid.NewGuid().ToString("N");
     string ps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
       @"WindowsPowerShell\v1.0\powershell.exe");
     var info=new ProcessStartInfo(ps,
@@ -188,13 +204,21 @@ public sealed class RdcOwnerRuntime : IDisposable {
     info.WorkingDirectory=sourceRoot;
     info.UseShellExecute=false;
     info.CreateNoWindow=true;
-    gui=Process.Start(info);
+    gui=(Process)ticketStore.CreateThen(TicketPayload(),()=>Process.Start(info));
     if(gui==null)throw new InvalidOperationException("RC1_GUI_START_FAILED");
     childPid=gui.Id;childBorn=gui.StartTime.ToUniversalTime().Ticks;childSession=gui.SessionId;
     guiStarts++;guiState="SPAWNING";guiAuthenticated=false;Append("gui","spawned");
    }catch{
     guiFailures++;guiState="NONE";Append("gui","launch failed");
-    if(gui==null){childPid=0;childBorn=0;childSession=0;nonce="";}
+    if(gui==null){
+     childPid=0;childBorn=0;childSession=0;nonce="";
+     if(ticketStore!=null){
+      bool cleared=!ticketStore.HasOwnedTicket || ticketStore.RevokeOnlyOwned();
+      if(!cleared || File.Exists(ticketFile) || Directory.Exists(ticketFile)){
+       guiState="UNVERIFIED";Append("gui","ticket ownership unverified; relaunch denied");
+      }
+     }
+    }
     else {guiState="UNVERIFIED";Append("gui","started process identity incomplete");}
     // Fail closed: a potentially running child retains its handle and blocks
     // relaunch; do NOT kill it or clear its record after an identity failure.
@@ -202,13 +226,16 @@ public sealed class RdcOwnerRuntime : IDisposable {
   }
  }
  Dictionary<string,object> Snapshot(){
+  var observed=remoteSupervisor.Snapshot();
   return new Dictionary<string,object>{
    {"hostPid",hostPid},{"hostGeneration",generation},{"hostTicks",hostBorn},
-   {"remoteMode","FAKE_ONLY_RC1"},{"remoteId",fakeRemoteSession},
-   {"remoteConnected",false},{"account","DEMO: disabled"},{"logTail","FAKE: no Remote commands executed"},
+   {"remoteMode","FAKE_ONLY_RC1"},{"remoteId",remoteSupervisor.SessionId},
+   {"remote",observed},{"remoteConnected",false},{"account","DEMO: disabled"},
+   {"logTail",observed["tail"]},{"logCursor",observed["logCursor"]},
+   {"logStreamEpoch",observed["logStreamEpoch"]},
    {"guiPid",childPid},{"guiState",guiState},{"guiStarts",guiStarts},
    {"guiFailures",guiFailures},{"closeGeneration",closeGeneration},{"lastEventSeq",sequence},
-   {"revision",sequence},{"isActualRemote",false}
+   {"revision",sequence},{"remoteRevision",observed["revision"]},{"isActualRemote",false}
   };
  }
  string Answer(string type,string requestId,object payload){
@@ -270,10 +297,18 @@ public sealed class RdcOwnerRuntime : IDisposable {
  public void Dispose(){
   lock(gate){
    if(disposed)return;
-   disposed=true;pulse.Stop();pulse.Dispose();
-   tray.Visible=false;tray.Dispose();server.Dispose();
-   if(gui!=null)gui.Dispose(); // does NOT terminate any child process
-   try{singleton.ReleaseMutex();}catch{}singleton.Dispose();
+   disposed=true;
+   pulse.Stop();pulse.Dispose();tray.Visible=false;tray.Dispose();
+   bool ipcClean=true,filesClean=false,guiClean=(gui==null);
+   try{if(server!=null)server.Dispose();}catch{ipcClean=false;}
+   if(gui!=null)gui.Dispose(); // no force kill or unverified child stop
+   if(guiClean && ticketStore!=null){
+    filesClean=ticketStore.RevokeOnlyOwned() && RemoveEmptyOwnedRunRoot();
+   }
+   try{singleton.ReleaseMutex();}catch{}
+   singleton.Dispose();
+   if(!ipcClean || !filesClean || !guiClean)
+    throw new InvalidOperationException("RC1_OWNER_SHUTDOWN_NOT_CLEAN");
   }
  }
 }
