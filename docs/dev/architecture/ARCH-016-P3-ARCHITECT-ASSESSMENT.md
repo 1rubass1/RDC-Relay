@@ -1,3 +1,15 @@
+## Architect final P3 research-only acceptance — 2026-10-24
+
+**GO for research-only inclusion of P3/P3A in `development`, NOT an installed application or owner UX approval.** Independent [REV-006A-P3A](https://github.com/1rubass1/RDC-Relay/pull/22#issuecomment-6384285982) returned **PASS** for F1/F2 correction scope and fake-only P3 owner demo. Actual Reviewer-run STARMER WinPS 5.1 evidence: `Test-P3A-Cleanup.ps1` **28 PASS / 0 FAIL**, direct `Start-Demo.ps1 -SelfTest` exit 0 and zero own-root/marker/Host/GUI remnants, `Test-P3A-OwnerSwitch.ps1` **9 PASS / 0 FAIL**, `Test-P3VisibleWindow.ps1` exit 0 with 11 distinct actual GUI processes A→B and an unchanged fake Host PID/mock Remote UUID. Rebuilt portable ZIP hashes **20/20** equal source, no runtime authorization/RunState files. Reviewer code commit `7561221a789ce23398a864e26f170f402378decf`; after that code only coordination documentation changed. Architect verified that PR source/installer/release paths remain unchanged. Architect did **not** independently rerun STARMER tests.
+
+**F1 resolved** within the fake-only owner kit: helper returns nonzero if own Host/GUI lives, provenance or deletion is uncertain; SelfTest checks actual subprocess result and no marker/process/root before success. **F2 resolved** within the fake-only owner kit: canonical TEMP direct-child, reparse/allowlist/hash and matched RunId/RunProof/Host PID/birth/generation across marker, owner file and protected Host rendezvous; corrupted/foreign/modified source refuses removal. This is not malicious same-logon-proof authentication or comprehensive concurrent TOCTOU proof.
+
+**Still NOT CHECKED:** physical human X and tray double-click/menu, actual visual resemblance and DPI/accessibility, separately executed freshly extracted ZIP (execution policy blocked), real cross-logon/SMB, real Remote continuity, actual product release/install. Path TOCTOU is PARTIAL. All three historical P1/P2 TEMP folders remain NOT CLEAN/untouched.
+
+**Next phase requested by owner:** move from fake-only research to a **real v1.6.0 candidate implementation** on a separate topic branch, with owner pilot proposed as **1.6.0 RC1** and stable v1.6.0 reserved until explicit final owner sign-off. See [v1.6.0 owner pilot plan](../planning/V1-6-0-OWNER-PILOT.md). No installed product/real Remote changes or user-process actions are authorized by this research acceptance; those require explicit owner permission and safe stop/rollback gates. P3 research merge is not product completion.
+
+---
+
 # ARCH-016-P3 — Architect decision after REV-006A-P3
 
 **Date:** 2026-10-24 · **Stage:** B1 · **PR:** [#22](https://github.com/1rubass1/RDC-Relay/pull/22) · **Status:** CONDITIONAL ACCEPT of fake-only P3 feasibility; **NO-GO owner-kit handoff and PR merge** pending narrowly scoped P3A corrections.
