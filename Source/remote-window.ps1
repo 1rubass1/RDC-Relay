@@ -1,10 +1,24 @@
-﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
+﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview,[switch]$OwnerGui,[string]$OwnerTicketPath='')
 $ErrorActionPreference = 'Stop'
+if($OwnerGui){
+ if($SelfTest -or $Preview -or [string]::IsNullOrWhiteSpace($OwnerTicketPath)){
+  throw 'RC1_OWNER_GUI_REQUIRES_PRIVATE_TICKET'
+ }
+ # Suppresses legacy process/startup/update/user registry side effects.
+ # A separate Host owns all lifecycle operations in this branch.
+ $Preview=$true
+}
 $root = $PSScriptRoot
-$appVersion = '1.5.18'
+# Branch-only RC1 source marker blocks accidental legacy GUI execution against
+# a real Remote from the candidate checkout or a staged owner payload.
+if(-not $SelfTest -and -not $Preview -and -not $OwnerGui -and
+   [IO.File]::Exists((Join-Path $root 'rc1-candidate.json'))){
+ throw 'RC1_DEFAULT_LEGACY_REMOTE_LAUNCH_BLOCKED'
+}
+$appVersion = if($OwnerGui){'1.6.0 RC1'}else{'1.5.18'}
 # Flip to $false to remove the optional update notice and restore the original
 # startup auto-updater/footer with no other runtime or UI modifications.
-$script:enableUpdateNotice = $true
+$script:enableUpdateNotice = -not $OwnerGui
 $script:updateInstallRequested = $false
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
@@ -36,7 +50,8 @@ public static class RdcShellIdentity {
 }
 
 try {
-    [void][RdcShellIdentity]::SetCurrentProcessExplicitAppUserModelID('RDCRelay.App')
+    $ownerAppId=if($OwnerGui){'RDCRelay.OwnerPilot.1_6_RC1'}else{'RDCRelay.App'}
+    [void][RdcShellIdentity]::SetCurrentProcessExplicitAppUserModelID($ownerAppId)
 } catch {}
 
 
@@ -306,7 +321,7 @@ function Resolve-NpxPath {
 }
 
 $windowMutex = $null
-if (-not $SelfTest) {
+if (-not $SelfTest -and -not $OwnerGui) {
     $sha = [Security.Cryptography.SHA256]::Create()
     $key = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($PSScriptRoot.ToLowerInvariant()))).Replace('-','')
     $sha.Dispose()
@@ -6647,6 +6662,13 @@ if ($SelfTest) {
     Write-Output 'GUI LOGIC SELF TEST PASSED'
     $form.Dispose()
     if ($windowMutex) { $windowMutex.ReleaseMutex(); $windowMutex.Dispose() }
+    exit 0
+}
+if ($OwnerGui) {
+    # The exact ORIGINAL product WinForms controls are already constructed.
+    # Only the OwnerGui attach path runs the candidate remote-free IPC viewer.
+    . (Join-Path $root 'rc1-owner-gui.ps1')
+    Start-RdcOwnerGui
     exit 0
 }
 if ($Preview) {

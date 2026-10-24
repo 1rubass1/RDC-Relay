@@ -9,6 +9,11 @@
 )
 
 $ErrorActionPreference = 'Stop'
+# RC1 is never allowed to enter the stable updater/uninstaller transaction.
+# Fail before any network, installed-process, shortcut or account action.
+if ([IO.File]::Exists((Join-Path $PSScriptRoot 'rc1-candidate.json'))) {
+    throw 'RC1_UPDATE_BLOCKED: prerelease candidate requires separate approved update path'
+}
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
