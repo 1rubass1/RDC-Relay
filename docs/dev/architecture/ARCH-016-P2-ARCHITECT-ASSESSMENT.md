@@ -1,3 +1,17 @@
+## Architect final integration acceptance — 2026-10-24
+
+**GO / MERGED for research-only isolated P2 Host/GUI lifecycle, NOT product IPC or live Remote.** Independent [REV-006A-P2A](https://github.com/1rubass1/RDC-Relay/pull/20#issuecomment-6380793364) returned **PASS** for the two targeted corrections, and Architect merged [PR #20](https://github.com/1rubass1/RDC-Relay/pull/20) into `development` as **`7d356103855ae6416aae0d61beda8f026124cfab`**. The previous **DRAFT / NO-MERGE / P2A pending** language below records the earlier conditional phase; it is superseded **only for research inclusion**, not for product safety.
+
+**Independent Reviewer evidence (STARMER, Windows PowerShell 5.1):** Full isolated lifecycle matrix **20 PASS / 0 FAIL / 1 PARTIAL / 3 NOT CHECKED + 5 EXTRA PASS**, exit 0; narrow boundary tests **4 PASS / 0 FAIL / 2 NOT CHECKED**, exit 0; separate real visible native HWND test GUI A → WM_CLOSE → fresh source GUI B exit 0, distinct GUI PID/HWND, same fake Host PID and synthetic Remote UUID, no fixture-owned survivors. Reviewer validated the actual root-junction negative with unchanged external sentinel and GUI source hash, and a pre-ticket failure with a responsive Host, zero GUI, zero exposed secret files and generic launch-failed event. Review used implementation commit `321baf4096236fe16585848479ee407b669ca1e9`; following PR HEAD changes were only `COORDINATION/BOARD.md` and `PROJECT_CONTEXT.md`. Architect verified matching `Source/remote-window.ps1` blobs (both `e056e591afa0f2d49ffe4ee307bb167494b3f61f`) against `development` before merging. No separate Architect P2 runtime test was performed.
+
+**Remaining truthfully open gates:** P1-20 actual concurrent reparse/TOCTOU race is **PARTIAL**. File symlink negatives `Gui.ps1` and `gui-pulse.txt` were **NOT CHECKED** because creating symlinks failed with Win32 1314; don't infer a PASS. P1-11 cross-Windows-logon/SMB, P1-21 real mouse X and tray double-click/Explorer/DPI/accessibility, and P1-24 Setup/Portable/ZIP remain **NOT CHECKED**. No product security certification, signed/pinned binaries, real Remote ownership/shutdown or upgrade behavior was established.
+
+**Environmental residue:** The two historical P1 TEMP directories and the unrelated unknown-provenance `RDC-P2-aace757df1eb4f7cb3e2e17dbeec7a5d` remain **NOT CLEAN, untouched**. No ACL change, ownership takeover, elevation, removal or process stop is authorized; isolated new fixture cleanup does not override the historical status.
+
+**Next gate:** explicit Architect/owner approval is required before product `PROG-006A`, `PROG-006B`, `PROG-005B`, `PROG-005`, any actual Remote operation, installer/build integration, `main`/`stable` or release. Designer `DES-002` icon refresh stays queued pending creative brief. All production gates remain NO-GO.
+
+---
+
 # ARCH-016-P2 — Architect decision on REV-006A-P2
 
 **Date:** 2026-10-24  
