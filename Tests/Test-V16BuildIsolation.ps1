@@ -31,7 +31,12 @@ try{
  $names=@('RdcOwnerProcess.dll','RC1 BLOCKED - Launcher.exe','RC1 BLOCKED - Setup.exe',
           'RdcOwnerProcess.cs','rc1-candidate.json','V1-6-0-OWNER-PILOT.md')
  $listed=@($manifest.files|ForEach-Object{$_.name})
- Check ($listed.Count -eq $names.Count -and @($listed|Where-Object{$names -cnotcontains $_}).Count -eq 0) 'manifest allowlist exactly matches candidate evidence'
+ . (Join-Path $root 'Scripts\rc1-package-integrity.ps1')
+ $coverage=Get-Rc1PreflightProof -Folder $out -ArchivePath $zipPath
+ Check ($coverage.Files -eq 7 -and $coverage.Digests.Count -eq $names.Count) 'F1 strict exact manifest staging ZIP digest coverage'
+ Check ((@($listed|Select-Object -Unique).Count -eq $names.Count) -and
+        (@($listed|Where-Object{$names -cnotcontains $_}).Count -eq 0)) 'manifest contains each exact-cased name once'
+ Check (@($manifest.files|Where-Object{[string]$_.sha256 -cnotmatch '^[A-F0-9]{64}$'}).Count -eq 0) 'every mandatory member has valid nonempty SHA256'
  foreach($f in $manifest.files){
   Check ((Get-FileHash -LiteralPath (Join-Path $out $f.name) -Algorithm SHA256).Hash -ceq [string]$f.sha256) ('preflight file digest '+$f.name)
  }
@@ -47,6 +52,9 @@ try{
   }
  }finally{$zip.Dispose()}
  Check (-not (Test-Path -LiteralPath (Join-Path $out 'remote-session.log'))) 'no real Remote log present in preflight'
+ $adversarial=@(& (Join-Path $PSHOME 'powershell.exe') -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Test-V16PackageManifestNegative.ps1') 2>&1)
+ $adversarialExit=$LASTEXITCODE
+ Check ($adversarialExit -eq 0 -and ($adversarial -join ' ') -match 'RC1_F1_NEGATIVE_PASS=16 FAIL=0') 'F1 16 disposable exact-set/missing-digest/tamper/duplicate negative probes'
  if($InjectFailure){Check $false 'injected assertion must return nonzero'}
 }catch{$fail++;Write-Output ('FAIL exception '+$_.Exception.Message)}
 Write-Output ('RC1_BUILD_ISOLATION_PASS='+$pass+' FAIL='+$fail)

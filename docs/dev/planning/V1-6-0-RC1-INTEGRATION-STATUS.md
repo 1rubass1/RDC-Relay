@@ -57,3 +57,52 @@ No claim of complete \`1.6.0 RC1\` candidate or G1 permission follows from a gre
 ## Handoff
 
 \`PROG-006A-INTEGRATION\` is **blocked/partial**, not done. Reviewer should audit the G0 code and evidence as an explicitly non-deployable safety checkpoint. Architect must reassign substantial Host/GUI integration work and approve separate disposable OS-tree test rights before a deployable RC1 can be completed. Never merge this Draft PR as a completed RC1.
+
+
+## 2026-10-24 — substantive PROG-006A-INTEGRATION follow-up (same Draft PR #23)
+
+**Current disposition: PARTIAL real product-source integration, still NOT INSTALLABLE / NOT READY for live Remote or STARMER switchover.** This section supersedes G0's old statement that no product Host/GUI code exists. It does **not** certify that an actual OS Host/GUI lifecycle test or the real Remote integration has passed.
+
+### Completed — G0 F1 (Reviewer + Architect blocker)
+
+- `Scripts/rc1-package-integrity.ps1` provides strict **ordinal/case-sensitive**, 1:1 unique manifest, staging and ZIP filename coverage. Each expected file has one 64-character uppercase SHA-256, computed from staging; every ZIP member must match its own **manifest-attested** SHA-256 (the manifest entry itself is also hashed). Filesystem path components/reparse points, unknown directories/filenames, duplicate ZIP entries, wrong case and traversal names are denied.
+- `Scripts/pack-rc1-preflight.ps1` validates before writing; creates a GUID-named incomplete archive and verifies all entries before publishing it via non-overwriting move. A `-FixtureRoot` parameter accepts **only** a direct `TEMP/RDC-RC1-F1-<GUID>` and is for negative tests, not a general arbitrary-path packaging command.
+- `Tests/Test-V16PackageManifestNegative.ps1`: **16 PASS / 0 FAIL / exit 0**, real invocation of packer against newly generated disposable source copies, duplicate replacement, missing digest, edited bytes, rogue staged file, extra and duplicate ZIP entries, wrong case/path traversal. Tampered source leads to **nonzero packer exit and no trusted archive**.
+- `Tests/Test-V16BuildIsolation.ps1`: **28 PASS / 0 FAIL / exit 0**, including the 16-case negative suite, exact set and hash validity. Legacy G0 no-overwrite policy remains. No old ZIP overwritten. Deliberately injected error still expected to exit nonzero.
+
+### Completed — real product-source Host / original GUI split, but fake-only runtime
+
+- **Persistent RC1 Host source:** `Source/rc1-tray-host.ps1` and `Source/RdcOwnerRuntime.cs`. Dedicated per-install/per-logon mutex, NotifyIcon and context actions; latest GUI is launched in a *new Windows PowerShell process* from the **actual full product `Source/remote-window.ps1`**, not from a copied P3 demo Form. Duplicate GUI activation is non-destructive, does not rely on a missing HWND as proof of a hang, and cannot force-kill a process.
+- **Original GUI integration:** The full existing WinForms script gains `-OwnerGui -OwnerTicketPath` mode. It reuses the exact product controls/geometry, suppresses its legacy process/adoption/reconnection/updater/singleton side effects, identifies itself as **1.6.0 RC1**, disables real Remote/account actions, uses a distinct RC1 AppUserModelID and new `Source/rc1-owner-gui.ps1` as its host-bound state/event observer. Normal X exits only GUI in this mode; Host and its event revision persist by design. The old normal 1.5.18 path remains for unaffected installed stable builds; when an adjacent RC1 marker exists, accidental unflagged normal launch is explicitly rejected.
+- **Protected local IPC:** `Source/RdcOwnerWire.cs` adapts the accepted length-prefixed Named Pipe transport into the product namespace/prefix. It uses logon-SID DACL, NETWORK denial, OS-observed pipe peer PID/session, PID UTC birth comparison, max 8192-byte request and 65536-byte response, 2 async workers and finite deadlines. Host dispatch checks actual spawned GUI PID/birth/session, private nonce, generation, version and monotonic request ID/sequence. Exposed verbs only `HELLO`, `GET_SNAPSHOT`, `GET_EVENTS`, `DETACH`. Bounded 128-event ring, 64-event page and gap/re-snapshot. GUI polling runs via background Task, not a synchronous WinForms Timer read. The ticket's DACL applies **before any secret bytes** are written.
+- **Fake-only Exit:** In the fake-only Host, explicit confirmed exit signals the **own GUI** via a monotonically increased close generation; Host leaves its message loop only after that GUI exits. No actual Remote process is present. A future owned/adopted real-Remote full Exit **remains blocked** and is not covered by this behavior. No `taskkill /T /F`, `Stop-Process -Force` or `remote --logout` exists in the new Host IPC/Exit route.
+- **No real Remote activation:** `Source/rc1-tray-host.ps1` requires explicit `-FakeOnly` and refuses by default. Any actual Remote supervisor, process adoption, log reader and account data flow remain out of service until separately authorized OS-tree trials. This is still a production-source integration path, **not** acceptance of fake state as a working real connection.
+
+### Compiled product-source, packaging and measured results
+
+| STARMER Windows PowerShell 5.1 check | Actual |
+| --- | --- |
+| New Host + protected IPC C# .NET Framework compilation | **PASS / exit 0**, compile-only, DLL never executed as Host |
+| New/modified PowerShell parser for original GUI, owner GUI, tray Host, F1 scripts | **PASS, 0 parse errors** |
+| `Test-V16ProductHostGuiSource.ps1` checks product-source wiring, guarded lifecycle, IPC/identity/connection-gap source contract plus compiler | **19 PASS / 0 FAIL, exit 0** (**static/compile only**, not actual GUI interaction) |
+| Prior 8 mock/AST regression suites after changes to product `remote-window.ps1` | **8 PASS / 0 FAIL, each exit 0** |
+| G0-F1 package/isolation | **28 PASS / 0 FAIL, exit 0**; separate 16 negative probes PASS |
+| `Scripts/build-rc1-owner-staging.ps1` (original GUI + real Host source + IPC + four precompiled shaders + icon + updater code + compile-guarded Setup/Launcher) | **PASS / exit 0**, **18 allowlisted members**, staged in ignored dist only |
+| `Tests/Test-V16OwnerStagePackage.ps1` source/ZIP exact manifest checks | **44 PASS / 0 FAIL, exit 0**, injected test error exit **1** |
+| Repeat owner-source-stage builder (existing output) | **REFUSED / exit 1**, previous ZIP SHA256 unchanged |
+| Owner-source review ZIP (NOT INSTALLABLE) | **160,010 bytes / SHA-256 `5BA94A0F048CB91E455FF179A2BA6778B54D540CA3442DD37D91463916048523`** |
+| Actual dedicated GUI A→X→B, tray double-click, IPC resilience, process identity, Host PID persistence | **NOT CHECKED** — would create new OS process trees; separate owner authorization absent |
+| Genuine Remote 0.2.52 ownership, stop/reconnect, log/updates, account status | **NOT IMPLEMENTED / NOT CHECKED**, do not contact live Remote |
+| Standalone isolated **installable** Setup / Portable, verified installation and rollback | **BLOCKED / NOT CHECKED**, no owner G1 GO |
+
+**The new 18-member archive is a review-only source/compile receipt, NOT a 1.6.0 RC1 installer.** No stable update manifest, old stable launcher, real log, credentials or device session files are included. Candidate marker remains `installable=false` / `publishable=false`, Installer/Launcher stay compile-guarded, and the stable feed remains unchanged. Original G0 preflight ZIP was not replaced.
+
+### Remaining non-negotiable gates
+
+1. **Remote and original state/log ownership:** the RC1 Host currently stores fake authoritative state and events. Migrate and test the actual monolith's `Find-ExistingRemote`, `Start-Remote`, `Read-LiveLog`, reconnect FSM, account/journal/update presentation and event continuity into Host **without** calling the old force-kill `Stop-Remote`. This is substantive engineering work still outstanding, not done by new C# scaffolding.
+2. **Real IPC/WinForms execution verification:** compile/static source checks do not prove nonblocking timers, OS-peer PID/security under malicious peers, version skew, crash/rollback, real X and tray mouse or snapshot/event delivery. Reviewer/owner must approve and execute a narrowly scoped isolated process-tree test before permitting a GUI/Host run. No such new process-tree was run here.
+3. **Safe full Exit for real Remote:** independently verify actual launch ancestry, Owned/Adopted/Unknown, PID reuse/absence, shutdown and failure reporting using separately owner-authorized disposable OS process trees. `remote --logout` removes saved credentials and is never a generic Exit. Review the exact pinned `@wonderwhy-er/desktop-commander@0.2.52` behavior; upstream latest README and release changes alone do not prove a graceful Windows Ctrl+C contract.
+4. **True RC1 installer/portable:** separate version, path, AppUserModelID, mutex and pipe prefix are present in source; actual Setup transaction, auto-update suppression bound to installed root, rollback and G1 staged installation still need implementation, install/uninstall dry-run and independent review. The current blocked return code 42 remains active; never silently bypass it.
+5. **Human gate:** actual RC1 UI, X/remote continuity, full Exit, DPI/accessibility, high contrast, owner visual comparison, real saved accounts and STARMER pilot **NOT CHECKED**. Publication of v1.6.0 or any stable update channel is prohibited until later owner GO.
+
+**Safety:** No new RC1 Host or GUI process tree was launched. No real Desktop Commander Remote was started, adopted, stopped or reconnected; installed v1.5.18, `main`, `stable`, release manifests and three historic NOT CLEAN P1/P2 TEMP folders were not touched. No physical mouse interaction, Windows Explorer restart, system ACL/security-policy changes, install, publish or credential read. This continuation is offered for **one substantive independent integration review**, with **PARTIAL/NO-GO** explicitly recorded instead of a fictitious install-ready RC1.
