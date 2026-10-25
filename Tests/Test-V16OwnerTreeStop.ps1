@@ -9,7 +9,7 @@ namespace RdcRelay.Owner {
    new System.Collections.Generic.Dictionary<int,ProcessEvidence>();
   public System.Collections.Generic.List<int> Order =
    new System.Collections.Generic.List<int>();
-  public bool UnrecordedChild, DenyRequest, DenyWait, SurviveAck;
+  public bool UnrecordedChild, DenyRequest, DenyWait, SurviveAck, LateHostChild;
   public ProcessEvidence Read(int pid) {
    ProcessEvidence e;
    return Now.TryGetValue(pid, out e) ? e : null;
@@ -21,7 +21,13 @@ namespace RdcRelay.Owner {
    return ids.ToArray();
   }
   public bool Request(ProcessEvidence e) {
-   Order.Add(e.Pid);return !DenyRequest;
+   Order.Add(e.Pid);
+   if(LateHostChild && e.Pid == 502) {
+    Now.Add(504,new ProcessEvidence(504,10004,8,501,
+     @"C:\G7FakeIsolatedOwner\bin\foreign.exe",@"C:\G7FakeIsolatedOwner",
+     "d36d7b0562224280a911ee14ee342212",Ownership.Adopted));
+   }
+   return !DenyRequest;
   }
   public bool AwaitExit(ProcessEvidence e,int limit) {
    if(limit < 1 || limit > 5000 || DenyWait) return false;
@@ -65,6 +71,15 @@ try {
  $t=NewTree;$r=Exec $t @($root,$leaf) $true $true $true
  Check ($r.IsClean -and $r.Requested -eq 3 -and ($t.Order -join ',') -ceq '503,502,501' -and
   $t.Now.Count -eq 0) 'G7 full injected Exit child then Remote then Host'
+ $t=NewTree;$t.Now.Add(504,(Ev 504 10004 501 'foreign.exe' 'Adopted'))
+ $r=Exec $t @($root,$leaf) $true $true $true
+ Check ($r.Code.ToString() -ceq 'RefuseUnexpectedChild' -and -not $r.IsClean -and
+  $t.Order.Count -eq 0 -and $t.Now.ContainsKey(504)) 'G7-R1 unknown direct Host child refuses full Exit before request'
+ $t=NewTree;$t.LateHostChild=$true
+ $r=Exec $t @($root,$leaf) $true $true $true
+ Check ($r.Code.ToString() -ceq 'RefuseUnexpectedChild' -and -not $r.IsClean -and
+  ($t.Order -join ',') -ceq '503,502' -and $t.Now.ContainsKey(501) -and
+  $t.Now.ContainsKey(504)) 'G7-R1 late adopted Host child refuses Host request after Remote exit'
  $t=NewTree;$r=Exec $t @($root,$leaf) $false
  Check ($r.Code.ToString() -ceq 'RefuseMode' -and $t.Order.Count -eq 0) 'G7 production mode blocked'
  $t=NewTree;$r=Exec $t @($root,$leaf) $true $false

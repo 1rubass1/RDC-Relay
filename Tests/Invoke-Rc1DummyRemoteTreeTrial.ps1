@@ -1,14 +1,15 @@
 # G7 OS-04..10/16/24 future standalone disposable dummy-Remote tree.
-# DO NOT EXECUTE before a new explicit owner GO and independent harness pre-gate.
+# Owner approved isolated disposable trials 2026-10-25; independent pre-gate NOT CHECKED.
 # No @wonderwhy-er process, account files, product Remote, kill or logout.
-param([switch]$Execute,[switch]$OwnerApprovedDummyTree,
- [string]$IndependentPreGate='')
+param([switch]$Execute,[switch]$OwnerApprovedDummyTree)
 $ErrorActionPreference='Stop'
-if(-not $Execute -or -not $OwnerApprovedDummyTree -or
- $IndependentPreGate -cne 'REV-006A-G7-DUMMY-OS-PREGATE-PASS'){
- Write-Output 'NOT CHECKED: NEW DUMMY REMOTE TREE REQUIRES OWNER GO + INDEPENDENT PRE-GATE'
+# Owner explicitly authorized bounded disposable test trees on 2026-10-25.
+# This is NOT an independent Reviewer pre-gate PASS or permission to use real Remote.
+if(-not $Execute -or -not $OwnerApprovedDummyTree){
+ Write-Output 'NOT CHECKED: DUMMY TREE REQUIRES EXPLICIT -Execute AND OWNER GO'
  exit 42
 }
+Write-Output 'DUMMY_OWNER_GO=USER_2026-10-25 REVIEW_GATE=NOT_CHECKED'
 . (Join-Path $PSScriptRoot 'Rc1OsFixtureProof.ps1')
 $runId=[Guid]::NewGuid().ToString('N')
 $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([char]92)

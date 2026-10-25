@@ -184,6 +184,12 @@ namespace RdcRelay.Owner
             HashSet<int> direct = new HashSet<int>(observation.Children(recordedHost.Pid) ?? new int[0]);
             if (!direct.Contains(recordedRemoteTree[0].Pid))
                 return Fail(RemoteTreeExitCode.RefuseAncestry, 0, all);
+            // Full Host Exit is forbidden while ANY unrecorded direct Host
+            // child exists, including an Adopted GUI/other process. The
+            // separate GUI shutdown must be confirmed before this contract.
+            if (includeHostExit && (direct.Count != 1 ||
+                !direct.SetEquals(new int[] { recordedRemoteTree[0].Pid })))
+                return Fail(RemoteTreeExitCode.RefuseUnexpectedChild, 0, all);
             Dictionary<int, int> depths = new Dictionary<int, int>();
             depths[recordedRemoteTree[0].Pid] = 1;
             for (int round = 0; round < byPid.Count; round++)
@@ -233,6 +239,15 @@ namespace RdcRelay.Owner
                 if (remaining <= 0) return Fail(RemoteTreeExitCode.Timeout, requested, shutdown);
                 if (!ProcessOwnership.SameVerifiedProcess(e, observation.Read(e.Pid)))
                     return Fail(RemoteTreeExitCode.RefuseIdentity, requested, shutdown);
+                if (includeHostExit && e.Pid == recordedHost.Pid)
+                {
+                    // Re-read the Host's entire direct child inventory after
+                    // the Remote subtree has exited. A late/unrecorded child
+                    // blocks the Host request. Never force-stop unknown peers.
+                    int[] liveDirect = observation.Children(recordedHost.Pid);
+                    if (liveDirect == null || liveDirect.Length != 0)
+                        return Fail(RemoteTreeExitCode.RefuseUnexpectedChild, requested, shutdown);
+                }
                 if (!cooperative.Request(e))
                     return Fail(RemoteTreeExitCode.RefuseTransport, requested, shutdown);
                 requested++;
@@ -246,6 +261,12 @@ namespace RdcRelay.Owner
             foreach (ProcessEvidence e in shutdown)
                 if (observation.Read(e.Pid) != null)
                     return Fail(RemoteTreeExitCode.RefuseSurvivor, requested, shutdown);
+            if (includeHostExit)
+            {
+                int[] survivingDirect = observation.Children(recordedHost.Pid);
+                if (survivingDirect == null || survivingDirect.Length != 0)
+                    return Fail(RemoteTreeExitCode.RefuseSurvivor, requested, shutdown);
+            }
             return new RemoteTreeExitResult(RemoteTreeExitCode.Complete, requested, new int[0]);
         }
     }

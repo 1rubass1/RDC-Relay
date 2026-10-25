@@ -93,7 +93,12 @@ function Read-Rc1Attestation([string]$runId) {
   throw 'NOT_CLEAN_NOT_DIRECT_TEMP_CHILD'
  }
  foreach($item in @($p.Root,$p.Proof,$p.Sentinel)){Assert-Rc1NoReparse $item}
- Assert-Rc1Names $p.Proof @('creation.json','exit.json')
+ # Additional progress files are accepted only after their complete hash-bound
+ # chain and exact names are validated by Get-Rc1CleanupProgress.
+ if(-not [IO.File]::Exists((Join-Path $p.Proof 'creation.json')) -or
+    -not [IO.File]::Exists((Join-Path $p.Proof 'exit.json'))){
+  throw 'NOT_CLEAN_BASE_PROOF_MISSING'
+ }
  foreach($name in @('creation.json','exit.json')){
   Assert-Rc1NoReparse (Join-Path $p.Proof $name)
  }
@@ -160,6 +165,76 @@ function Assert-Rc1MandatorySentinel([string]$runId,[byte[]]$expected,[object]$c
   throw 'OS_SENTINEL_RUN_PROVENANCE'
  }
 }
+# Resume journal: exact CreateNew intent-before-delete / done-after-delete pairs.
+# A deleted file without matching intent remains NOT CLEAN; never retrofit old
+# partial roots. Each fresh invocation revalidates every proof and source hash.
+function Get-Rc1CleanupProgress([hashtable]$proof) {
+ $p=$proof.Paths;$c=$proof.Creation
+ Assert-Rc1NoReparse $p.Proof
+ $allowed=New-Object 'System.Collections.Generic.List[string]'
+ $allowed.Add('creation.json');$allowed.Add('exit.json')
+ $completed=0;$pending=-1;$previous='START'
+ for($index=0;$index -lt $Rc1OsNames.Count;$index++){
+  $name=[string]$Rc1OsNames[$index]
+  $intentName=('intent-{0:D2}.json' -f ($index+1))
+  $doneName=('done-{0:D2}.json' -f ($index+1))
+  $intent=Join-Path $p.Proof $intentName
+  $done=Join-Path $p.Proof $doneName
+  if(-not [IO.File]::Exists($intent)){
+   if([IO.File]::Exists($done)){throw 'NOT_CLEAN_DONE_WITHOUT_INTENT'}
+   break
+  }
+  Assert-Rc1NoReparse $intent
+  $allowed.Add($intentName)
+  $bytes=[IO.File]::ReadAllBytes($intent)
+  $item=ConvertFrom-Json -InputObject ([Text.Encoding]::UTF8.GetString($bytes))
+  $hash=Get-Rc1Sha $bytes
+  if($item.RunId -cne $p.RunId -or $item.Epoch -cne $c.Epoch -or
+     $item.Index -ne $index -or $item.Name -cne $name -or
+     $item.FileHash -cne [string]$c.Files.$name -or
+     $item.PrevDoneHash -cne $previous){
+    throw ('NOT_CLEAN_INTENT_BINDING_'+$index)
+  }
+  if(-not [IO.File]::Exists($done)){$pending=$index;break}
+  Assert-Rc1NoReparse $done
+  $allowed.Add($doneName)
+  $doneBytes=[IO.File]::ReadAllBytes($done)
+  $receipt=ConvertFrom-Json -InputObject ([Text.Encoding]::UTF8.GetString($doneBytes))
+  if($receipt.RunId -cne $p.RunId -or $receipt.Epoch -cne $c.Epoch -or
+     $receipt.Index -ne $index -or $receipt.Name -cne $name -or
+     $receipt.IntentSha -cne $hash){
+    throw ('NOT_CLEAN_DONE_BINDING_'+$index)
+  }
+  $previous=Get-Rc1Sha $doneBytes
+  $completed++
+ }
+ Assert-Rc1Names $p.Proof ($allowed.ToArray())
+ $remaining=New-Object 'System.Collections.Generic.List[string]'
+ for($i=$completed;$i -lt $Rc1OsNames.Count;$i++){
+  $f=Join-Path (Join-Path $p.Root 'Source') $Rc1OsNames[$i]
+  if($i -eq $pending -and -not [IO.File]::Exists($f)){
+   continue # interrupted immediately AFTER exact deletion, BEFORE done record
+  }
+  $remaining.Add([string]$Rc1OsNames[$i])
+ }
+ return @{Completed=$completed;Pending=$pending;Previous=$previous;
+  Remaining=$remaining.ToArray();JournalNames=$allowed.ToArray()}
+}
+function Assert-Rc1PidOverlap([int]$recordedPid,[long]$recordedBirth,
+ [int]$observedPid,[long]$observedBirth,[string]$commandLine,[string]$root) {
+ if($recordedPid -ne $observedPid){return}
+ if($commandLine -and $commandLine.IndexOf($root,[StringComparison]::OrdinalIgnoreCase) -ge 0){
+  throw ('NOT_CLEAN_PROCESS_REFERENCES_ROOT '+$observedPid)
+ }
+ if($recordedBirth -le 0 -or $observedBirth -le 0){
+  throw ('NOT_CLEAN_PID_BIRTH_UNVERIFIED '+$observedPid)
+ }
+ if($recordedBirth -eq $observedBirth){
+  throw ('NOT_CLEAN_VERIFIED_TEST_PROCESS_STILL_ALIVE '+$observedPid)
+ }
+ # Reused PID with OS-confirmed *different* birth is a separate process.
+ # Treat it as foreign: do not send any signal, do not call Stop-Process.
+}
 function Assert-Rc1CleanupRound([hashtable]$proof,[string[]]$remaining){
  $p=$proof.Paths;$c=$proof.Creation
  foreach($item in @($p.Root,$p.Proof,$p.Sentinel)){Assert-Rc1NoReparse $item}
@@ -193,38 +268,111 @@ function Assert-Rc1CleanupRound([hashtable]$proof,[string[]]$remaining){
    throw ('NOT_CLEAN_PROCESS_REFERENCES_ROOT '+$row.ProcessId)
   }
   foreach($known in $proof.Exit.Processes){
-   if([int]$row.ProcessId -eq [int]$known.Pid){throw ('NOT_CLEAN_REUSED_OR_LIVE_PID '+$row.ProcessId)}
+   if([int]$row.ProcessId -ne [int]$known.Pid){continue}
+   # A PID alone does NOT confer ownership. A different OS birth belongs
+   # to a distinct unrelated process and must never be killed or controlled.
+   # If the enumerated PID disappeared, corroborate with a fresh CIM query.
+   try{
+    $running=[Diagnostics.Process]::GetProcessById([int]$row.ProcessId)
+    $freshBorn=$running.StartTime.ToUniversalTime().Ticks
+    $running.Dispose()
+   }catch{
+    $again=Get-CimInstance Win32_Process -Filter ('ProcessId='+$row.ProcessId) -ErrorAction Stop
+    if(-not $again){continue}
+    throw ('NOT_CLEAN_PID_BIRTH_UNREADABLE '+$row.ProcessId)
+   }
+   Assert-Rc1PidOverlap ([int]$known.Pid) ([long]$known.BirthUtcTicks) ([int]$row.ProcessId) $freshBorn ([string]$row.CommandLine) $p.Root
+   # Verified DIFFERENT birth: unrelated process is left strictly untouched.
   }
  }
 }
-function Remove-Rc1AttestedFixture([string]$runId,[switch]$ValidateOnly){
+function Remove-Rc1AttestedFixture([string]$runId,[switch]$ValidateOnly,
+ [ValidateRange(-1,16)][int]$InjectFailureAfterDeleted=-1){
  $proof=Read-Rc1Attestation $runId
- $remaining=@($Rc1OsNames)
- Assert-Rc1CleanupRound $proof $remaining
- if($ValidateOnly){Write-Output ('PASS VERIFIED_ATTESTED_ONLY '+$runId);return}
- foreach($name in $Rc1OsNames){
-  Assert-Rc1CleanupRound $proof $remaining
-  [IO.File]::Delete((Join-Path (Join-Path $proof.Paths.Root 'Source') $name))
-  $remaining=@($remaining|Where-Object{$_ -cne $name})
+ $progress=Get-Rc1CleanupProgress $proof
+ Assert-Rc1CleanupRound $proof $progress.Remaining
+ if($ValidateOnly){
+  Write-Output ('PASS VERIFIED_ATTESTED_ONLY '+$runId+
+   ' COMPLETED='+$progress.Completed+' PENDING='+$progress.Pending)
+  return
  }
+ $src=Join-Path $proof.Paths.Root 'Source'
+ $iterations=0
+ while($true){
+  if($iterations++ -gt 40){throw 'NOT_CLEAN_JOURNAL_PROGRESS_LIMIT'}
+  $progress=Get-Rc1CleanupProgress $proof
+  Assert-Rc1CleanupRound $proof $progress.Remaining
+  if($progress.Completed -eq $Rc1OsNames.Count -and $progress.Pending -eq -1){break}
+  if($progress.Pending -eq -1){
+   $index=$progress.Completed
+   $name=[string]$Rc1OsNames[$index]
+   $intentName=('intent-{0:D2}.json' -f ($index+1))
+   Write-Rc1NewJson (Join-Path $proof.Paths.Proof $intentName) @{
+    RunId=$runId;Epoch=[string]$proof.Creation.Epoch;Index=$index;
+    Name=$name;FileHash=[string]$proof.Creation.Files.$name;
+    PrevDoneHash=$progress.Previous
+   }
+   continue
+  }
+  $index=$progress.Pending
+  $name=[string]$Rc1OsNames[$index]
+  $file=Join-Path $src $name
+  Assert-Rc1NoReparse $file
+  if([IO.File]::Exists($file)){
+   if((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -cne
+     [string]$proof.Creation.Files.$name){throw 'NOT_CLEAN_SOURCE_CHANGED_PREDELETE'}
+   # The already-created hash-bound intent is durable BEFORE this delete.
+   [IO.File]::Delete($file)
+   if($InjectFailureAfterDeleted -eq ($index+1)){
+    throw ('G7_INJECTED_INTERRUPTION_AFTER_DELETE_'+($index+1))
+   }
+  }
+  # On resume, a missing file is permitted ONLY with its exact next intent.
+  $intentName=('intent-{0:D2}.json' -f ($index+1))
+  $intentPath=Join-Path $proof.Paths.Proof $intentName
+  Assert-Rc1NoReparse $intentPath
+  $intentSha=Get-Rc1Sha ([IO.File]::ReadAllBytes($intentPath))
+  $doneName=('done-{0:D2}.json' -f ($index+1))
+  Write-Rc1NewJson (Join-Path $proof.Paths.Proof $doneName) @{
+   RunId=$runId;Epoch=[string]$proof.Creation.Epoch;
+   Index=$index;Name=$name;IntentSha=$intentSha
+  }
+ }
+ $progress=Get-Rc1CleanupProgress $proof
  Assert-Rc1CleanupRound $proof @()
- [IO.Directory]::Delete((Join-Path $proof.Paths.Root 'Source'),$false)
+ if($progress.Completed -ne $Rc1OsNames.Count -or $progress.Pending -ne -1){
+  throw 'NOT_CLEAN_FINAL_JOURNAL_NOT_COMPLETE'
+ }
+ [IO.Directory]::Delete($src,$false)
  [IO.Directory]::Delete((Join-Path $proof.Paths.Root 'owner-state'),$false)
  if([IO.Directory]::GetFileSystemEntries($proof.Paths.Root).Length -ne 0){throw 'NOT_CLEAN_ROOT_NOT_EMPTY'}
  [IO.Directory]::Delete($proof.Paths.Root,$false)
- # Recheck independent sentinel and proof before deleting ONLY those exact own files.
- foreach($item in @($proof.Paths.Sentinel,$proof.Paths.Proof)){Assert-Rc1NoReparse $item}
+ # Root has been removed; source deletion evidence remains in the protected
+ # complete journal until after all proof bytes and sentinel are verified.
+ Assert-Rc1NoReparse $proof.Paths.Sentinel
+ Assert-Rc1NoReparse $proof.Paths.Proof
  if((Get-Rc1Sha ([IO.File]::ReadAllBytes($proof.Paths.Sentinel))) -cne
-    [string]$proof.Creation.SentinelHash){throw 'NOT_CLEAN_SENTINEL_CHANGED_LAST_BOUNDARY'}
- Assert-Rc1Names $proof.Paths.Proof @('creation.json','exit.json')
- [IO.File]::Delete($proof.Paths.Sentinel)
- foreach($name in @('creation.json','exit.json')){
-  $f=Join-Path $proof.Paths.Proof $name
-  Assert-Rc1NoReparse $f
-  $expected=if($name -ceq 'creation.json'){$proof.CreationSha}else{$proof.ExitSha}
-  if((Get-Rc1Sha ([IO.File]::ReadAllBytes($f))) -cne $expected){throw 'NOT_CLEAN_PROOF_CHANGED_LAST_BOUNDARY'}
-  [IO.File]::Delete($f)
+   [string]$proof.Creation.SentinelHash){throw 'NOT_CLEAN_SENTINEL_LAST_BOUNDARY'}
+ $finalProgress=Get-Rc1CleanupProgress $proof
+ if($finalProgress.Completed -ne $Rc1OsNames.Count -or $finalProgress.Pending -ne -1){
+  throw 'NOT_CLEAN_FINAL_PROOF_PROGRESS_CHANGED'
+ }
+ if((Get-Rc1Sha ([IO.File]::ReadAllBytes((Join-Path $proof.Paths.Proof 'creation.json')))) -cne $proof.CreationSha -or
+   (Get-Rc1Sha ([IO.File]::ReadAllBytes((Join-Path $proof.Paths.Proof 'exit.json')))) -cne $proof.ExitSha){
+  throw 'NOT_CLEAN_FINAL_BASE_PROOF_CHANGED'
+ }
+ Assert-Rc1Names $proof.Paths.Proof $progress.JournalNames
+ foreach($f in $progress.JournalNames){
+  $path=Join-Path $proof.Paths.Proof $f
+  Assert-Rc1NoReparse $path
+  if(-not [IO.File]::Exists($path)){throw 'NOT_CLEAN_MISSING_PROOF_LAST_BOUNDARY'}
+ }
+ # Exact nonrecursive private proof teardown; an interruption leaves honest
+ # NOT CLEAN evidence, never authorizes a guessed directory sweep.
+ foreach($f in $progress.JournalNames){
+  [IO.File]::Delete((Join-Path $proof.Paths.Proof $f))
  }
  [IO.Directory]::Delete($proof.Paths.Proof,$false)
+ [IO.File]::Delete($proof.Paths.Sentinel)
  Write-Output ('PASS CLEANED_ATTESTED_ONLY '+$runId)
 }

@@ -10,6 +10,10 @@ function Check([bool]$ok,[string]$label){
 function Refuses([scriptblock]$body){
  try{& $body|Out-Null;return $false}catch{Write-Host ('TRACE_EXPECTED_REFUSAL '+$_.Exception.Message);return $true}
 }
+Check (-not (Refuses { Assert-Rc1PidOverlap 12096 10001 12096 20002 'powershell.exe -NoProfile' 'C:\RDC-RC1-OS-TEST' })) 'G7-R2 reused PID distinct verified UTC birth is not own process'
+Check (Refuses { Assert-Rc1PidOverlap 12096 10001 12096 10001 'powershell.exe' 'C:\RDC-RC1-OS-TEST' }) 'G7-R2 same PID and exact birth blocks cleanup'
+Check (Refuses { Assert-Rc1PidOverlap 12096 10001 12096 0 'powershell.exe' 'C:\RDC-RC1-OS-TEST' }) 'G7-R2 unreadable PID birth fails closed'
+Check (Refuses { Assert-Rc1PidOverlap 12096 10001 12096 20002 'powershell.exe -File C:\RDC-RC1-OS-TEST\Source\remote-window.ps1' 'C:\RDC-RC1-OS-TEST' }) 'G7-R2 reused PID still referencing own root blocks cleanup'
 $objects=New-Object 'System.Collections.Generic.List[object]'
 try{
  $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -73,6 +77,26 @@ try{
    Check (Refuses {Remove-Rc1AttestedFixture $id}) 'G7-F2 unexpected entry refuses delete'
    [IO.File]::Delete($unexpected)
    Check (-not (Refuses {Remove-Rc1AttestedFixture $id -ValidateOnly})) 'G7-F2 restored fixture valid only read-only'
+   # Inject a real fault AFTER exact deletion #7 but BEFORE done-07 is written.
+   # Own-root proof remains; a second invocation must independently validate
+   # the write-ahead intent and resume only this exact test fixture.
+   Check (Refuses {Remove-Rc1AttestedFixture $id -InjectFailureAfterDeleted 7}) 'G7-R2 deliberate interruption after 7th own file fails nonzero'
+   $partial=Get-Rc1CleanupProgress (Read-Rc1Attestation $id)
+   Check ($partial.Completed -eq 6 -and $partial.Pending -eq 6 -and
+    [IO.Directory]::GetFiles($src).Length -eq 9) 'G7-R2 7 deleted files are exactly journalled, 9 original remain'
+   $intent=Join-Path $p.Proof 'intent-07.json'
+   $originalIntent=[IO.File]::ReadAllBytes($intent)
+   [IO.File]::WriteAllBytes($intent,[Text.Encoding]::UTF8.GetBytes('{"fake":"journal"}'))
+   Check (Refuses {Remove-Rc1AttestedFixture $id -ValidateOnly}) 'G7-R2 interrupted journal tampering denies resume'
+   Check ([IO.Directory]::GetFiles($src).Length -eq 9) 'G7-R2 journal tamper refuses all further deletion'
+   [IO.File]::WriteAllBytes($intent,$originalIntent)
+   Check (-not (Refuses {Remove-Rc1AttestedFixture $id -ValidateOnly})) 'G7-R2 read-only validation accepts exact interrupted own journal'
+   $resumed= -not (Refuses {Remove-Rc1AttestedFixture $id})
+   Check $resumed 'G7-R2 resumed cleanup completes only attested run'
+   $owned=$objects[$objects.Count-1]
+   $owned['AlreadyClean']=$resumed
+   Check ($resumed -and -not [IO.Directory]::Exists($p.Root) -and
+     -not [IO.Directory]::Exists($p.Proof) -and -not [IO.File]::Exists($p.Sentinel)) 'G7-R2 original root, proof and sentinel cleaned after confirmed resume'
   }else{
    Check (Refuses {Remove-Rc1AttestedFixture $id}) 'G7-F2 GUID-lookalike without independent attestation refused'
    Check ([IO.Directory]::Exists($p.Root) -and [IO.File]::Exists($p.Sentinel)) 'G7-F2 forged fixture and sentinel remain unchanged after refusal'
@@ -86,6 +110,12 @@ try{
  foreach($item in $objects){
   $p=$item.Paths
   try{
+   if($item.AlreadyClean){
+    Check (-not [IO.Directory]::Exists($p.Root) -and
+      -not [IO.Directory]::Exists($p.Proof) -and
+      -not [IO.File]::Exists($p.Sentinel)) 'G7 interrupted fixture removed only after verified resume'
+    continue
+   }
    Assert-Rc1NoReparse $p.Root
    Assert-Rc1NoReparse $p.Sentinel
    $src=Join-Path $p.Root 'Source'
