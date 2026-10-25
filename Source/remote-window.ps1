@@ -3615,7 +3615,7 @@ $hintHost.Padding = New-Object Windows.Forms.Padding(0)
 
 $hint = New-Object Windows.Forms.Label
 $hint.AutoSize = $true
-$hint.Text = 'Крестик закрывает окно вместе с remote-процессом.'
+$hint.Text = if($OwnerGui){'Крестик закрывает только окно; Host и Remote работают.'}else{'Крестик закрывает окно вместе с remote-процессом.'}
 $hint.ForeColor = [Drawing.Color]::Gray
 $hint.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
 
@@ -3623,14 +3623,15 @@ $hintSep = New-Object Windows.Forms.Label
 $hintSep.AutoSize = $true
 $hintSep.Text = '•'
 $hintSep.ForeColor = $accentOrange
-$hintSep.Margin = New-Object Windows.Forms.Padding(6,2,6,0)
+$hintSep.Margin = New-Object Windows.Forms.Padding(2,2,6,0)
 
 $hintVersion = New-Object Windows.Forms.Label
 $hintVersion.AutoSize = $true
 $hintVersion.Text = 'v' + $appVersion
 $hintVersion.Font = $hint.Font
 $hintVersion.ForeColor = [Drawing.Color]::Gray
-$hintVersion.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
+# Align the shorter version glyph line with the adjacent footer hint baseline.
+$hintVersion.Margin = New-Object Windows.Forms.Padding(0,4,0,0)
 
 $hintHost.Controls.Add($hint)
 $hintHost.Controls.Add($hintSep)
