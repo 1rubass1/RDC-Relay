@@ -1,16 +1,21 @@
 # Isolated, user-approved observer-pilot update. Never controls Desktop Commander Remote.
 # Non-executing by default. Only verified own Host can receive cooperative WM_QUIT.
-param([switch]$Execute,[string]$Package,[int]$ExpectedHostPid=0,[long]$ExpectedHostBorn=0,
+param([switch]$Execute,[string]$Package,[string]$ExpectedSetupSha256='',
+      [int]$ExpectedHostPid=0,[long]$ExpectedHostBorn=0,
       [int]$ExpectedRemotePid=0,[long]$ExpectedRemoteBorn=0)
 $ErrorActionPreference='Stop'
 if(-not $Execute){Write-Output 'RC1_OBSERVER_UPGRADE_INERT_USE_EXECUTE';exit 42}
 $repo=Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'rc1-private-upgrade-transaction.ps1')
 $app=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RDCRelayOwnerPilot\1.6.0-RC1\app'
 $pilotRoot=Split-Path -Parent $app
 $expectedHostScript=Join-Path $app 'Source\rc1-tray-host.ps1'
 $expectedExe=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $backup=$null
 $moved=$false
+$oldManifestSha=''
+$newManifestSha=''
+$newSetupConfirmed=$false
 function Assert-ExactPath([string]$path){
  $current=[IO.Path]::GetFullPath($path)
  while($current){
@@ -33,8 +38,10 @@ function Assert-Manifest([string]$dir){
  $seen=New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
  foreach($row in $manifest.files){
   $name=[string]$row.name
-  if($name -notmatch '^(Source/[A-Za-z0-9_.-]+|RdcOwnerRuntime\.dll|RC1 Pilot Launcher\.exe)$' -or
-     -not $seen.Add($name)){throw 'RC1_UPGRADE_MANIFEST_NAME'}
+  if($script:Rc1UpgRequired -cnotcontains $name -or
+     -not $seen.Add($name) -or [string]$row.sha256 -cnotmatch '^[A-F0-9]{64}$'){
+   throw 'RC1_UPGRADE_MANIFEST_NAME'
+  }
   $file=Join-Path $dir ($name.Replace('/','\'))
   Assert-ExactPath $file
   if(-not [IO.File]::Exists($file) -or
@@ -42,9 +49,19 @@ function Assert-Manifest([string]$dir){
    throw ('RC1_UPGRADE_HASH_MISMATCH '+$name)
   }
  }
+ foreach($name in $script:Rc1UpgRequired){if(-not $seen.Contains($name)){throw 'RC1_UPGRADE_MISSING_REQUIRED'}}
+ $expected=@($script:Rc1UpgRequired)+@('owner-source-manifest.json','RC1 Pilot Setup.exe')
+ $actual=@([IO.Directory]::GetFiles($dir,'*',[IO.SearchOption]::AllDirectories) |
+  ForEach-Object{$_.Substring($dir.Length+1).Replace('\','/')})
+ if($actual.Count -ne $expected.Count -or
+   @($actual|Where-Object{$expected -cnotcontains $_}).Count -ne 0){throw 'RC1_UPGRADE_STAGE_NOT_EXACT'}
+ $dirs=@([IO.Directory]::GetDirectories($dir,'*',[IO.SearchOption]::AllDirectories) |
+  ForEach-Object{$_.Substring($dir.Length+1).Replace('\','/')})
+ if($dirs.Count -ne 1 -or $dirs[0] -cne 'Source'){throw 'RC1_UPGRADE_STAGE_UNKNOWN_DIR'}
  $marker=Get-Content -LiteralPath (Join-Path $dir 'Source\rc1-candidate.json') -Raw -Encoding UTF8|ConvertFrom-Json
  if($marker.installable -ne $true -or $marker.publishable -ne $false -or
-    $marker.autoUpdateEnabled -ne $false -or
+    $marker.autoUpdateEnabled -ne $false -or $marker.remoteStopEnabled -ne $false -or
+    $marker.remoteLaunchEnabled -ne $false -or $marker.accountMutationEnabled -ne $false -or
     $marker.observerMode -cne 'OBSERVED_READ_ONLY_RC1'){throw 'RC1_UPGRADE_MARKER'}
 }
 function Get-VerifiedHost{
@@ -83,7 +100,14 @@ try{
   throw 'RC1_UPGRADE_PACKAGE_NOT_ISOLATED'
  }
  Assert-Manifest $Package
- Assert-Manifest $app
+ # Installer is not included in its own payload manifest: require its
+ # independent build-record hash, never run an unknown candidate executable.
+ if($ExpectedSetupSha256 -cnotmatch '^[A-F0-9]{64}$' -or
+    (Get-FileHash -LiteralPath (Join-Path $Package 'RC1 Pilot Setup.exe') -Algorithm SHA256).Hash -cne
+     $ExpectedSetupSha256){throw 'RC1_UPGRADE_SETUP_HASH_NOT_APPROVED'}
+ # Pin both approved candidate and known-good previous RC1 before ANY Host exit.
+ $newManifestSha=(Get-FileHash -LiteralPath (Join-Path $Package 'owner-source-manifest.json') -Algorithm SHA256).Hash
+ $oldManifestSha=Assert-Rc1UpgPayload $app
  Assert-LiveRemote
  $hostProcess=Get-VerifiedHost
  # Own Host GUI must already have exited normally (X). Never terminate a GUI.
@@ -125,7 +149,8 @@ public static class Rc1PilotQuit {
   $setupProc=Start-Process -FilePath $setup -ArgumentList '--owner-approved-side-by-side' -Wait -PassThru
  }finally{Remove-Item Env:RDC_RC1_OWNER_G1_GO -ErrorAction SilentlyContinue}
  if($setupProc.ExitCode -ne 0){throw ('RC1_UPGRADE_SETUP_EXIT_'+$setupProc.ExitCode)}
- Assert-Manifest $app
+ $newSetupConfirmed=$true
+ [void](Assert-Rc1UpgPayload $app $newManifestSha)
  Write-Output ('RC1_UPGRADE_ROLLBACK_BACKUP='+$backup)
  Write-Output 'RC1_UPGRADE_NEW_SETUP_EXIT=0'
  # PowerShell Start-Process -Wait waits for DESCENDANTS including the durable
@@ -146,9 +171,34 @@ public static class Rc1PilotQuit {
  exit 0
 }catch{
  Write-Output ('RC1_UPGRADE_FAIL='+$_.Exception.Message)
- if($moved -and -not [IO.Directory]::Exists($app) -and [IO.Directory]::Exists($backup)){
-  try{[IO.Directory]::Move($backup,$app);Write-Output 'RC1_UPGRADE_OLD_PAYLOAD_RESTORED=TRUE'}
-  catch{Write-Output ('RC1_UPGRADE_RESTORE_REQUIRES_OWNER='+$_.Exception.Message)}
+ if($moved -and [IO.Directory]::Exists($backup)){
+  try{
+   # Exact immutable manifest + no-reparse/no-unapproved-running-process
+   # recovery. Never delete or overwrite an ambiguous post-Setup app.
+   $rec=Invoke-Rc1UpgRecover $app $backup $oldManifestSha $newManifestSha $newSetupConfirmed
+   Write-Output ('RC1_UPGRADE_RECOVERY='+$rec.Status)
+   Write-Output ('RC1_UPGRADE_FAILED_CANDIDATE_ARCHIVE='+$rec.FailedApp)
+   Write-Output ('RC1_UPGRADE_PREVIOUS_BACKUP_PRESERVED='+$rec.Backup)
+   # A restored private observer may be restarted only if the separately
+   # verified existing Remote identity stayed exactly the same.
+   $remoteStillSame=$false
+   try{Assert-LiveRemote;$remoteStillSame=$true}catch{
+    Write-Output 'RC1_UPGRADE_OLD_HOST_RELAUNCH_BLOCKED_REMOTE_CHANGED'
+   }
+   if($remoteStillSame){
+    try{
+     $oldLaunch=Start-Process -FilePath (Join-Path $app 'RC1 Pilot Launcher.exe') -ArgumentList '--observe-existing' -PassThru
+     if(-not $oldLaunch.WaitForExit(15000) -or $oldLaunch.ExitCode -ne 0){
+      throw 'RC1_UPGRADE_OLD_LAUNCHER_FAILED'
+     }
+     Write-Output 'RC1_UPGRADE_PREVIOUS_RC1_LAUNCHER_EXIT=0'
+    }catch{Write-Output ('RC1_UPGRADE_PREVIOUS_RC1_RELAUNCH_NOT_VERIFIED='+$_.Exception.Message)}
+   }
+  }catch{
+   Write-Output ('RC1_UPGRADE_RECOVERY_DEFERRED='+$_.Exception.Message)
+   Write-Output ('RC1_UPGRADE_RECOVERY_KEEP_CURRENT_APP='+$app)
+   Write-Output ('RC1_UPGRADE_RECOVERY_KEEP_BACKUP='+$backup)
+  }
  }
  exit 42
 }

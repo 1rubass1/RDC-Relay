@@ -64,15 +64,28 @@ function Start-RdcOwnerGui {
  $form.Text=if($script:ownerObservedMode){
   'RDC Relay 1.6.0 RC1 — существующий Remote (наблюдение)'
  }else{'RDC Relay 1.6.0 RC1 — Remote не подключён (режим проверки)'}
- $finish.Enabled=$false;$accountButton.Enabled=$false
- foreach($item in @($switchAccountItem,$reconnectItem,$devicesItem,$verifyDeviceItem,$openLogItem)){
-   if($item){$item.Enabled=$false}
- }
+ # Keep the real original Account/Help controls functional for SAFE routes.
+ # Only Remote/account-mutating actions remain disabled for Adopted/Unknown.
+ $finish.Enabled=$false
+ $finish.AccessibleDescription='Остановка и запуск Remote недоступны: сессия не принадлежит RC1.'
+ $tip.SetToolTip($finish,'Remote — существующий Adopted процесс. Остановка запрещена.')
+ $accountButton.Enabled=$true
+ $accountButton.AccessibleDescription='Аккаунт: переход к управлению устройствами без изменения Remote.'
+ $switchAccountItem.Enabled=$false
+ $reconnectItem.Enabled=$false
+ $initialCapabilities=$handshake.payload.capabilities
+ if(-not $initialCapabilities){throw 'RC1_OWNER_CAPABILITIES_MISSING'}
+ $devicesItem.Enabled=[bool]$initialCapabilities.deviceManagementLink
+ $verifyDeviceItem.Enabled=[bool]$initialCapabilities.deviceVerificationLink
+ $openLogItem.Enabled=[bool]$initialCapabilities.sanitizedJournal
+ $openLogItem.Text='Показать журнал RC1'
  $helpButton.Enabled=$true
  $script:ownerCloseGeneration=[int]$handshake.payload.closeGeneration
  $script:ownerEventCursor=0
  $script:ownerNextVerb='GET_SNAPSHOT'
  $script:ownerPending=$null
+ $script:ownerQueuedNavigation=''
+ $script:ownerRequestedNavigation=''
  $script:ownerStatus=if($script:ownerObservedMode){'OBSERVED_READ_ONLY_RC1'}else{'FAKE_ONLY_RC1'}
  $script:ownerLastShownRevision=-1
  $script:ownerLastLogCursor=0
@@ -103,6 +116,11 @@ function Start-RdcOwnerGui {
      # The Host, never this GUI, owns the monotonic fake log cursor/state.
      # A fresh GUI reconstructs its journal from the bounded Host snapshot.
      $remoteSnapshot=$snapshot.remote
+     if(-not $snapshot.capabilities){throw 'RC1_CAPABILITIES_MISSING'}
+     # Permissions come from Host, never from a GUI-local PID/ownership guess.
+     $devicesItem.Enabled=[bool]$snapshot.capabilities.deviceManagementLink
+     $verifyDeviceItem.Enabled=[bool]$snapshot.capabilities.deviceVerificationLink
+     $openLogItem.Enabled=[bool]$snapshot.capabilities.sanitizedJournal
      if(-not $remoteSnapshot -or
         [bool]$remoteSnapshot.isActualRemote -ne $script:ownerObservedMode){
       throw 'RC1_REMOTE_MODE_MISMATCH'
@@ -161,16 +179,42 @@ function Start-RdcOwnerGui {
       }
       $script:ownerNextVerb=if($eventData.moreAvailable){'GET_EVENTS'}else{'GET_SNAPSHOT'}
      }
-    }else{throw 'RC1_BAD_REPLY'}
+    }elseif([string]$reply.type -eq 'NAVIGATION'){
+     $route=[string]$reply.payload.route
+     $url=[string]$reply.payload.url
+     $expectedUrl=switch($script:ownerRequestedNavigation){
+      'DEVICE_MANAGEMENT' {'https://mcp.desktopcommander.app/'}
+      'DEVICE_VERIFICATION' {'https://mcp.desktopcommander.app/device/verify'}
+      default {''}
+     }
+     if(-not $expectedUrl -or $route -cne $script:ownerRequestedNavigation -or
+        $url -cne $expectedUrl){throw 'RC1_NAVIGATION_NOT_APPROVED'}
+     # Only the exact Host-approved official URL is opened, and only after
+     # an explicit owner click. The Remote process is not touched.
+     Start-Process -FilePath $url -ErrorAction Stop
+     $script:ownerNextVerb='GET_SNAPSHOT'
+    }else{throw ('RC1_BAD_OR_DENIED_REPLY_'+[string]$reply.code)}
    }catch{
     $script:ownerNextVerb='GET_SNAPSHOT'
-    Set-State 'Связь с Host' 'IPC временно недоступен; состояние Remote неизвестно, остановка запрещена.' ([Drawing.Color]::Khaki)
-   }finally{$script:ownerPending=$null}
+    if($script:ownerRequestedNavigation){
+     Set-State 'Операция не выполнена' 'Host отклонил переход или браузер недоступен. Remote не изменён.' ([Drawing.Color]::Khaki)
+    }else{
+     Set-State 'Связь с Host' 'IPC временно недоступен; состояние Remote неизвестно, остановка запрещена.' ([Drawing.Color]::Khaki)
+    }
+   }finally{$script:ownerPending=$null;$script:ownerRequestedNavigation=''}
   }
   if(-not $script:ownerPending -and -not $form.IsDisposed){
+   # One shared sequence and one in-flight IPC call: a user menu action can
+   # never overtake the background state/event poll and be rejected as replay.
+   $navigation=[string]$script:ownerQueuedNavigation
+   $verb=if($navigation){'OPEN_EXTERNAL'}else{$script:ownerNextVerb}
+   $script:ownerRequestedNavigation=$navigation
+   $script:ownerQueuedNavigation=''
    $script:ownerRequestSequence++
-   $wire=[RdcOwnerWire]::Request($script:ownerNextVerb,$script:ownerNonce,
-     $script:ownerGeneration,[long]$script:ownerEventCursor,$null,[long]$script:ownerRequestSequence)
+   $packet=[RdcOwnerWire]::Decode([RdcOwnerWire]::Request($verb,$script:ownerNonce,
+     $script:ownerGeneration,[long]$script:ownerEventCursor,$null,[long]$script:ownerRequestSequence))
+   if($navigation){$packet['navigation']=$navigation}
+   $wire=[RdcOwnerWire]::Json.Serialize($packet)
    $script:ownerPending=[RdcOwnerWire]::CallBackground($script:ownerPipe,
     $script:ownerIdentity,$wire,800)
   }

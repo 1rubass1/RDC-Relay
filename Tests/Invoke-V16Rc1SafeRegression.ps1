@@ -2,7 +2,7 @@
 $ErrorActionPreference='Stop'
 $names=@(
  'Test-V16TicketRecovery.ps1','Test-V16OwnerRemoteState.ps1',
- 'Test-V16ObservedRemote.ps1',
+ 'Test-V16ObservedRemote.ps1','Test-V16UpgradeRollback.ps1',
  'Test-Rc1OsFixtureProvenance.ps1','Test-V16OwnerTreeStop.ps1',
  'Test-V16OwnerBoundaryStatic.ps1','Test-V16ProductHostGuiSource.ps1',
  'Test-V16OwnerAddType.ps1','Test-V16OwnerStagePackage.ps1',

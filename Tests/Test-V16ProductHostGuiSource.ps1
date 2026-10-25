@@ -24,7 +24,9 @@ try{
  Check ($gui.Contains('if (-not $SelfTest -and -not $OwnerGui)') -and
         $gui.Contains('$script:enableUpdateNotice = -not $OwnerGui')) 'owner GUI bypasses legacy destructive singleton and update'
  Check ($owner.Contains('[Windows.Forms.Application]::Run($form)') -and
-        $owner.Contains('$finish.Enabled=$false;$accountButton.Enabled=$false')) 'X exits actual GUI process while real Remote controls remain unavailable'
+        $owner.Contains('$finish.Enabled=$false') -and
+        $owner.Contains('$accountButton.Enabled=$true') -and
+        $owner.Contains('$reconnectItem.Enabled=$false')) 'X exits GUI; safe account menu retained, Remote control denied'
  Check ($runtime.Contains('NotifyIcon') -and $runtime.Contains('StartGui') -eq $false -and
         $runtime.Contains('public void OpenGui()')) 'persistent tray owns separate GUI process creation'
  Check ($runtime.Contains('gui.MainWindowHandle') -and
@@ -45,7 +47,9 @@ try{
  Check ($runtime.Contains('RdcOwnerWire.Born(childPid)!=childBorn') -and
         $runtime.Contains('requestIds.Contains(requestId)') -and $runtime.Contains('PROTOCOL_MISMATCH')) 'peer birth/replay/protocol checks'
  Check ($runtime.Contains('if(verb=="GET_SNAPSHOT")') -and $runtime.Contains('if(verb=="GET_EVENTS")') -and
-        $runtime.Contains('if(verb=="DETACH")') -and $runtime.Contains('return Error(requestId,"VERB_DENIED")')) 'strict read-only IPC verb allowlist'
+        $runtime.Contains('if(verb=="OPEN_EXTERNAL")') -and $runtime.Contains('if(verb=="REMOTE_ACTION")') -and
+        $runtime.Contains('ADOPTED_REMOTE_READ_ONLY') -and $runtime.Contains('if(verb=="DETACH")') -and
+        $runtime.Contains('return Error(requestId,"VERB_DENIED")')) 'authenticated IPC allowlist: navigation safe, Remote actions denied'
  Check ($runtime.Contains('events.Count>128') -and $runtime.Contains('events.Count>0 && after<') -and
         $owner.Contains('if([bool]$eventData.gap)')) 'bounded monotonic ring and lost-event recovery'
  Check ($runtime.Contains('INCOMPATIBLE_GUI') -and

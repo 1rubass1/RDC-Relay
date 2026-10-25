@@ -21,13 +21,18 @@ try{
   Check $ok ('guarded original action '+$name)
  }
  $owner=Get-Content -LiteralPath (Join-Path $src 'rc1-owner-gui.ps1') -Raw -Encoding UTF8
- Check ($owner.Contains('$finish.Enabled=$false;$accountButton.Enabled=$false')) 'owner-mode primary Remote actions disabled'
+ Check ($owner.Contains('$finish.Enabled=$false') -and
+   $owner.Contains('$accountButton.Enabled=$true') -and
+   $owner.Contains('$switchAccountItem.Enabled=$false') -and
+   $owner.Contains('$reconnectItem.Enabled=$false')) 'Adopted Remote mutating controls denied; safe account menu accessible'
  Check ($owner.Contains('$remoteSnapshot=$snapshot.remote') -and $owner.Contains('RC1_REMOTE_MODE_MISMATCH') -and
         $owner.Contains('$remoteSnapshot.logStreamEpoch') -and $owner.Contains('$remoteSnapshot.logCursor') -and
         $owner.Contains('Add-CompletedEvent') -and $owner.Contains('Reset-CompactLogSession')) 'GUI rehydrates bounded Host snapshot in exact observer/fake mode'
  Check ($owner.Contains('RC1_LOG_CURSOR_REGRESSED') -and $owner.Contains('RC1_LOG_CURSOR_MISMATCH') -and
         $owner.Contains('RC1_INVALID_LOG_TAIL')) 'GUI rejects missing/out-of-order fake log lines'
- Check ($owner.Contains('$switchAccountItem') -and $owner.Contains('$reconnectItem') -and $owner.Contains('$openLogItem')) 'secondary account/reconnect/user-log actions disabled'
+ Check ($owner.Contains('$devicesItem.Enabled=[bool]$initialCapabilities.deviceManagementLink') -and
+   $owner.Contains('$openLogItem.Enabled=[bool]$initialCapabilities.sanitizedJournal') -and
+   $owner.Contains('OPEN_EXTERNAL') -and $owner.Contains('RC1_NAVIGATION_NOT_APPROVED')) 'safe devices and sanitized journal routed through Host-verified capabilities'
  $source=Get-Content -LiteralPath $file -Raw -Encoding UTF8
  Check ($source.Contains("X закрывает только текущий GUI-процесс") -and $source.Contains("настоящий Remote не подключён")) 'RC1 About states real X semantics and no Remote'
  Check ($source.Contains('if (-not $SelfTest -and -not $OwnerGui)') -and $source.Contains('$script:enableUpdateNotice = -not $OwnerGui')) 'legacy mutex and updater bypassed'

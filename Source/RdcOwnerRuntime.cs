@@ -350,7 +350,14 @@ public sealed class RdcOwnerRuntime : IDisposable {
    {"logStreamEpoch",observed["logStreamEpoch"]},
    {"guiPid",childPid},{"guiState",guiState},{"guiStarts",guiStarts},
    {"guiFailures",guiFailures},{"closeGeneration",closeGeneration},{"lastEventSeq",sequence},
-   {"revision",sequence},{"remoteRevision",observed["revision"]},{"isActualRemote",observedMode}
+   {"revision",sequence},{"remoteRevision",observed["revision"]},{"isActualRemote",observedMode},
+   {"capabilities",new Dictionary<string,object>{
+     {"deviceManagementLink",observedMode},{"deviceVerificationLink",observedMode},
+     {"sanitizedJournal",true},{"about",true},
+     {"startRemote",false},{"stopRemote",false},{"reconnectRemote",false},
+     {"switchAccount",false},{"update",false},{"fullExit",false},
+     {"reason",observedMode?"ADOPTED_REMOTE_READ_ONLY":"NO_OWNED_REMOTE"}
+   }}
   };
  }
  string Answer(string type,string requestId,object payload){
@@ -404,6 +411,27 @@ public sealed class RdcOwnerRuntime : IDisposable {
     return Answer("EVENT_BATCH",requestId,new {
      hostGeneration=generation,lastEventSeq=sequence,gap=gap,moreAvailable=more,
      events=batch});
+   }
+   if(verb=="OPEN_EXTERNAL"){
+    // GUI has no authority to synthesize a destination URL. Exact harmless
+    // official device pages only, with Host-side observed-mode permission.
+    if(!observedMode)return Error(requestId,"NO_ACTUAL_REMOTE_FOR_NAVIGATION");
+    string destination=RdcOwnerWire.String(request,"navigation");
+    if(destination=="DEVICE_MANAGEMENT")return Answer("NAVIGATION",requestId,new {
+     route=destination,url="https://mcp.desktopcommander.app/"});
+    if(destination=="DEVICE_VERIFICATION")return Answer("NAVIGATION",requestId,new {
+     route=destination,url="https://mcp.desktopcommander.app/device/verify"});
+    return Error(requestId,"NAVIGATION_NOT_ALLOWLISTED");
+   }
+   if(verb=="REMOTE_ACTION"){
+    // The authenticated route is reserved for future proven RC1-Owned
+    // management. An existing legacy Remote is Adopted, never authorised
+    // by name, PID or GUI presence; no side effects on this RC1 candidate.
+    string action=RdcOwnerWire.String(request,"action");
+    if(action!="START" && action!="STOP" && action!="RECONNECT" &&
+       action!="SWITCH_ACCOUNT" && action!="UPDATE" && action!="FULL_EXIT")
+     return Error(requestId,"REMOTE_ACTION_UNKNOWN");
+    return Error(requestId,observedMode?"ADOPTED_REMOTE_READ_ONLY":"REMOTE_OWNER_NOT_VERIFIED");
    }
    if(verb=="DETACH"){
     guiAuthenticated=false;guiState="DETACHED";Append("gui","detached");

@@ -5523,9 +5523,17 @@ $accountButton.Add_Click({
 $switchAccountItem.Add_Click({ Switch-RemoteAccount })
 $reconnectItem.Add_Click({ Restart-Remote })
 $devicesItem.Add_Click({
+    if ($OwnerGui) {
+        if ($script:ownerObservedMode) { $script:ownerQueuedNavigation='DEVICE_MANAGEMENT' }
+        return
+    }
     try { Start-Process 'https://mcp.desktopcommander.app/' } catch {}
 })
 $verifyDeviceItem.Add_Click({
+    if ($OwnerGui) {
+        if ($script:ownerObservedMode) { $script:ownerQueuedNavigation='DEVICE_VERIFICATION' }
+        return
+    }
     try { Start-Process 'https://mcp.desktopcommander.app/device/verify' } catch {}
 })
 $helpMenu = New-Object Windows.Forms.ContextMenuStrip
@@ -5574,8 +5582,10 @@ $aboutItem.Add_Click({
               'X закрывает только GUI. Host и текущий Remote продолжают работу.' + $nl +
               'Открытие из трея загружает актуальную версию GUI с диска.' + $nl +
               'Пункт «Закрыть RC1» завершает только Pilot GUI/Host, оставляя Remote подключённым.' + $nl +
-              'Запуск, остановка, переподключение, аккаунт и обновления в Pilot отключены.' + $nl +
-              'Полный выход реального Remote не разрешён для подхваченной сессии.'
+              'Запуск, остановка, переподключение и смена аккаунта заблокированы: Remote не принадлежит RC1.' + $nl +
+              'Аккаунт ▾ открывает безопасные ссылки управления устройствами и подтверждения в браузере.' + $nl +
+              'Справка → Показать журнал RC1 переводит к обезличенному журналу Host в нижней панели.' + $nl +
+              'Автообновления RC1 и полный выход реального Remote отключены до проверки владения.'
         }else{
             $helpText = 'RDC Relay 1.6.0 RC1' + $nl +
               'Режим проверки: настоящий Remote не подключён.' + $nl + $nl +
@@ -5594,6 +5604,23 @@ $aboutItem.Add_Click({
 })
 
 $openLogItem.Add_Click({
+    if ($OwnerGui) {
+        # The Host sends a fixed-category, credential-free bounded journal.
+        # Show that actual GUI pane; never open a private legacy Remote log.
+        try {
+            Render-CompactLog
+            $log.Focus()
+            $log.SelectionStart = $log.TextLength
+            $log.ScrollToCaret()
+        } catch {
+            [Windows.Forms.MessageBox]::Show(
+                'Не удалось открыть журнал RC1 в окне.',
+                'RDC Relay 1.6 RC1', [Windows.Forms.MessageBoxButtons]::OK,
+                [Windows.Forms.MessageBoxIcon]::Warning
+            ) | Out-Null
+        }
+        return
+    }
     try {
         if (-not (Test-Path $logPath)) {
             [Windows.Forms.MessageBox]::Show(
@@ -5809,6 +5836,8 @@ $form.Add_ResizeEnd({
 
 $form.Add_FormClosing({
     param($sender,$e)
+    # OwnerGui X always closes this replacement GUI, never legacy Remote.
+    if ($OwnerGui) { return }
     if ($script:allowClose -or $SelfTest -or $Preview) { return }
     if ($script:initializing -or $script:remoteOperation) {
         $e.Cancel = $true
