@@ -1,7 +1,8 @@
 # One-shot product Source Host/GUI OS smoke. NO real Desktop Commander Remote.
 # Requires owner approval. Only exact fresh TEMP/RDC-RC1-OS-<GUID> roots.
 # Never force-terminates a process. Unknown identity / survivor -> NOT CLEAN.
-param([switch]$Execute,[switch]$InjectStartFailure)
+param([switch]$Execute,[switch]$InjectStartFailure,[switch]$InjectConstructorFailure,
+ [switch]$ProbeDuplicateHost,[ValidateRange(1,10)][int]$Cycles=1)
 $ErrorActionPreference='Stop'
 if(-not $Execute){Write-Output 'NOT CHECKED: OS smoke requires explicit -Execute';exit 42}
 $project=Split-Path -Parent $PSScriptRoot
@@ -22,7 +23,8 @@ $src=Join-Path $trial 'Source'
 $sentinel=Join-Path $temp ('RDC-RC1-OS-SENTINEL-'+$runId+'.txt')
 $sentinelBytes=[Text.Encoding]::UTF8.GetBytes('RDC RC1 disposable outside sentinel '+$runId)
 $hashes=@{}
-$hostProcess=$null;$firstGui=$null;$secondGui=$null
+$hostProcess=$null;$firstGui=$null;$secondGui=$null;$duplicateHost=$null
+$ownedGui=New-Object 'System.Collections.Generic.List[System.Diagnostics.Process]'
 $outTask=$null;$errTask=$null
 $pass=0;$fail=0;$notChecked=0;$safeToClean=$false
 function Check([bool]$ok,[string]$name){
@@ -121,10 +123,15 @@ try{
   public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
  }
 '@
+ # Compile the exact product wire into the harness process for a foreign-PID negative.
+ Add-Type -Path (Join-Path $src 'RdcOwnerWire.cs') -ReferencedAssemblies @(
+  'System.Core.dll','System.Web.Extensions.dll','System.dll','System.Security.dll')
+ $duration=if($Cycles -eq 10){120}else{35}
  $args='-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File "'+
   (Join-Path $src 'rc1-tray-host.ps1')+'" -FakeOnly -TrialRoot "'+$trial+
-  '" -TrialAutoExitSeconds 35 -TrialReopenOnce'
+  '" -TrialAutoExitSeconds '+$duration+' -TrialReopenCount '+$Cycles
  if($InjectStartFailure){$args+=' -TrialFailGuiStartOnce'}
+ if($InjectConstructorFailure){$args+=' -TrialFailConstructorOnce'}
  $psi=New-Object Diagnostics.ProcessStartInfo
  $psi.FileName=$powerShellFile;$psi.Arguments=$args
  $psi.WorkingDirectory=$src;$psi.UseShellExecute=$false
@@ -138,38 +145,117 @@ try{
  if($fail){throw 'OS_HOST_UNVERIFIED'}
  $hostBorn=$hostProcess.StartTime.ToUniversalTime().Ticks
  Write-Output ('OS_HOST_PID='+$hostProcess.Id+' UTC_TICKS='+$hostBorn+' SESSION='+$hostProcess.SessionId)
- $firstGui=WaitOwnGui $hostProcess 0 18
- $firstGuiId=$firstGui.Id
- $firstGuiBorn=$firstGui.StartTime.ToUniversalTime().Ticks
- Check (Verified $firstGui $powerShellFile $hostProcess.Id) 'OS GUI A exact parent and birth'
- Write-Output ('OS_GUI_A_PID='+$firstGuiId+' UTC_TICKS='+$firstGuiBorn+' SESSION='+$firstGui.SessionId)
- # Allow two bounded 150ms GUI polls plus IPC deadlines before OS-01 WM_CLOSE.
- Start-Sleep -Milliseconds 1800
- [uint32]$hwndPid=0
- [void][RdcRc1OsMessage]::GetWindowThreadProcessId($firstGui.MainWindowHandle,[ref]$hwndPid)
- if($hwndPid -ne $firstGui.Id -or
-    $firstGui.StartTime.ToUniversalTime().Ticks -ne $firstGuiBorn -or
-    $hostProcess.StartTime.ToUniversalTime().Ticks -ne $hostBorn -or
-    -not (Verified $firstGui $powerShellFile $hostProcess.Id)){
-  throw 'OS_GUI_HWND_OWNER_MISMATCH'
+ $lastGuiPid=0
+ $observedPids=New-Object 'System.Collections.Generic.HashSet[int]'
+ for($cycle=0;$cycle -le $Cycles;$cycle++){
+  $currentGui=WaitOwnGui $hostProcess $lastGuiPid 18
+  $ownedGui.Add($currentGui)
+  $guiBorn=$currentGui.StartTime.ToUniversalTime().Ticks
+  Check ((Verified $currentGui $powerShellFile $hostProcess.Id) -and
+    $currentGui.SessionId -eq $hostProcess.SessionId -and
+    $observedPids.Add($currentGui.Id)) ('OS GUI generation '+$cycle+' exact unique OS identity')
+  Write-Output ('OS_GUI_'+$cycle+'_PID='+$currentGui.Id+' UTC_TICKS='+$guiBorn+
+    ' SESSION='+$currentGui.SessionId)
+  if($cycle -eq 0){
+   $firstGui=$currentGui
+   # The harness PID is NOT the authenticated GUI PID. Even its own exact
+   # private test ticket must not grant the harness permission to act as GUI.
+   $stateRoot=Join-Path $trial 'owner-state'
+   $runs=@([IO.Directory]::GetDirectories($stateRoot))
+   if($runs.Count -ne 1){throw 'OS_12_AMBIGUOUS_TICKET_RUN'}
+   $ticketPath=Join-Path $runs[0] 'gui-ticket.json'
+   PathSafe $ticketPath
+   if(-not [IO.File]::Exists($ticketPath)){throw 'OS_12_TICKET_MISSING'}
+   $ticket=[RdcOwnerWire]::Decode([IO.File]::ReadAllText($ticketPath,[Text.Encoding]::UTF8))
+   if([int]$ticket.hostPid -ne $hostProcess.Id -or
+      [long]$ticket.hostTicks -ne $hostBorn -or
+      [int]$ticket.hostSession -ne $hostProcess.SessionId){throw 'OS_12_HOST_TICKET_MISMATCH'}
+   $expectedHost=[string]$ticket.hostPid+'|'+[string]$ticket.hostTicks+'|'+[string]$ticket.hostSession
+   $foreignHello=[RdcOwnerWire]::Request('HELLO',[string]$ticket.nonce,[string]$ticket.hostGeneration,0,$null,1)
+   $denial=[RdcOwnerWire]::Decode([RdcOwnerWire]::Call([string]$ticket.pipe,$expectedHost,$foreignHello,1200))
+   Check ([string]$denial.type -ceq 'ERROR' -and [string]$denial.code -ceq 'GUI_OS_IDENTITY') 'OS-12 foreign process cannot impersonate GUI with ticket'
+   Check (Verified $hostProcess $powerShellFile $PID) 'OS-12 Host responsive after denied outsider IPC'
+   # OS-23: oversized frame is refused without parsing it or hanging the Host.
+   $bad=[IO.Pipes.NamedPipeClientStream]::new('.',[string]$ticket.pipe,
+     [IO.Pipes.PipeDirection]::InOut,[IO.Pipes.PipeOptions]::Asynchronous)
+   try{
+    $bad.Connect(1200)
+    $tooLarge=[BitConverter]::GetBytes([uint32]([RdcOwnerWire]::MaxRequest+1))
+    $bad.Write($tooLarge,0,4)
+    $bad.Flush()
+   }finally{$bad.Dispose()}
+   Start-Sleep -Milliseconds 200
+   # A declared 16-byte payload containing only one byte must time out.
+   $hung=[IO.Pipes.NamedPipeClientStream]::new('.',[string]$ticket.pipe,
+     [IO.Pipes.PipeDirection]::InOut,[IO.Pipes.PipeOptions]::Asynchronous)
+   try{
+    $hung.Connect(1200)
+    $partial=[BitConverter]::GetBytes([uint32]16)
+    $hung.Write($partial,0,4)
+    $hung.Write([byte[]]@(65),0,1)
+    $hung.Flush()
+    Start-Sleep -Milliseconds 1550
+   }finally{$hung.Dispose()}
+   Check (Verified $hostProcess $powerShellFile $PID) 'OS-23 Host survives oversized and partial frames'
+   Write-Output ('OS_HOST_EPOCH='+[string]$ticket.hostGeneration)
+   if($ProbeDuplicateHost){
+    # A second launcher may only be a disposable *refused* Host.
+    $dupPsi=New-Object Diagnostics.ProcessStartInfo
+    $dupPsi.FileName=$powerShellFile
+    $dupPsi.Arguments='-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File "'+
+     (Join-Path $src 'rc1-tray-host.ps1')+'" -FakeOnly -TrialRoot "'+$trial+
+     '" -TrialAutoExitSeconds 20'
+    $dupPsi.WorkingDirectory=$src;$dupPsi.UseShellExecute=$false
+    $dupPsi.CreateNoWindow=$true
+    $dupPsi.RedirectStandardOutput=$true;$dupPsi.RedirectStandardError=$true
+    $duplicateHost=[Diagnostics.Process]::Start($dupPsi)
+    if(-not $duplicateHost){throw 'OS_03_DUPLICATE_PROCESS_NULL'}
+    Check (Verified $duplicateHost $powerShellFile $PID) 'OS-03 duplicate launcher exact temporary identity'
+    $dupOut=$duplicateHost.StandardOutput.ReadToEndAsync()
+    $dupErr=$duplicateHost.StandardError.ReadToEndAsync()
+    if(-not $duplicateHost.WaitForExit(14000)){throw 'OS_03_DUPLICATE_HOST_DID_NOT_REFUSE'}
+    $dupText=$dupErr.GetAwaiter().GetResult()
+    Check ($duplicateHost.ExitCode -ne 0 -and
+      $dupText.Contains('RC1_HOST_ALREADY_RUNNING_NO_KILL')) 'OS-03 second Host refused by singleton without a kill'
+    Check (Verified $hostProcess $powerShellFile $PID) 'OS-03 original Host survives duplicate'
+    Write-Output ('OS_REFUSED_DUP_HOST_PID='+$duplicateHost.Id+
+      ' UTC_TICKS='+$duplicateHost.StartTime.ToUniversalTime().Ticks+
+      ' EXIT='+$duplicateHost.ExitCode)
+   }
+  }
+  if($cycle -eq 1){$secondGui=$currentGui}
+  if($cycle -lt $Cycles){
+   # The GUI must have time to fetch authoritative snapshot AND events.
+   Start-Sleep -Milliseconds 1800
+   [uint32]$hwndPid=0
+   [void][RdcRc1OsMessage]::GetWindowThreadProcessId($currentGui.MainWindowHandle,[ref]$hwndPid)
+   if($hwndPid -ne $currentGui.Id -or
+      $currentGui.StartTime.ToUniversalTime().Ticks -ne $guiBorn -or
+      $hostProcess.StartTime.ToUniversalTime().Ticks -ne $hostBorn -or
+      -not (Verified $currentGui $powerShellFile $hostProcess.Id)){
+    throw 'OS_GUI_HWND_OWNER_MISMATCH'
+   }
+   if(-not [RdcRc1OsMessage]::PostMessage($currentGui.MainWindowHandle,0x0010,
+      [IntPtr]::Zero,[IntPtr]::Zero)){throw 'OS_WM_CLOSE_REFUSED'}
+   Check ($currentGui.WaitForExit(7000)) ('OS-01 native WM_CLOSE exits only GUI generation '+$cycle)
+   Check (-not $hostProcess.HasExited -and
+      $hostProcess.StartTime.ToUniversalTime().Ticks -eq $hostBorn) ('OS Host persists after GUI '+$cycle)
+  }
+  $lastGuiPid=$currentGui.Id
  }
- if(-not [RdcRc1OsMessage]::PostMessage($firstGui.MainWindowHandle,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)){
-  throw 'OS_WM_CLOSE_REFUSED'
- }
- Check ($firstGui.WaitForExit(7000)) 'OS-01 native WM_CLOSE exits only GUI A'
- Check (-not $hostProcess.HasExited) 'OS-01 Host survives GUI A close'
- $secondGui=WaitOwnGui $hostProcess $firstGuiId 18
- Check ($secondGui.Id -ne $firstGuiId -and (Verified $secondGui $powerShellFile $hostProcess.Id)) 'OS-02 separate GUI B under original Host'
- Write-Output ('OS_GUI_B_PID='+$secondGui.Id+' UTC_TICKS='+$secondGui.StartTime.ToUniversalTime().Ticks+' SESSION='+$secondGui.SessionId)
- if($InjectStartFailure){Check ($secondGui.Id -gt 0) 'OS-19 injected first Process.Start failure followed by GUI A/B'}
- Check ($hostProcess.WaitForExit(48000)) 'OS bounded cooperative Host exit'
- Check ($secondGui.HasExited) 'OS GUI B exits through Host closeGeneration'
- $safeToClean=($fail -eq 0 -and $hostProcess.HasExited -and $firstGui.HasExited -and $secondGui.HasExited)
+ Check ($ownedGui.Count -eq ($Cycles+1)) 'OS exact GUI generation count'
+ if($Cycles -eq 10){Check ($observedPids.Count -eq 11) 'OS-02 ten GUI process replacements'}
+ if($InjectStartFailure){Check ($secondGui -ne $null) 'OS-19 injected first Process.Start failure followed by GUI A/B'}
+ Check ($hostProcess.WaitForExit(($duration+15)*1000)) 'OS bounded cooperative Host exit'
+ Check ($ownedGui[$ownedGui.Count-1].HasExited) 'OS final GUI exits through Host closeGeneration'
+ $allExited=$true
+ foreach($knownGui in $ownedGui){if(-not $knownGui.HasExited){$allExited=$false}}
+ $safeToClean=($fail -eq 0 -and $hostProcess.HasExited -and $allExited)
 }catch{
  $script:fail++
  Write-Output ('FAIL OS_EXCEPTION '+$_.Exception.Message)
 }finally{
- # The dedicated trial Host has a 35-second cooperative self-exit.
+ # Dedicated trial Host has 35s (one cycle) or 120s (ten cycles) cooperative self-exit.
  # A failed GUI assertion is NOT permission to terminate it forcibly.
  if($hostProcess){
   try{if(-not $hostProcess.HasExited){[void]$hostProcess.WaitForExit(45000)}}catch{}
@@ -179,7 +265,15 @@ try{
   $out=[string]$outTask.Result
   if($out.Length>2000){$out=$out.Substring(0,2000)}
   Write-Output ('OS_HOST_STDOUT '+$out)
-  Check ($out.Contains('RC1_TRIAL_IPC_SNAPSHOT_GUI_COUNT=2 EVENT_GUI_COUNT=2')) 'OS authenticated IPC snapshots and event polls for GUI A and B'
+  $expectedGuiCount=$Cycles+1
+  Check ($out.Contains('RC1_TRIAL_IPC_SNAPSHOT_GUI_COUNT='+$expectedGuiCount+' EVENT_GUI_COUNT='+$expectedGuiCount)) 'OS authenticated IPC snapshots and event polls for all GUI generations'
+  if($out -match 'RC1_TRIAL_IPC_REJECTED=([0-9]+) TIMEOUTS=([0-9]+) PEAK_ACTIVE=([0-9]+)'){
+   $rejectCount=[int]$Matches[1];$timeoutCount=[int]$Matches[2];$peak=[int]$Matches[3]
+   Check ($rejectCount -ge 1 -and $timeoutCount -ge 1 -and $peak -le 2) 'OS-23 bounded oversize/partial frame refusal and worker limit'
+  }else{Check $false 'OS-23 transport metrics available'}
+  if($InjectConstructorFailure){
+   Check ($out.Contains('RC1_TRIAL_CONSTRUCTOR_REFUSED_AND_CLEAN')) 'OS-21 partial constructor cleans IPC/mutex/private state, retry succeeds'
+  }
   if($InjectStartFailure){
    Check ($out.Contains('RC1_TRIAL_F2_FIRST_START_REFUSED_AND_CLEAN')) 'OS-19 failed first Process.Start leaves no blocking ticket'
    Check ($out.Contains('RC1_TRIAL_INJECTED_GUI_START_FAILURE')) 'OS-19 exact injected error observed'
@@ -191,10 +285,18 @@ try{
   if($err){Write-Output ('OS_HOST_STDERR '+$err)}
  }
  $liveHost=($hostProcess -and -not $hostProcess.HasExited)
- $liveA=($firstGui -and -not $firstGui.HasExited)
- $liveB=($secondGui -and -not $secondGui.HasExited)
- if($liveHost -or $liveA -or $liveB){$safeToClean=$false;Write-Output 'NOT CLEAN: test-owned process survivor; NO FORCE KILL'}
+ $liveGui=@($ownedGui|Where-Object{-not $_.HasExited})
+ if($liveHost -or $liveGui.Count){$safeToClean=$false;Write-Output ('NOT CLEAN: test-owned process survivor(s) '+$liveGui.Count+'; NO FORCE KILL')}
  if($fail){$safeToClean=$false}
+ # Independent OS inventory of any test-root command-line survivor.
+ try{
+  $survivors=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object{
+   $_.CommandLine -and $_.CommandLine.IndexOf($trial,[StringComparison]::OrdinalIgnoreCase) -ge 0
+  })
+  Check ($survivors.Count -eq 0) 'OS independent no trial-root process survivors'
+  if($survivors.Count){$safeToClean=$false}
+  Write-Output ('OS_TRIAL_SURVIVOR_COUNT='+$survivors.Count)
+ }catch{$script:fail++;$safeToClean=$false;Write-Output 'NOT CLEAN: OS survivor inventory unavailable'}
  if([IO.File]::Exists($sentinel)){
   $current=[IO.File]::ReadAllBytes($sentinel)
   $same=($current.Length -eq $sentinelBytes.Length)
@@ -226,8 +328,8 @@ try{
    $script:fail++;Write-Output ('NOT CLEAN: verified-only fixture cleanup refused '+$_.Exception.Message)
   }
  }else{Write-Output ('NOT CLEAN: preserved exact trial root '+$trial)}
- if($secondGui){$secondGui.Dispose()}
- if($firstGui){$firstGui.Dispose()}
+ foreach($knownGui in $ownedGui){$knownGui.Dispose()}
+ if($duplicateHost){$duplicateHost.Dispose()}
  if($hostProcess){$hostProcess.Dispose()}
 }
 Write-Output ('RC1_OS_SMOKE_PASS='+$pass+' FAIL='+$fail+' NOT_CHECKED='+$notChecked)

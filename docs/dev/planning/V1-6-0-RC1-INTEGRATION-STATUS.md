@@ -138,3 +138,19 @@ No claim of complete \`1.6.0 RC1\` candidate or G1 permission follows from a gre
 - **Still NOT CHECKED / BLOCKED:** untested OS-03…OS-24 cases, hostile/foreign/cross-logon IPC and PID-reuse, true Remote 0.2.52 Owned/Adopted/Unknown process/log/stop/reconnect, original account functionality, physical tray and visual UX, installable Setup/Portable, rollback and stable release. No RC1 installed, no v1.5.18 or real Remote touched. Existing G4 Setup/Launcher remain compile blocked and candidate metadata `installable=false`/`publishable=false`. Draft PR #23 remains unmerged.
 
 **Evidence and Reviewer handoff:** [G5 measured OS smoke report](V1-6-0-RC1-G5-OS-SMOKE-REPORT.md). Reviewer should inspect G5 actual code and OS evidence independently; Architect determines the next explicit scope, not a stable release or automatic STARMER installation.
+
+
+## 2026-10-25 — G6 executable OS harness extension and evidence
+
+**PARTIAL PASS (disposable FAKE_ONLY Host/GUI/IPC) / NO-GO REAL REMOTE OR INSTALL.** After G5, the same real-product `Tests/Invoke-Rc1OwnerOsSmoke.ps1` was expanded with bounded `-Cycles 1…10`, `-InjectConstructorFailure` and `-ProbeDuplicateHost`; existing `-InjectStartFailure` retained. The 7/8-arg trial constructor is accepted only with private exact-GUID TEMP root and explicit `-FakeOnly`. All test process starts are PowerShell GUI/Host from a fresh fixed 16-file Source copy; only verified own GUI HWND gets WM_CLOSE, never a force kill. `Get-CimInstance` post-run inventory requires no test-root command-line survivors; exact source hashes, no reparse and external sentinel precede nonrecursive fixture deletion.
+
+| Actual Windows run | Evidence |
+| --- | --- |
+| **OS-02 full ten replacements** | **43 PASS / 0 FAIL / exit 0**; Host PID 33448 / birth ticks 639285079591748713, session 8, 11 unique GUI PIDs, ten own HWND WM_CLOSE, same Host, IPC snapshot/event 11/11, bounded cooperative exit, cleanup PASS. |
+| **OS-03 duplicate Host / partial tray** | **18 PASS / 0 FAIL / exit 0**; primary Host 24528; second exact test launcher 32372 returned **exit 1 / RC1_HOST_ALREADY_RUNNING_NO_KILL**, original Host preserved, no duplicate GUI, survivor scan 0, cleanup PASS. Actual tray clicking remains NOT CHECKED. |
+| **OS-12/19 negative** | **15 PASS / 0 FAIL / exit 0**; Host 21840, injected GUI start failure then retry, correct private ticket from foreign harness PID denied via kernel peer evidence, normal GUI/IPC/Exit preserved. |
+| **OS-21 constructor after-pipe injection** | **13 PASS / 0 FAIL / exit 0**; Host 7128, original partial mutex/pipe/run dir cleans before new constructor starts, GUI A/B and normal Host exit. |
+| **OS-12/19/21/23 combined negative** | **18 PASS / 0 FAIL / exit 0**; Host 12188, both injected failures recovered; actual named pipe rejected oversized frame (rejected=1), timed out incomplete frame (timeouts=1), peak workers=2; Host and GUI A/B retained. |
+| **Safe regression after G6 Source changes** | All **17 isolated WinPS 5.1 AST/fake/compile suites PASS / 0 suite failures**, each exit 0. |
+
+This is **not a green full OS-01…OS-24 matrix**. [Explicit PASS/PARTIAL/NOT CHECKED matrix and exact commands](V1-6-0-RC1-G6-OS-HARNESS-MATRIX.md). No disposable owned Remote stand-in child-tree supervisor has been implemented; OS-04…OS-10, OS-16's genuine owned tree, OS-20, OS-22 and OS-24 remain unexecuted/blocked. Original complete WinForms source is used, but physical tray/DPI and source A→B file edit are not checked. Real Remote 0.2.52 ownership/reconnect/log/Exit and independent installable 1.6.0 RC1 Setup/Portable rollback are still NOT IMPLEMENTED; no installed v1.5.18 change, no public updater, no real Remote contact, no historical TEMP cleanup, no merge. Reviewer G6 and Architect decide the next scoped implementation gate.

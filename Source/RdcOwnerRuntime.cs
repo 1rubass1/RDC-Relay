@@ -20,7 +20,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
  readonly RdcOwnerTicketStore ticketStore;
  readonly int trialExitSeconds;
  readonly Stopwatch trialClock=new Stopwatch();
- bool trialReopenOnce=false,trialFailGuiStartOnce=false;
+ bool trialFailGuiStartOnce=false;
+ int trialReopensRemaining=0;
  readonly RdcOwnerRemoteState remoteSupervisor=new RdcOwnerRemoteState();
  bool runRootCreated=false;
  readonly int hostPid, hostSession; readonly long hostBorn;
@@ -46,12 +47,17 @@ public sealed class RdcOwnerRuntime : IDisposable {
  public string LastGuiError {get{lock(gate){return lastGuiError;}}}
  public RdcOwnerRuntime(string root,bool fakeOnly):this(root,fakeOnly,null,false,0,false){}
  public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot):this(root,fakeOnly,isolatedTrialRoot,false,30,false){}
- public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot,bool failOnce,int exitSeconds,bool reopenOnce) {
+ public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot,bool failOnce,int exitSeconds,bool reopenOnce):
+  this(root,fakeOnly,isolatedTrialRoot,failOnce,exitSeconds,reopenOnce?1:0){}
+ public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot,bool failOnce,int exitSeconds,int reopenCount):
+  this(root,fakeOnly,isolatedTrialRoot,failOnce,exitSeconds,reopenCount,false){}
+ public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot,bool failOnce,int exitSeconds,int reopenCount,bool failConstructorAfterServerStart) {
   if(!fakeOnly)throw new InvalidOperationException("RC1_REMOTE_NOT_AUTHORIZED");
   trialRoot=ValidateTrialRoot(isolatedTrialRoot);
-  if(trialRoot==null && (failOnce||exitSeconds!=0||reopenOnce))throw new InvalidOperationException("RC1_TRIAL_OPTIONS_WITHOUT_ROOT");
-  if(trialRoot!=null && (exitSeconds<15||exitSeconds>60))throw new InvalidOperationException("RC1_TRIAL_BOUNDED_DURATION");
-  trialExitSeconds=exitSeconds;trialFailGuiStartOnce=failOnce;trialReopenOnce=reopenOnce;
+  if(trialRoot==null && (failOnce||exitSeconds!=0||reopenCount!=0||failConstructorAfterServerStart))throw new InvalidOperationException("RC1_TRIAL_OPTIONS_WITHOUT_ROOT");
+  if(trialRoot!=null && (exitSeconds<15||exitSeconds>120))throw new InvalidOperationException("RC1_TRIAL_BOUNDED_DURATION");
+  if(reopenCount<0||reopenCount>10)throw new InvalidOperationException("RC1_TRIAL_REOPEN_BOUNDS");
+  trialExitSeconds=exitSeconds;trialFailGuiStartOnce=failOnce;trialReopensRemaining=reopenCount;
   sourceRoot=Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
   guiScript=Path.GetFullPath(Path.Combine(sourceRoot,"remote-window.ps1"));
   if(Path.GetDirectoryName(guiScript)!=sourceRoot || !File.Exists(guiScript) ||
@@ -92,6 +98,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
    ticketFile=ticketStore.PathName;
    server=new RdcOwnerServer(pipeName,Dispatch);
    server.Start();
+   if(trialRoot!=null && failConstructorAfterServerStart)
+    throw new IOException("RC1_TRIAL_INJECTED_CONSTRUCTOR_FAILURE");
    tray.Icon=SystemIcons.Information; // deliberately not installed v1.5.18 icon
    tray.Text="RDC Relay 1.6 RC1 | FAKE Remote";
    tray.Visible=true;
@@ -119,8 +127,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
     lock(gate){
      RefreshGui();
      if(trialRoot!=null){
-      if(!exitRequested && trialReopenOnce && guiStarts==1 && gui==null && guiState=="NONE"){
-       trialReopenOnce=false;OpenGui();
+      if(!exitRequested && trialReopensRemaining>0 && guiStarts>0 && gui==null && guiState=="NONE"){
+       trialReopensRemaining--;OpenGui();
       }
       if(!exitRequested && trialClock.Elapsed.TotalSeconds>=trialExitSeconds){
        exitRequested=true;closeGeneration++;Append("host","bounded disposable trial exit requested");
@@ -367,8 +375,12 @@ public sealed class RdcOwnerRuntime : IDisposable {
    }
    try{singleton.ReleaseMutex();}catch{}
    singleton.Dispose();
-   if(trialRoot!=null)Console.WriteLine("RC1_TRIAL_IPC_SNAPSHOT_GUI_COUNT="+
-    trialSnapshotClients.Count+" EVENT_GUI_COUNT="+trialEventClients.Count);
+   if(trialRoot!=null){
+    Console.WriteLine("RC1_TRIAL_IPC_SNAPSHOT_GUI_COUNT="+
+     trialSnapshotClients.Count+" EVENT_GUI_COUNT="+trialEventClients.Count);
+    Console.WriteLine("RC1_TRIAL_IPC_REJECTED="+server.Rejected+
+     " TIMEOUTS="+server.Timeouts+" PEAK_ACTIVE="+server.PeakActive);
+   }
    if(!ipcClean || !filesClean || !guiClean)
     throw new InvalidOperationException("RC1_OWNER_SHUTDOWN_NOT_CLEAN");
   }

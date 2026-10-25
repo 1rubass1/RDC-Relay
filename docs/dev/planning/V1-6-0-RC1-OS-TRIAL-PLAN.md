@@ -1,8 +1,8 @@
 # v1.6 RC1 — separately authorized disposable Windows OS-process trial
 
-**PLAN ONLY / NOT AUTHORIZED / NOT EXECUTED.** Current approval is to implement code and run fake-only logic tests; no new real process-tree trials have been authorized. Never launch/stop/disconnect/log out real Desktop Commander Remote, change installed v1.5.18, alter security policy, or touch historical P1/P2 TEMP.
+**REFERENCE MATRIX, NOW PARTIALLY EXECUTED.** After explicit owner instruction on 2026-10-25, Programmer ran *new, private, disposable FAKE_ONLY* Windows Host/GUI/IPC trial trees on STARMER. Exact PASS/PARTIAL/NOT CHECKED case-by-case evidence and harness are in [G6 measured matrix](V1-6-0-RC1-G6-OS-HARNESS-MATRIX.md). Historical pre-approval text below describes the original gate, not the current status. This is **NOT approval** to launch/stop/disconnect/log out real Desktop Commander Remote, change installed v1.5.18, alter global security policy, or touch historical P1/P2 TEMP.
 
-## Preconditions for a separate owner GO
+## Original preconditions and remaining gates for other OS cases
 
 - Owner explicitly authorizes fresh disposable *stand-in* processes on STARMER, their sandbox location and the scope of execution.
 - The independent Reviewer inspects harness ownership proofs and negative exit handling **before** any test process starts.
@@ -10,7 +10,7 @@
 - Revalidate PID, birth, executable path and whole expected parent/child chain immediately before *cooperative* stop. Do not trust PID, ownership or session reported through IPC. Unknown, adopted, old/reused PID, missing child, noncooperating process or unexpected filesystem link is **NOT CLEAN / FAIL**, never a target for forced kill.
 - No broad process-name cleanup, taskkill, Stop-Process -Force, Explorer restart, ACL ownership takeover, privileged symlink creation or account credential changes.
 
-## Matrix (none executed yet)
+## Original OS-01…OS-18 matrix (see current G6 case statuses)
 
 | ID | Disposable condition | Acceptance |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ If all disposable cases pass and Reviewer accepts them, obtain a **new owner aut
 This document is a test plan, not an execution report.
 
 
-## 2026-10-25 — precise supplementary F2/Host resource trials (NOT AUTHORIZED)
+## 2026-10-25 — supplementary F2/Host resource trial plan (current execution status in G6)
 
 Add to the already specified OS-01..OS-18 matrix **only after explicit owner GO and independent review of the harness**:
 
