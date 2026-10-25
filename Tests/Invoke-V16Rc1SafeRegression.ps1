@@ -3,6 +3,9 @@ $ErrorActionPreference='Stop'
 $names=@(
  'Test-V16TicketRecovery.ps1','Test-V16OwnerRemoteState.ps1',
  'Test-V16ObservedRemote.ps1','Test-V16UpgradeRollback.ps1',
+ # Manual Setup's genuine WScript.Shell COM shortcut test is exercised directly:
+ # under this nested, redirected WinPS process runner it timed out twice at
+ # 120s despite direct 12/0/exit0. Never count a nested timeout as PASS.
  'Test-Rc1OsFixtureProvenance.ps1','Test-V16OwnerTreeStop.ps1',
  'Test-V16OwnerBoundaryStatic.ps1','Test-V16ProductHostGuiSource.ps1',
  'Test-V16OwnerAddType.ps1','Test-V16OwnerStagePackage.ps1',

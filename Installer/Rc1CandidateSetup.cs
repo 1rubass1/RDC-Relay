@@ -1,12 +1,14 @@
-// Private RDC Relay 1.6.0 RC1 side-by-side Setup route. Never compiled
-// runnable in G0/G1: RDC_RC1_BLOCKED makes Main return 42 before any I/O.
-// A future separate reviewed build + owner G1 gate must change marker/flag.
+// Private RDC Relay 1.6.0 RC1 Setup. The repository's blocked-marker
+// compiler path stays inert; only an exact-manifest owner-pilot package
+// embeds the read-only payload for standalone user-confirmed manual upgrades.
+// No Setup path is permitted to control the existing Desktop Commander Remote.
 using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
+using System.Reflection;
 using System.Web.Script.Serialization;
 
 internal static class RdcRc1CandidateSetup {
@@ -74,20 +76,103 @@ internal static class RdcRc1CandidateSetup {
    }
   }
  }
+ static string ExtractEmbeddedCandidate(){
+  // Setup.exe is a complete downloadable installer. The 19 runtime items and
+  // manifest are embedded by the private candidate builder, not read from the
+  // folder where the user downloaded Setup.exe.
+  string staging=Path.Combine(Path.GetTempPath(),"RDC-RC1-SETUP-"+Guid.NewGuid().ToString("N"));
+  PathSafe(staging);
+  Directory.CreateDirectory(staging);
+  var asm=Assembly.GetExecutingAssembly();
+  foreach(string name in Required.Concat(new[]{"owner-source-manifest.json"})){
+   string resource="RdcPayload."+name.Replace('/','.');
+   using(Stream data=asm.GetManifestResourceStream(resource)){
+    if(data==null)throw new InvalidOperationException("RC1_SETUP_EMBEDDED_MISSING:"+name);
+    string destination=Path.Combine(staging,name.Replace('/',Path.DirectorySeparatorChar));
+    PathSafe(destination);
+    Directory.CreateDirectory(Path.GetDirectoryName(destination));
+    using(var output=new FileStream(destination,FileMode.CreateNew,FileAccess.Write,FileShare.None))
+     data.CopyTo(output);
+   }
+  }
+  return staging;
+ }
+ static void CleanExactExtraction(string staging){
+  string leaf=Path.GetFileName(staging),prefix="RDC-RC1-SETUP-";
+  Guid guid;
+  if(!leaf.StartsWith(prefix,StringComparison.Ordinal)||
+     !Guid.TryParseExact(leaf.Substring(prefix.Length),"N",out guid)||
+     !String.Equals(Path.GetDirectoryName(Path.GetFullPath(staging)),
+       Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar),
+       StringComparison.OrdinalIgnoreCase))
+   throw new InvalidOperationException("RC1_SETUP_CLEANUP_SCOPE_REFUSED");
+  PathSafe(staging);
+  var expected=new HashSet<string>(
+   Required.Concat(new[]{"owner-source-manifest.json"}),StringComparer.OrdinalIgnoreCase);
+  var actual=Directory.GetFiles(staging,"*",SearchOption.AllDirectories);
+  if(actual.Length!=expected.Count)throw new InvalidOperationException("RC1_SETUP_CLEANUP_UNKNOWN_FILES");
+  foreach(string path in actual){
+   PathSafe(path);
+   string relative=path.Substring(staging.Length+1).Replace('\\','/');
+   if(!expected.Remove(relative))throw new InvalidOperationException("RC1_SETUP_CLEANUP_FOREIGN_FILE");
+  }
+  foreach(string path in actual)File.Delete(path);
+  foreach(string dir in Directory.GetDirectories(staging,"*",SearchOption.AllDirectories)
+    .OrderByDescending(x=>x.Length)){
+   PathSafe(dir);Directory.Delete(dir,false);
+  }
+  Directory.Delete(staging,false);
+ }
  static int Main(string[] args){
 #if RDC_RC1_BLOCKED
   // Build and inspect only; this file intentionally cannot install today.
   Console.Error.WriteLine("RC1_OWNER_SETUP_BLOCKED_NEEDS_OS_TRIAL_AND_G1_GO");
   return 42;
 #else
+  string extracted=null;
   try{
-   if(args.Length!=1 || args[0]!="--owner-approved-side-by-side" ||
+   bool privateSideBySide=args.Length==1 && args[0]=="--owner-approved-side-by-side";
+   bool manualUpgrade=args.Length==0 ||
+    (args.Length==1 && args[0]=="--owner-approved-manual-upgrade");
+   if(!privateSideBySide&&!manualUpgrade)
+    throw new InvalidOperationException("RC1_SETUP_UNKNOWN_MODE");
+   // The existing scripted observer upgrade continues to require its
+   // independently approved process+manifest transaction and owner gate.
+   if((privateSideBySide||args.Length>0) &&
       Environment.GetEnvironmentVariable("RDC_RC1_OWNER_G1_GO")!="YES")
     throw new InvalidOperationException("RC1_EXPLICIT_G1_GO_REQUIRED");
+   // A user launching downloaded Setup.exe by double click opts in through
+   // a visible RC1-specific prompt. Never silently switch the daily shortcut.
+   if(manualUpgrade&&args.Length==0){
+    var answer=System.Windows.Forms.MessageBox.Show(
+     "Установить RDC Relay 1.6.0 RC1 как основную оболочку?" + Environment.NewLine + Environment.NewLine +
+     "Старые файлы будут сохранены. Remote не будет завершён или перезапущен. "+
+     "Эта RC1 наблюдает за существующим Remote: запуск, остановка и смена аккаунта пока недоступны.",
+     "RDC Relay 1.6.0 RC1 — ручное обновление",
+     System.Windows.Forms.MessageBoxButtons.YesNo,System.Windows.Forms.MessageBoxIcon.Warning);
+    if(answer!=System.Windows.Forms.DialogResult.Yes)return 1;
+   }
    string source=Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
+   if(manualUpgrade){extracted=ExtractEmbeddedCandidate();source=extracted;}
    ValidateSource(source);
    string local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
    if(String.IsNullOrEmpty(local))throw new InvalidOperationException("RC1_NO_APPDATA");
+   if(manualUpgrade){
+    string release=RdcRc1ManualUpgrade.Prepare(source,local,Required);
+    string desktop=Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+    string result=RdcRc1ManualUpgrade.ActivateDesktop(release,local,desktop);
+    Console.WriteLine("RC1_MANUAL_RELEASE="+release);
+    Console.WriteLine("RC1_MANUAL_PRIMARY_SHORTCUT="+result);
+    Console.WriteLine("RC1_MANUAL_REMOTE_NOT_TOUCHED=TRUE");
+    if(args.Length==0)System.Windows.Forms.MessageBox.Show(
+     "RDC Relay 1.6.0 RC1 подготовлена. Основной ярлык теперь открывает новую оболочку." +
+     Environment.NewLine + Environment.NewLine +
+     "Старые файлы и настоящий Remote сохранены. Если старая оболочка ещё открыта, "+
+     "не закрывайте её через X: она может остановить Remote.",
+     "RDC Relay 1.6.0 RC1",
+     System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Information);
+    return 0;
+   }
    string root=Path.Combine(local,"RDCRelayOwnerPilot","1.6.0-RC1");
    string app=Path.Combine(root,"app");
    PathSafe(root);PathSafe(app);
@@ -118,8 +203,18 @@ internal static class RdcRc1CandidateSetup {
    Console.WriteLine("RC1_PRIVATE_SIDE_BY_SIDE_STAGED:"+app);
    return 0;
   }catch(Exception e){
-   Console.Error.WriteLine("RC1_INSTALL_DENIED:"+e.GetType().Name);
+   Console.Error.WriteLine("RC1_INSTALL_DENIED:"+e.GetType().Name+":"+e.Message);
+   if(args.Length==0)System.Windows.Forms.MessageBox.Show(
+    "Не удалось установить RDC Relay 1.6.0 RC1."+Environment.NewLine+Environment.NewLine+
+    e.Message+Environment.NewLine+"Старые версии и Remote не отключались этим Setup.",
+    "RDC Relay 1.6.0 RC1",System.Windows.Forms.MessageBoxButtons.OK,
+    System.Windows.Forms.MessageBoxIcon.Error);
    return 42;
+  }finally{
+   if(extracted!=null){
+    try{CleanExactExtraction(extracted);}
+    catch(Exception cleanup){Console.Error.WriteLine("RC1_SETUP_EXTRACTION_RETAINED:"+extracted+":"+cleanup.GetType().Name);}
+   }
   }
 #endif
  }
