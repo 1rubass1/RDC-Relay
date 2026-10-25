@@ -9,11 +9,26 @@ if(-not $type){throw 'RC1_MANUAL_PRODUCT_TYPE_NOT_COMPILED'}
 $flags=[Reflection.BindingFlags]'Static,NonPublic'
 $prepare=$type.GetMethod('Prepare',$flags)
 $activate=$type.GetMethod('ActivateDesktop',$flags)
-if(-not $prepare -or -not $activate){throw 'RC1_MANUAL_PRODUCT_METHODS_MISSING'}
+$pathCheck=$type.GetMethod('CheckPath',$flags)
+if(-not $prepare -or -not $activate -or -not $pathCheck){throw 'RC1_MANUAL_PRODUCT_METHODS_MISSING'}
 $pass=0;$fail=0
 function Check([bool]$ok,[string]$name){
  if($ok){$script:pass++;Write-Output ('PASS '+$name)}
  else{$script:fail++;Write-Output ('FAIL '+$name)}
+}
+# STARMER's OS-reported Desktop is under OneDrive Cloud Files reparse
+# directories. Read-only product path validation must accept that exact
+# Windows Cloud tag while rejecting any arbitrary junction/symlink.
+[void]$pathCheck.Invoke($null,[object[]]@([Environment]::GetFolderPath('DesktopDirectory')))
+Check $true 'MANUAL real OS Cloud Files Desktop path accepted'
+[void]$pathCheck.Invoke($null,[object[]]@([IO.Path]::Combine(
+ [Environment]::GetFolderPath('DesktopDirectory'),'RDC Relay.lnk')))
+Check $true 'MANUAL real Desktop shortcut path accepted'
+$oneDrive=[IO.Path]::GetDirectoryName([Environment]::GetFolderPath('DesktopDirectory'))
+if(([IO.File]::GetAttributes($oneDrive) -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+ $denied=$false
+ try{[void]$pathCheck.Invoke($null,[object[]]@($oneDrive))}catch{$denied=$true}
+ Check $denied 'MANUAL unrelated Cloud root remains refused'
 }
 $root=Join-Path ([IO.Path]::GetTempPath()) ('RDC-RC1-MANUAL-'+[Guid]::NewGuid().ToString('N'))
 try {

@@ -7,13 +7,44 @@ using System.Security.Cryptography;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 internal static class RdcRc1ManualUpgrade {
+ [StructLayout(LayoutKind.Sequential)]
+ struct FileAttributeTagInfo { public uint FileAttributes; public uint ReparseTag; }
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
+ static extern SafeFileHandle CreateFile(string path,uint access,uint share,IntPtr security,
+  uint creation,uint flags,IntPtr template);
+ [DllImport("kernel32.dll",SetLastError=true)]
+ static extern bool GetFileInformationByHandleEx(SafeFileHandle handle,int informationClass,
+  out FileAttributeTagInfo info,uint size);
+ static bool IsWindowsDesktopCloudAncestor(string inspected,string requested) {
+  // Only an OS-reported Desktop or its direct child may cross an OS Desktop
+  // Cloud Files placeholder. Junctions and symbolic links still fail closed.
+  string desktop=Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+  if(String.IsNullOrEmpty(desktop))return false;
+  desktop=Path.GetFullPath(desktop);
+  bool inDesktop=String.Equals(requested,desktop,StringComparison.OrdinalIgnoreCase)||
+    requested.StartsWith(desktop+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);
+  bool onDesktopChain=String.Equals(inspected,desktop,StringComparison.OrdinalIgnoreCase)||
+    desktop.StartsWith(inspected+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);
+  if(!inDesktop||!onDesktopChain||!Directory.Exists(inspected))return false;
+  using(SafeFileHandle handle=CreateFile(inspected,0,7,IntPtr.Zero,3,
+    0x02000000u|0x00200000u,IntPtr.Zero)) {
+   if(handle==null||handle.IsInvalid)return false;
+   FileAttributeTagInfo info;
+   if(!GetFileInformationByHandleEx(handle,9,out info,8))return false;
+   // Windows Cloud Files (0x9000001A through 0x9000F01A);
+   // do NOT accept junctions 0xA0000003 or symlinks 0xA000000C.
+   return (info.ReparseTag & 0xFFFF0FFFu)==0x9000001Au;
+  }
+ }
  static void CheckPath(string path) {
-  string current=Path.GetFullPath(path);
+  string full=Path.GetFullPath(path),current=full;
   while(!String.IsNullOrEmpty(current)) {
    if(File.Exists(current)||Directory.Exists(current)) {
-    if((File.GetAttributes(current)&FileAttributes.ReparsePoint)!=0)
+    if((File.GetAttributes(current)&FileAttributes.ReparsePoint)!=0 &&
+       !IsWindowsDesktopCloudAncestor(current,full))
      throw new InvalidOperationException("RC1_MANUAL_REPARSE_REFUSED");
    }
    string parent=Path.GetDirectoryName(current);
