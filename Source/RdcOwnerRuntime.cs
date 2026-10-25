@@ -15,9 +15,12 @@ using System.Threading;
 
 public sealed class RdcOwnerRuntime : IDisposable {
  readonly object gate=new object();
- readonly string sourceRoot, guiScript, stateRoot, ticketFile, instance, generation;
+ readonly string sourceRoot, guiScript, stateRoot, ticketFile, instance, generation, trialRoot;
  readonly string pipeName, logonSid;
  readonly RdcOwnerTicketStore ticketStore;
+ readonly int trialExitSeconds;
+ readonly Stopwatch trialClock=new Stopwatch();
+ bool trialReopenOnce=false,trialFailGuiStartOnce=false;
  readonly RdcOwnerRemoteState remoteSupervisor=new RdcOwnerRemoteState();
  bool runRootCreated=false;
  readonly int hostPid, hostSession; readonly long hostBorn;
@@ -29,16 +32,26 @@ public sealed class RdcOwnerRuntime : IDisposable {
  readonly List<Dictionary<string,object>> events=new List<Dictionary<string,object>>();
  readonly HashSet<string> requestIds=new HashSet<string>(StringComparer.Ordinal);
  readonly Queue<string> requestOrder=new Queue<string>();
+ readonly HashSet<int> trialSnapshotClients=new HashSet<int>();
+ readonly HashSet<int> trialEventClients=new HashSet<int>();
  Process gui;
+ System.Threading.Tasks.Task<string> guiErrorTask;
  int childPid=0,childSession=0,guiStarts=0,guiFailures=0,closeGeneration=0;
  long childBorn=0,sequence=0,lastRequestSequence=0;
- string nonce="",guiState="NONE";
+ string nonce="",guiState="NONE",lastGuiError="";
  bool disposed=false,guiAuthenticated=false,exitRequested=false;
  readonly string fakeRemoteSession=Guid.NewGuid().ToString("N");
  public string Generation { get {return generation;} }
  public string Status { get {lock(gate){return guiState;}} }
- public RdcOwnerRuntime(string root,bool fakeOnly) {
+ public string LastGuiError {get{lock(gate){return lastGuiError;}}}
+ public RdcOwnerRuntime(string root,bool fakeOnly):this(root,fakeOnly,null,false,0,false){}
+ public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot):this(root,fakeOnly,isolatedTrialRoot,false,30,false){}
+ public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot,bool failOnce,int exitSeconds,bool reopenOnce) {
   if(!fakeOnly)throw new InvalidOperationException("RC1_REMOTE_NOT_AUTHORIZED");
+  trialRoot=ValidateTrialRoot(isolatedTrialRoot);
+  if(trialRoot==null && (failOnce||exitSeconds!=0||reopenOnce))throw new InvalidOperationException("RC1_TRIAL_OPTIONS_WITHOUT_ROOT");
+  if(trialRoot!=null && (exitSeconds<15||exitSeconds>60))throw new InvalidOperationException("RC1_TRIAL_BOUNDED_DURATION");
+  trialExitSeconds=exitSeconds;trialFailGuiStartOnce=failOnce;trialReopenOnce=reopenOnce;
   sourceRoot=Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
   guiScript=Path.GetFullPath(Path.Combine(sourceRoot,"remote-window.ps1"));
   if(Path.GetDirectoryName(guiScript)!=sourceRoot || !File.Exists(guiScript) ||
@@ -61,7 +74,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
    hostSession=RdcOwnerWire.Session(hostPid);
    string local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
    if(String.IsNullOrEmpty(local))throw new InvalidOperationException("NO_OWNER_LOCALAPPDATA");
-   string pilotRoot=Path.Combine(local,"RDCRelayOwnerPilot","1.6.0-RC1");
+   string pilotRoot=trialRoot==null?Path.Combine(local,"RDCRelayOwnerPilot","1.6.0-RC1"):
+     Path.Combine(trialRoot,"owner-state");
    CheckParents(pilotRoot);
    stateRoot=Path.Combine(pilotRoot,"run-"+instance);
    if(Directory.Exists(stateRoot) || File.Exists(stateRoot))throw new InvalidOperationException("RUN_COLLISION");
@@ -104,11 +118,20 @@ public sealed class RdcOwnerRuntime : IDisposable {
    pulse.Tick+=(s,e)=>{
     lock(gate){
      RefreshGui();
+     if(trialRoot!=null){
+      if(!exitRequested && trialReopenOnce && guiStarts==1 && gui==null && guiState=="NONE"){
+       trialReopenOnce=false;OpenGui();
+      }
+      if(!exitRequested && trialClock.Elapsed.TotalSeconds>=trialExitSeconds){
+       exitRequested=true;closeGeneration++;Append("host","bounded disposable trial exit requested");
+      }
+     }
      // GUI is asked via closeGeneration; no process kill or orphan.
      // An unverified ticket/child is NOT a clean full exit.
      if(exitRequested && gui==null && guiState=="NONE")context.ExitThread();
     }
    };
+   if(trialRoot!=null)trialClock.Start();
    pulse.Start();
    remoteSupervisor.AddSyntheticLogLine("RDC Relay 1.6 RC1: Remote disabled until owner OS trial approval.");
    Append("host","RC1 fake-only owner startup");
@@ -126,6 +149,16 @@ public sealed class RdcOwnerRuntime : IDisposable {
    if(!cleaned || !ipcClean)throw new InvalidOperationException("RC1_CONSTRUCTOR_NOT_CLEAN_IPC_OR_RUN_ROOT");
    throw;
   }
+ }
+ static string ValidateTrialRoot(string candidate){
+  if(String.IsNullOrEmpty(candidate))return null;
+  string full=Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar);
+  string temp=Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar);
+  if(!String.Equals(Path.GetDirectoryName(full),temp,StringComparison.OrdinalIgnoreCase) ||
+     !System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(full),@"^RDC-RC1-OS-[a-f0-9]{32}$") ||
+     !Directory.Exists(full))throw new InvalidOperationException("RC1_TRIAL_ROOT_BOUNDARY");
+  CheckPath(full);
+  return full;
  }
  static void CheckParents(string path){
   string cursor=Path.GetFullPath(path);
@@ -173,6 +206,17 @@ public sealed class RdcOwnerRuntime : IDisposable {
   try{
    if(!gui.HasExited)return;
   }catch{guiState="UNVERIFIED";Append("gui","identity probe failed");return;}
+  if(trialRoot!=null && guiErrorTask!=null){
+   try{if(!guiErrorTask.IsCompleted){Console.WriteLine("RC1_TRIAL_GUI_STDERR_PENDING");}
+    else {string detail=guiErrorTask.GetAwaiter().GetResult();
+    if(!String.IsNullOrWhiteSpace(detail)){
+     detail=detail.Replace('\r',' ').Replace('\n',' ');
+     Console.WriteLine("RC1_TRIAL_GUI_STDERR="+detail.Substring(0,Math.Min(detail.Length,900)));
+    }
+    }
+   }catch{Console.WriteLine("RC1_TRIAL_GUI_STDERR_UNAVAILABLE");}
+  }
+  guiErrorTask=null;
   gui.Dispose();gui=null;childPid=0;childBorn=0;childSession=0;guiAuthenticated=false;
   nonce="";lastRequestSequence=0;requestIds.Clear();requestOrder.Clear();
   if(!ticketStore.RevokeOnlyOwned()){
@@ -199,16 +243,28 @@ public sealed class RdcOwnerRuntime : IDisposable {
     nonce=Guid.NewGuid().ToString("N");
     string ps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
       @"WindowsPowerShell\v1.0\powershell.exe");
-    var info=new ProcessStartInfo(ps,
-      "-NoProfile -NonInteractive -STA -File \""+guiScript+"\" -OwnerGui -OwnerTicketPath \""+ticketFile+"\"");
+    // Process-scoped execution policy only; never changes Windows policy or registry.
+    string args="-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File \""+guiScript+"\" -OwnerGui -OwnerTicketPath \""+ticketFile+"\"";
+    if(trialRoot!=null)args+=" -OwnerTrialRoot \""+trialRoot+"\"";
+    var info=new ProcessStartInfo(ps,args);
     info.WorkingDirectory=sourceRoot;
     info.UseShellExecute=false;
     info.CreateNoWindow=true;
-    gui=(Process)ticketStore.CreateThen(TicketPayload(),()=>Process.Start(info));
+    if(trialRoot!=null)info.RedirectStandardError=true;
+    gui=(Process)ticketStore.CreateThen(TicketPayload(),()=>{
+     if(trialRoot!=null && trialFailGuiStartOnce){
+      trialFailGuiStartOnce=false;
+      throw new IOException("RC1_TRIAL_INJECTED_GUI_START_FAILURE");
+     }
+     return Process.Start(info);
+    });
     if(gui==null)throw new InvalidOperationException("RC1_GUI_START_FAILED");
+    if(trialRoot!=null)guiErrorTask=gui.StandardError.ReadToEndAsync();
     childPid=gui.Id;childBorn=gui.StartTime.ToUniversalTime().Ticks;childSession=gui.SessionId;
     guiStarts++;guiState="SPAWNING";guiAuthenticated=false;Append("gui","spawned");
-   }catch{
+   }catch(Exception startError){
+    lastGuiError=startError.GetType().Name+": "+startError.Message;
+    if(lastGuiError.Length>180)lastGuiError=lastGuiError.Substring(0,180);
     guiFailures++;guiState="NONE";Append("gui","launch failed");
     if(gui==null){
      childPid=0;childBorn=0;childSession=0;nonce="";
@@ -271,8 +327,12 @@ public sealed class RdcOwnerRuntime : IDisposable {
     return Answer("WELCOME",requestId,Snapshot());
    }
    if(!guiAuthenticated)return Error(requestId,"HELLO_REQUIRED");
-   if(verb=="GET_SNAPSHOT")return Answer("SNAPSHOT",requestId,Snapshot());
+   if(verb=="GET_SNAPSHOT"){
+    if(trialRoot!=null)trialSnapshotClients.Add(osPid);
+    return Answer("SNAPSHOT",requestId,Snapshot());
+   }
    if(verb=="GET_EVENTS"){
+    if(trialRoot!=null)trialEventClients.Add(osPid);
     long after=RdcOwnerWire.Number(request,"afterSequence");
     if(after<0||after>sequence)return Error(requestId,"INVALID_CURSOR");
     bool gap=events.Count>0 && after<Convert.ToInt64(events[0]["sequence"])-1;
@@ -307,6 +367,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
    }
    try{singleton.ReleaseMutex();}catch{}
    singleton.Dispose();
+   if(trialRoot!=null)Console.WriteLine("RC1_TRIAL_IPC_SNAPSHOT_GUI_COUNT="+
+    trialSnapshotClients.Count+" EVENT_GUI_COUNT="+trialEventClients.Count);
    if(!ipcClean || !filesClean || !guiClean)
     throw new InvalidOperationException("RC1_OWNER_SHUTDOWN_NOT_CLEAN");
   }

@@ -1,4 +1,4 @@
-﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview,[switch]$OwnerGui,[string]$OwnerTicketPath='')
+﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview,[switch]$OwnerGui,[string]$OwnerTicketPath='',[string]$OwnerTrialRoot='')
 $ErrorActionPreference = 'Stop'
 if($OwnerGui){
  if($SelfTest -or $Preview -or [string]::IsNullOrWhiteSpace($OwnerTicketPath)){

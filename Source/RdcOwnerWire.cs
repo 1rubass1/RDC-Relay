@@ -73,18 +73,18 @@ public static class RdcOwnerWire {
       int remaining=timeout-(int)deadline.ElapsedMilliseconds;
       if(remaining<=0)throw new TimeoutException("FRAME_TIMEOUT");
       Task<int> op=stream.ReadAsync(data,at,length-at);
-      if(await Task.WhenAny(op,Task.Delay(remaining))!=op)throw new TimeoutException("FRAME_TIMEOUT");
-      int n=await op;
+      if(await Task.WhenAny(op,Task.Delay(remaining)).ConfigureAwait(false)!=op)throw new TimeoutException("FRAME_TIMEOUT");
+      int n=await op.ConfigureAwait(false);
       if(n<=0)throw new EndOfStreamException("FRAME_EOF");
       at+=n;
     }
     return data;
   }
   public static async Task<string> Read(PipeStream stream,int max,int timeout) {
-    byte[] size=await ReadExact(stream,4,timeout);
+    byte[] size=await ReadExact(stream,4,timeout).ConfigureAwait(false);
     uint bytes=BitConverter.ToUInt32(size,0);
     if(bytes==0||bytes>max)throw new InvalidDataException("FRAME_SIZE");
-    byte[] raw=await ReadExact(stream,(int)bytes,timeout);
+    byte[] raw=await ReadExact(stream,(int)bytes,timeout).ConfigureAwait(false);
     return new UTF8Encoding(false,true).GetString(raw);
   }
   public static async Task Write(PipeStream stream,string value,int max,int timeout) {
@@ -92,12 +92,12 @@ public static class RdcOwnerWire {
     if(data.Length==0||data.Length>max)throw new InvalidDataException("RESPONSE_SIZE");
     byte[] header=BitConverter.GetBytes((uint)data.Length);
     Task w=stream.WriteAsync(header,0,4);
-    if(await Task.WhenAny(w,Task.Delay(timeout))!=w)throw new TimeoutException("WRITE_TIMEOUT");
-    await w;
+    if(await Task.WhenAny(w,Task.Delay(timeout)).ConfigureAwait(false)!=w)throw new TimeoutException("WRITE_TIMEOUT");
+    await w.ConfigureAwait(false);
     w=stream.WriteAsync(data,0,data.Length);
-    if(await Task.WhenAny(w,Task.Delay(timeout))!=w)throw new TimeoutException("WRITE_TIMEOUT");
-    await w;
-    await stream.FlushAsync();
+    if(await Task.WhenAny(w,Task.Delay(timeout)).ConfigureAwait(false)!=w)throw new TimeoutException("WRITE_TIMEOUT");
+    await w.ConfigureAwait(false);
+    await stream.FlushAsync().ConfigureAwait(false);
   }
   public static Dictionary<string,object> Decode(string json) {
     object result=Json.DeserializeObject(json);
@@ -157,10 +157,10 @@ public sealed class RdcOwnerServer : IDisposable {
     while(!stop.IsCancellationRequested) {
       NamedPipeServerStream p=null;
       try {
-        await slots.WaitAsync(stop.Token);
+        await slots.WaitAsync(stop.Token).ConfigureAwait(false);
         p=new NamedPipeServerStream(name,PipeDirection.InOut,2,PipeTransmissionMode.Byte,PipeOptions.Asynchronous,4096,4096,RdcOwnerWire.Dacl());
         lock(pendingGate)pending.Add(p);
-        try{await p.WaitForConnectionAsync(stop.Token);}
+        try{await p.WaitForConnectionAsync(stop.Token).ConfigureAwait(false);}
         finally{lock(pendingGate)pending.Remove(p);}
         var connected=p;p=null;
         Task acceptedTask=ServeOwned(connected);
@@ -169,7 +169,7 @@ public sealed class RdcOwnerServer : IDisposable {
        catch{Interlocked.Increment(ref Rejected);if(p!=null)p.Dispose();try{slots.Release();}catch{}}
     }
   }
-  async Task ServeOwned(NamedPipeServerStream p) {try{await Serve(p);}finally{p.Dispose();try{slots.Release();}catch{}}}
+  async Task ServeOwned(NamedPipeServerStream p) {try{await Serve(p).ConfigureAwait(false);}finally{p.Dispose();try{slots.Release();}catch{}}}
   async Task Serve(NamedPipeServerStream p) {
     int current=Interlocked.Increment(ref Active);
     int previous;
@@ -177,10 +177,10 @@ public sealed class RdcOwnerServer : IDisposable {
     try {
       // Windows kernel-observed peer identity is checked BEFORE parsing JSON.
       int clientPid=RdcOwnerWire.PeerPid(p,true),clientSession=RdcOwnerWire.PeerSession(p,true);
-      string input=await RdcOwnerWire.Read(p,RdcOwnerWire.MaxRequest,1200);
+      string input=await RdcOwnerWire.Read(p,RdcOwnerWire.MaxRequest,1200).ConfigureAwait(false);
       Dictionary<string,object> map=RdcOwnerWire.Decode(input);
       string answer=dispatch(map,clientPid,clientSession);
-      await RdcOwnerWire.Write(p,answer,RdcOwnerWire.MaxResponse,1000);
+      await RdcOwnerWire.Write(p,answer,RdcOwnerWire.MaxResponse,1000).ConfigureAwait(false);
     }catch(TimeoutException){Interlocked.Increment(ref Timeouts);}
      catch{Interlocked.Increment(ref Rejected);}
     finally{Interlocked.Decrement(ref Active);}

@@ -10,6 +10,14 @@ function Start-RdcOwnerGui {
  $ticketFull=[IO.Path]::GetFullPath($OwnerTicketPath)
  $local=[IO.Path]::GetFullPath([Environment]::GetFolderPath('LocalApplicationData')).TrimEnd([char]92)
  $pilot=Join-Path $local 'RDCRelayOwnerPilot\1.6.0-RC1'
+ if($OwnerTrialRoot){
+  $trial=[IO.Path]::GetFullPath($OwnerTrialRoot).TrimEnd([char]92)
+  $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([char]92)
+  if(-not [String]::Equals([IO.Path]::GetDirectoryName($trial),$temp,[StringComparison]::OrdinalIgnoreCase) -or
+     [IO.Path]::GetFileName($trial) -cnotmatch '^RDC-RC1-OS-[a-f0-9]{32}$' -or
+     -not [IO.Directory]::Exists($trial)) {throw 'RC1_OWNER_TRIAL_ROOT_BOUNDARY'}
+  $pilot=Join-Path $trial 'owner-state'
+ }
  $run=[IO.Path]::GetDirectoryName($ticketFull)
  if([IO.Path]::GetFileName($ticketFull) -cne 'gui-ticket.json' -or
     [IO.Path]::GetFileName($run) -cnotmatch '^run-[0-9a-f]{32}$' -or
