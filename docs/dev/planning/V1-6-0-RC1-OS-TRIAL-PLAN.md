@@ -1,5 +1,7 @@
 # v1.6 RC1 — separately authorized disposable Windows OS-process trial
 
+> **New G7 owner boundary (2026-10-25):** [G7 safety and dummy-tree plan/report](V1-6-0-RC1-G7-SAFETY-AND-TREE-REPORT.md). New disposable `Rc1DummyRemoteActor.ps1` + `Invoke-Rc1DummyRemoteTreeTrial.ps1` code is written and AST-parsed, but **NOT EXECUTED**. Unlike the already authorized FAKE_ONLY original GUI/Host smoke, this is a **new owned-child tree** (two PowerShell test actors, root and one child); launch requires an independent `REV-006A-G7` harness pre-gate and a **separate explicit owner GO**. Controller defaults to nonexecuting exit 42. The G6 OS-04…10/16/24 outcomes stay NOT CHECKED until then.
+
 **REFERENCE MATRIX, NOW PARTIALLY EXECUTED.** After explicit owner instruction on 2026-10-25, Programmer ran *new, private, disposable FAKE_ONLY* Windows Host/GUI/IPC trial trees on STARMER. Exact PASS/PARTIAL/NOT CHECKED case-by-case evidence and harness are in [G6 measured matrix](V1-6-0-RC1-G6-OS-HARNESS-MATRIX.md). Historical pre-approval text below describes the original gate, not the current status. This is **NOT approval** to launch/stop/disconnect/log out real Desktop Commander Remote, change installed v1.5.18, alter global security policy, or touch historical P1/P2 TEMP.
 
 ## Original preconditions and remaining gates for other OS cases

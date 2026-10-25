@@ -5,17 +5,14 @@ param([switch]$Execute,[switch]$InjectStartFailure,[switch]$InjectConstructorFai
  [switch]$ProbeDuplicateHost,[ValidateRange(1,10)][int]$Cycles=1)
 $ErrorActionPreference='Stop'
 if(-not $Execute){Write-Output 'NOT CHECKED: OS smoke requires explicit -Execute';exit 42}
+. (Join-Path $PSScriptRoot 'Rc1OsFixtureProof.ps1')
 $project=Split-Path -Parent $PSScriptRoot
 $branch=(git -C $project branch --show-current).Trim()
 if($branch -cne 'feature/v1.6-host-gui-owner-pilot'){throw 'OS_REFUSED_WRONG_BRANCH'}
 $marker=Get-Content -LiteralPath (Join-Path $project 'Source\rc1-candidate.json') -Raw -Encoding UTF8|ConvertFrom-Json
 if($marker.candidate -cne '1.6.0 RC1' -or $marker.liveRemoteEnabled -ne $false -or
    $marker.installable -ne $false -or $marker.publishable -ne $false){throw 'OS_REFUSED_CANDIDATE_GATE'}
-$names=@('remote-window.ps1','rc1-tray-host.ps1','rc1-owner-gui.ps1',
- 'RdcOwnerWire.cs','RdcOwnerRuntime.cs','RdcOwnerTicketStore.cs',
- 'RdcOwnerRemoteState.cs','RdcOwnerProcess.cs','rc1-candidate.json','RDCRelay.ico',
- 'divider-caustic.ps','divider-caustic-detail.ps','divider-particles.ps',
- 'divider-particles-core.ps','update-notice.ps1','update.ps1')
+$names=@($Rc1OsNames)
 $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([char]92)
 $runId=[Guid]::NewGuid().ToString('N')
 $trial=Join-Path $temp ('RDC-RC1-OS-'+$runId)
@@ -23,6 +20,7 @@ $src=Join-Path $trial 'Source'
 $sentinel=Join-Path $temp ('RDC-RC1-OS-SENTINEL-'+$runId+'.txt')
 $sentinelBytes=[Text.Encoding]::UTF8.GetBytes('RDC RC1 disposable outside sentinel '+$runId)
 $hashes=@{}
+$creation=$null;$processRows=New-Object 'System.Collections.Generic.List[object]'
 $hostProcess=$null;$firstGui=$null;$secondGui=$null;$duplicateHost=$null
 $ownedGui=New-Object 'System.Collections.Generic.List[System.Diagnostics.Process]'
 $outTask=$null;$errTask=$null
@@ -111,6 +109,7 @@ try{
   [IO.File]::Copy($from,$to,$false)
   $hashes[$name]=(Get-FileHash -LiteralPath $to -Algorithm SHA256).Hash
  }
+ $creation=New-Rc1AtCreation $runId $project $hashes $sentinelBytes $acl
  $powerShellFile=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
  if(-not [IO.File]::Exists($powerShellFile)){throw 'OS_SYSTEM_POWERSHELL_MISSING'}
  Add-Type -TypeDefinition @'
@@ -144,6 +143,8 @@ try{
  Check (Verified $hostProcess $powerShellFile $PID) 'OS Host exact executable and parent'
  if($fail){throw 'OS_HOST_UNVERIFIED'}
  $hostBorn=$hostProcess.StartTime.ToUniversalTime().Ticks
+ $processRows.Add(@{Kind='Host';Pid=$hostProcess.Id;BirthUtcTicks=$hostBorn;
+  SessionId=$hostProcess.SessionId;ParentPid=$PID;Exe=$powerShellFile})
  Write-Output ('OS_HOST_PID='+$hostProcess.Id+' UTC_TICKS='+$hostBorn+' SESSION='+$hostProcess.SessionId)
  $lastGuiPid=0
  $observedPids=New-Object 'System.Collections.Generic.HashSet[int]'
@@ -151,6 +152,8 @@ try{
   $currentGui=WaitOwnGui $hostProcess $lastGuiPid 18
   $ownedGui.Add($currentGui)
   $guiBorn=$currentGui.StartTime.ToUniversalTime().Ticks
+  $processRows.Add(@{Kind='Gui';Pid=$currentGui.Id;BirthUtcTicks=$guiBorn;
+   SessionId=$currentGui.SessionId;ParentPid=$hostProcess.Id;Exe=$powerShellFile})
   Check ((Verified $currentGui $powerShellFile $hostProcess.Id) -and
     $currentGui.SessionId -eq $hostProcess.SessionId -and
     $observedPids.Add($currentGui.Id)) ('OS GUI generation '+$cycle+' exact unique OS identity')
@@ -297,37 +300,43 @@ try{
   if($survivors.Count){$safeToClean=$false}
   Write-Output ('OS_TRIAL_SURVIVOR_COUNT='+$survivors.Count)
  }catch{$script:fail++;$safeToClean=$false;Write-Output 'NOT CLEAN: OS survivor inventory unavailable'}
- if([IO.File]::Exists($sentinel)){
-  $current=[IO.File]::ReadAllBytes($sentinel)
-  $same=($current.Length -eq $sentinelBytes.Length)
-  if($same){for($i=0;$i -lt $current.Length;$i++){if($current[$i] -ne $sentinelBytes[$i]){$same=$false;break}}}
-  Check $same 'OS outside sentinel unchanged'
-  if(-not $same){$safeToClean=$false}
+ # G7 F1: sentinel absence/unreadability/redirection is a mandatory FAIL.
+ # Never proceed to cleanup before exact bytes, run binding and no-reparse.
+ $sentinelOk=$false
+ try{
+  Assert-Rc1MandatorySentinel $runId $sentinelBytes $creation
+  $sentinelOk=$true
+ }catch{
+  $safeToClean=$false
+  Write-Output ('NOT CLEAN: mandatory sentinel refused '+$_.Exception.Message)
  }
+ Check $sentinelOk 'OS mandatory outside sentinel exact bytes, path and run binding'
+ if(-not $sentinelOk){$safeToClean=$false}
+ # Process attestation is independently created next to (not inside) the root
+ # only after OS-observed Host and GUI identities and absence of survivors.
+ if($creation -and $hostProcess -and $hostProcess.HasExited -and $liveGui.Count -eq 0 -and
+    $processRows.Count -ge 2 -and $survivors.Count -eq 0){
+  try{
+   New-Rc1AtExit $runId $creation ($processRows.ToArray())
+   Write-Output ('OS_G7_ATTESTED_RUN='+$runId)
+  }catch{
+   $safeToClean=$false;$script:fail++
+   Write-Output ('NOT CLEAN: process provenance not recorded '+$_.Exception.Message)
+  }
+ }else{
+  $safeToClean=$false
+  Write-Output 'NOT CLEAN: incomplete OS process attestation'
+ }
+ if($fail){$safeToClean=$false}
  if($safeToClean){
   try{
-   PathSafe $trial
-   $state=Join-Path $trial 'owner-state'
-   if([IO.Directory]::Exists($state) -and [IO.Directory]::GetFileSystemEntries($state).Count -ne 0){throw 'OS_STATE_NOT_EMPTY'}
-   foreach($name in $names){
-    $file=Join-Path $src $name
-    PathSafe $file
-    if(-not [IO.File]::Exists($file) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -cne $hashes[$name]){
-     throw ('OS_SOURCE_CHANGED_'+$name)
-    }
-   }
-   if([IO.Directory]::GetFileSystemEntries($src).Count -ne $names.Count){throw 'OS_UNKNOWN_SOURCE_ENTRY'}
-   foreach($name in $names){[IO.File]::Delete((Join-Path $src $name))}
-   [IO.Directory]::Delete($src,$false)
-   if([IO.Directory]::Exists($state)){[IO.Directory]::Delete($state,$false)}
-   if([IO.Directory]::GetFileSystemEntries($trial).Count -ne 0){throw 'OS_UNKNOWN_TRIAL_ENTRY'}
-   [IO.Directory]::Delete($trial,$false)
-   [IO.File]::Delete($sentinel)
+   Remove-Rc1AttestedFixture -runId $runId
    Write-Output 'OS_DISPOSABLE_CLEAN=TRUE'
   }catch{
-   $script:fail++;Write-Output ('NOT CLEAN: verified-only fixture cleanup refused '+$_.Exception.Message)
+   $script:fail++
+   Write-Output ('NOT CLEAN: attested exact-file cleanup refused '+$_.Exception.Message)
   }
- }else{Write-Output ('NOT CLEAN: preserved exact trial root '+$trial)}
+ }else{Write-Output ('NOT CLEAN: preserved exact trial root '+$trial+' PROOF='+ (Get-Rc1Paths $runId).Proof)}
  foreach($knownGui in $ownedGui){$knownGui.Dispose()}
  if($duplicateHost){$duplicateHost.Dispose()}
  if($hostProcess){$hostProcess.Dispose()}

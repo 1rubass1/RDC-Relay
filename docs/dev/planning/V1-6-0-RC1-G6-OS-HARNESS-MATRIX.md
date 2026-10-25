@@ -1,5 +1,7 @@
 # G6 — executable Windows OS harness coverage, actual source, and strict gaps
 
+> **G7 update (2026-10-25):** Reviewed G6 coverage tally is still **5 PASS / 5 PARTIAL / 14 NOT CHECKED**. [G7 report](V1-6-0-RC1-G7-SAFETY-AND-TREE-REPORT.md) adds source-provenance cleanup F1/F2 negative controls (17/0), fake-injected owner-tree stop contract (16/0), successful attested cleanup on new FAKE_ONLY Windows Host/GUI runs (10 cycles 43/0; one cycle 15/0), and a NOT CLEAN diagnostic root lacking complete run proof. The new dummy-Remote child-tree OS mode was **only written/parsed, not executed**; OS-04…10/16/24 cannot become PASS from synthetic checks. Historical G6 evidence below is unchanged.
+
 **2026-10-25 · Programmer · STARMER · branch `feature/v1.6-host-gui-owner-pilot` · Draft PR #23.**
 **Disposition:** **PARTIAL PASS; actual disposable fake-only OS execution, not full OS-01…OS-24 certification and NOT INSTALLABLE.** Supersedes the older OS plan's global `NOT AUTHORIZED / NOT EXECUTED` label only for the exact test cases below. Direct owner GO on 2026-10-25 covered new disposable fake-only Windows test trees. No real Desktop Commander Remote 0.2.52, installed 1.5.18, stable channel or protected historical TEMP was controlled.
 

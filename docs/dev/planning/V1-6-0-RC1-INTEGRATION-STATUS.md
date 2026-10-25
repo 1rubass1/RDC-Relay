@@ -1,5 +1,7 @@
 # PROG-006A-INTEGRATION — 1.6.0 RC1 G0 engineering checkpoint
 
+> **G7 Programmer update, 2026-10-25 (independent REV-006A-G7 pending):** [G7 precise safety/owner-tree report](V1-6-0-RC1-G7-SAFETY-AND-TREE-REPORT.md) supersedes this earlier G0 status for harness provenance. F1/F2 mitigation implemented in product OS harness: mandatory sentinel and independent at-creation 16-file/epoch/OS Host/GUI attestation; negative file-only **17 PASS**, injected-only `Owned/Adopted/Unknown` tree contract **16 PASS**, full permitted fake-only Host/GUI OS smoke 10 cycles **43 PASS**, one cycle **15 PASS**, safe regressions **19/19 PASS**. Separate newly managed dummy Remote process-tree trial mode is source-only, **NOT EXECUTED**; real Remote 0.2.52, installable RC1, full actual Exit and rollback remain **NO-GO**. One new diagnostic failed G7 trial root lacks `exit.json`, remains **NOT CLEAN**, details in G7 report. Historic three TEMP roots untouched. PR #23 Draft / no merge.
+
 **2026-10-24 · Programmer · [Draft PR #23](https://github.com/1rubass1/RDC-Relay/pull/23) · Branch:** \`feature/v1.6-host-gui-owner-pilot\` from verified \`development@fbc4527\`.
 **Disposition: BLOCKED — NOT A USER-INSTALLABLE 1.6.0 RC1.** Do not deliver as an installer, switch STARMER or merge without further Architect and independent Reviewer gates.
 
