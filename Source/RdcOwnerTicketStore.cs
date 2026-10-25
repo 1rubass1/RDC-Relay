@@ -43,8 +43,9 @@ public sealed class RdcOwnerTicketStore {
   if(File.Exists(ticket)||Directory.Exists(ticket))
    throw new InvalidOperationException("RC1_TICKET_EXISTS_FOREIGN_OR_UNVERIFIED");
   var map=RdcOwnerWire.Decode(json);
+  string mode=RdcOwnerWire.String(map,"remoteMode");
   if(RdcOwnerWire.String(map,"hostGeneration")!=runGeneration ||
-     RdcOwnerWire.String(map,"remoteMode")!="FAKE_ONLY_RC1" ||
+     (mode!="FAKE_ONLY_RC1" && mode!="OBSERVED_READ_ONLY_RC1") ||
      RdcOwnerWire.String(map,"nonce").Length!=32)
     throw new InvalidOperationException("RC1_TICKET_PAYLOAD_IDENTITY");
   var data=new UTF8Encoding(false,true).GetBytes(json);

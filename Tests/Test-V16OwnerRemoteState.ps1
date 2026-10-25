@@ -43,6 +43,27 @@ try{
  Check (($s.Snapshot()).state -eq 'Fault' -and -not $s.CanStop()) 'fault status-only'
  $s.AcceptFakeObservation('Reconnecting','synthetic telemetry')
  Check (($s.Snapshot()).state -eq 'Reconnecting' -and -not $s.CanStop()) 'reconnect telemetry not process operation'
+ $observed=New-Object RdcOwnerRemoteState
+ $observed.AddSyntheticLogLine('fake banner must disappear')
+ $before=[long]($observed.Snapshot()).logStreamEpoch
+ $observed.AttachObservedReadOnly(23)
+ $snapshot=$observed.Snapshot()
+ Check ($snapshot.ownership -eq 'Adopted' -and $snapshot.isActualRemote -and
+   $snapshot.processPid -eq 23 -and -not $snapshot.canStop) 'observed attach never grants Remote control'
+ Check ($snapshot.logStreamEpoch -gt $before -and @($snapshot.tail).Count -eq 0) 'actual attach drops fake startup line'
+ $observed.UpdateObservedReadOnly($true,'Ready','Observed health evidence only')
+ $observed.AddObservedMarker('Remote connected')
+ Check (($observed.Snapshot()).transportReady -eq 'OBSERVED_READY' -and
+   ($observed.Snapshot()).logCursor -eq 1) 'real read-only health and sanitized journal'
+ $oldEpoch=[long]($observed.Snapshot()).logStreamEpoch
+ $observed.RetargetObservedReadOnly(45)
+ $snapshot=$observed.Snapshot()
+ Check ($snapshot.processPid -eq 45 -and $snapshot.ownership -eq 'Adopted' -and
+   $snapshot.logStreamEpoch -eq ($oldEpoch+1) -and $snapshot.logCursor -eq 0 -and
+   @($snapshot.tail).Count -eq 0) 'replacement launcher rotates journal and stays Adopted'
+ $observed.AddObservedMarker('Remote launcher replaced')
+ Check (($observed.Snapshot()).canStop -eq $false -and
+   ($observed.Snapshot()).canReconnect -eq $false) 'reacquired launcher cannot be stopped or reconnected'
 }catch{$fail++;Write-Output ('FAIL exception '+$_.Exception.Message)}
 Write-Output ('RC1_OWNER_REMOTE_STATE_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}

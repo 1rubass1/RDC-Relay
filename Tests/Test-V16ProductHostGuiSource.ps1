@@ -29,7 +29,15 @@ try{
         $runtime.Contains('public void OpenGui()')) 'persistent tray owns separate GUI process creation'
  Check ($runtime.Contains('gui.MainWindowHandle') -and
         -not [regex]::IsMatch($runtime,'(?m)^\s*(?:Stop-Process|taskkill|gui\.Kill\()')) 'GUI duplicate path has no HWND forced termination'
- Check ($runtime.Contains('if(!fakeOnly)throw') -and $hostScript.Contains('if(-not $FakeOnly)')) 'Host cannot manage actual Remote without new authorization'
+ $observer=Get-Content -LiteralPath (Join-Path $src 'rc1-remote-observer.ps1') -Raw -Encoding UTF8
+ $observerErrors=$null;$observerTokens=$null
+ [void][Management.Automation.Language.Parser]::ParseFile(
+  (Join-Path $src 'rc1-remote-observer.ps1'),[ref]$observerTokens,[ref]$observerErrors)
+ Check ($runtime.Contains('if(!fakeOnly)throw') -and $hostScript.Contains('RC1_SELECT_EXACTLY_ONE_MODE') -and
+        $hostScript.Contains('ObserveExisting') -and $observer.Contains('Get-Rc1ObservedRemoteIdentity') -and
+        $observer.Contains('@wonderwhy-er/desktop-commander@0.2.52') -and
+        $observerErrors.Count -eq 0 -and
+        -not [regex]::IsMatch($observer,'(?im)^[^#\r\n]*(?:Stop-Process|taskkill|remote --logout)')) 'read-only existing Remote observer has explicit gate and no stop route'
  Check ($runtime.Contains('GetNamedPipe') -eq $false -and
         $wire.Contains('GetNamedPipeClientProcessId') -and $wire.Contains('GetNamedPipeServerProcessId')) 'IPC checks OS-observed peer on both sides'
  Check ($wire.Contains('TokenLogonSid') -and $wire.Contains('WellKnownSidType.NetworkSid') -and

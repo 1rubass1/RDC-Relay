@@ -22,9 +22,9 @@ try{
  }
  $owner=Get-Content -LiteralPath (Join-Path $src 'rc1-owner-gui.ps1') -Raw -Encoding UTF8
  Check ($owner.Contains('$finish.Enabled=$false;$accountButton.Enabled=$false')) 'owner-mode primary Remote actions disabled'
- Check ($owner.Contains('$remoteSnapshot=$snapshot.remote') -and $owner.Contains('RC1_FAKE_SNAPSHOT_REQUIRED') -and
+ Check ($owner.Contains('$remoteSnapshot=$snapshot.remote') -and $owner.Contains('RC1_REMOTE_MODE_MISMATCH') -and
         $owner.Contains('$remoteSnapshot.logStreamEpoch') -and $owner.Contains('$remoteSnapshot.logCursor') -and
-        $owner.Contains('Add-CompletedEvent') -and $owner.Contains('Reset-CompactLogSession')) 'GUI rehydrates original log from Host-owned fake snapshot'
+        $owner.Contains('Add-CompletedEvent') -and $owner.Contains('Reset-CompactLogSession')) 'GUI rehydrates bounded Host snapshot in exact observer/fake mode'
  Check ($owner.Contains('RC1_LOG_CURSOR_REGRESSED') -and $owner.Contains('RC1_LOG_CURSOR_MISMATCH') -and
         $owner.Contains('RC1_INVALID_LOG_TAIL')) 'GUI rejects missing/out-of-order fake log lines'
  Check ($owner.Contains('$switchAccountItem') -and $owner.Contains('$reconnectItem') -and $owner.Contains('$openLogItem')) 'secondary account/reconnect/user-log actions disabled'
@@ -39,9 +39,11 @@ try{
  $setup=Get-Content -LiteralPath (Join-Path $root 'Installer\Rc1CandidateSetup.cs') -Raw -Encoding UTF8
  $launcher=Get-Content -LiteralPath (Join-Path $root 'Installer\Rc1CandidateLauncher.cs') -Raw -Encoding UTF8
  Check ($setup.Contains('#if RDC_RC1_BLOCKED') -and $setup.Contains('return 42;') -and $setup.Contains('RDC_RC1_OWNER_G1_GO')) 'isolated candidate Setup gated before install'
- Check ($launcher.Contains('#if RDC_RC1_BLOCKED') -and $launcher.Contains('return 42;') -and $launcher.Contains('RDC_RC1_OWNER_G1_GO')) 'isolated candidate Portable launcher gated'
+ Check ($launcher.Contains('#if RDC_RC1_BLOCKED') -and $launcher.Contains('return 42;') -and
+        $launcher.Contains('--observe-existing') -and $launcher.Contains('RC1_NOT_VERIFIED_READ_ONLY_OBSERVER')) 'private Launcher gated by exact read-only marker and explicit option'
  Check ($setup.Contains('RDCRelayOwnerPilot') -and $setup.Contains('RC1_TARGET_EXISTS') -and $setup.Contains('RC1_COPY_HASH_FAIL')) 'side-by-side target denies overwrite and verifies copied bytes'
- Check ($launcher.Contains('liveRemoteEnabled') -and $launcher.Contains('rc1-tray-host.ps1') -and $launcher.Contains('-FakeOnly')) 'future private launcher cannot enable real Remote in current mode'
+ Check ($launcher.Contains('liveRemoteEnabled') -and $launcher.Contains('rc1-tray-host.ps1') -and
+        $launcher.Contains('-ObserveExisting') -and -not $launcher.Contains(' -FakeOnly')) 'private launcher observes existing Remote without starting it'
 }catch{$fail++;Write-Output ('FAIL unexpected '+$_.Exception.Message)}
 Write-Output ('RC1_OWNER_BOUNDARY_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}

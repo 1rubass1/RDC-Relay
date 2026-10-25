@@ -13,9 +13,8 @@ internal static class RdcRc1CandidateLauncher {
   return 42;
 #else
   try{
-   if(args.Length!=1 || args[0]!="--owner-approved-fake-only" ||
-      Environment.GetEnvironmentVariable("RDC_RC1_OWNER_G1_GO")!="YES")
-     throw new InvalidOperationException("RC1_OWNER_GO_REQUIRED");
+   if(args.Length!=1 || args[0]!="--observe-existing")
+     throw new InvalidOperationException("RC1_OBSERVER_MODE_EXPLICIT_REQUIRED");
    string root=Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
    string source=Path.Combine(root,"Source");
    string marker=Path.Combine(source,"rc1-candidate.json");
@@ -24,9 +23,13 @@ internal static class RdcRc1CandidateLauncher {
    var values=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(content);
    if((string)values["candidate"]!="1.6.0 RC1" ||
       !Convert.ToBoolean(values["installable"]) ||
-      Convert.ToBoolean(values["liveRemoteEnabled"]))
-     throw new InvalidOperationException("RC1_NOT_VERIFIED_FOR_FAKE_ONLY_LAUNCH");
-   foreach(string name in new []{"rc1-tray-host.ps1","rc1-owner-gui.ps1","remote-window.ps1",
+      !Convert.ToBoolean(values["liveRemoteEnabled"]) ||
+      Convert.ToBoolean(values["publishable"]) ||
+      Convert.ToBoolean(values["autoUpdateEnabled"]) ||
+      (string)values["observerMode"]!="OBSERVED_READ_ONLY_RC1")
+     throw new InvalidOperationException("RC1_NOT_VERIFIED_READ_ONLY_OBSERVER");
+   foreach(string name in new []{"rc1-tray-host.ps1","rc1-owner-gui.ps1",
+       "rc1-remote-observer.ps1","remote-window.ps1",
        "RdcOwnerRuntime.cs","RdcOwnerWire.cs","RdcOwnerTicketStore.cs",
        "RdcOwnerRemoteState.cs","RdcOwnerProcess.cs"}) {
     string file=Path.Combine(source,name);
@@ -36,9 +39,10 @@ internal static class RdcRc1CandidateLauncher {
    string ps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
      @"WindowsPowerShell\v1.0\powershell.exe");
    var psi=new ProcessStartInfo(ps,
-     "-NoProfile -NonInteractive -STA -File \""+
-     Path.Combine(source,"rc1-tray-host.ps1")+"\" -FakeOnly");
+     "-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File \""+
+     Path.Combine(source,"rc1-tray-host.ps1")+"\" -ObserveExisting");
    psi.UseShellExecute=false;
+   psi.CreateNoWindow=true;
    psi.WorkingDirectory=source;
    using(var child=Process.Start(psi)){
     if(child==null)throw new InvalidOperationException("RC1_HOST_START_FAILED");

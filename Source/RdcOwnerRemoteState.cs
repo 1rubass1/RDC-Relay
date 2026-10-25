@@ -16,8 +16,62 @@ public sealed class RdcOwnerRemoteState {
  Ownership ownership=Ownership.Unknown;
  ProcessEvidence identity;
  long epoch=1,revision=1,cursor=0,missed=0;
- bool sourceIsReal=false,stopApproved=false;
+ bool sourceIsReal=false,stopApproved=false,observedAlive=false;
+ int observedPid=0;
  public string SessionId {get{return session;}}
+ // A preexisting pinned Desktop Commander launcher is OBSERVED, not owned.
+ // No method in this store can grant stop/reconnect/logout authority.
+ public void AttachObservedReadOnly(int pid) {
+  if(pid<=0)throw new ArgumentOutOfRangeException("pid");
+  lock(sync){
+   if(sourceIsReal)throw new InvalidOperationException("RC1_OBSERVER_ALREADY_ATTACHED");
+   sourceIsReal=true;stopApproved=false;observedPid=pid;observedAlive=true;
+   ownership=Ownership.Adopted;identity=null;
+   // Drop the constructor's fake-only banner before the first observed GUI log.
+   epoch++;cursor=0;tail.Clear();
+   state="Connecting";status="Existing Remote observed; awaiting channel evidence";
+   revision++;AddDiagnostic("Existing Remote attached read-only");
+  }
+ }
+ public void RetargetObservedReadOnly(int pid){
+  if(pid<=0)throw new ArgumentOutOfRangeException("pid");
+  lock(sync){
+   if(!sourceIsReal||ownership!=Ownership.Adopted)throw new InvalidOperationException("RC1_NOT_OBSERVING");
+   // Caller reverified exact pinned OS identity including PID and birth.
+   // No ownership/stop authority is acquired when a launcher is replaced.
+   observedPid=pid;observedAlive=true;stopApproved=false;identity=null;
+   epoch++;cursor=0;tail.Clear();
+   state="Connecting";status="Existing Remote launcher changed; observing read-only";
+   revision++;AddDiagnostic("Observed launcher identity replaced");
+  }
+ }
+ public void UpdateObservedReadOnly(bool alive,string next,string detail){
+  if(next!="Disconnected" && next!="Connecting" && next!="AuthPending" &&
+     next!="Ready" && next!="Fault" && next!="Reconnecting")
+   throw new ArgumentException("RC1_OBSERVER_STATE");
+  lock(sync){
+   if(!sourceIsReal||ownership!=Ownership.Adopted)throw new InvalidOperationException("RC1_NOT_OBSERVING");
+   detail=(detail??"").Replace("\r"," ").Replace("\n"," ");
+   if(detail.Length>160)detail=detail.Substring(0,160);
+   if(state==next && status==detail && observedAlive==alive)return;
+   state=next;status=detail;observedAlive=alive;revision++;
+   AddDiagnostic("Observed: "+next+" / alive="+alive.ToString());
+  }
+ }
+ public void AddObservedMarker(string marker){
+  if(marker!="Remote connected" && marker!="Authentication pending" &&
+     marker!="Remote channel unavailable" && marker!="Remote start failed" &&
+     marker!="Remote tool started" && marker!="Remote tool completed" &&
+     marker!="Remote tool failed" && marker!="Local MCP recovering" &&
+     marker!="Remote launcher replaced")
+   throw new InvalidOperationException("RC1_OBSERVER_MARKER_DENIED");
+  lock(sync){
+   if(!sourceIsReal||ownership!=Ownership.Adopted)throw new InvalidOperationException("RC1_NOT_OBSERVING");
+   cursor++;revision++;
+   if(tail.Count==maxTail)tail.Dequeue();
+   tail.Enqueue(cursor.ToString("D6")+" | "+marker);
+  }
+ }
  public void AcceptFakeObservation(string next,string detail){
   if(next!="Disconnected" && next!="Connecting" && next!="AuthPending" &&
      next!="Ready" && next!="Fault" && next!="Reconnecting")
@@ -90,10 +144,11 @@ public sealed class RdcOwnerRemoteState {
  public Dictionary<string,object> Snapshot(){
   lock(sync){
    return new Dictionary<string,object>{
-    {"sessionId",session},{"fake",true},{"isActualRemote",sourceIsReal},
-    {"ownership",ownership.ToString()},{"processAlive","unknown"},
-    {"transportReady",state=="Ready"?"FAKE_READY":"not_connected"},
-    {"authState",state=="AuthPending"?"FAKE_AUTH":"unavailable"},
+    {"sessionId",session},{"fake",!sourceIsReal},{"isActualRemote",sourceIsReal},
+    {"ownership",ownership.ToString()},{"processAlive",sourceIsReal?(observedAlive?"observed_alive":"observed_exited"):"unknown"},
+    {"processPid",sourceIsReal?observedPid:0},
+    {"transportReady",state=="Ready"?(sourceIsReal?"OBSERVED_READY":"FAKE_READY"):"not_connected"},
+    {"authState",state=="AuthPending"?(sourceIsReal?"OBSERVED_AUTH":"FAKE_AUTH"):"unavailable"},
     {"toolActivity","idle"},{"state",state},{"status",status},
     {"logStreamEpoch",epoch},{"logCursor",cursor},{"missed",missed},
     {"tail",tail.ToArray()},{"diagnostics",diagnostics.ToArray()},

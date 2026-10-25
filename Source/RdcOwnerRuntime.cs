@@ -23,6 +23,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
  bool trialFailGuiStartOnce=false;
  int trialReopensRemaining=0;
  readonly RdcOwnerRemoteState remoteSupervisor=new RdcOwnerRemoteState();
+ bool observedMode=false;
+ ToolStripMenuItem trayStatusItem,trayExitItem;
  bool runRootCreated=false;
  readonly int hostPid, hostSession; readonly long hostBorn;
  readonly Mutex singleton;
@@ -106,20 +108,23 @@ public sealed class RdcOwnerRuntime : IDisposable {
    var menu=new ContextMenuStrip();
    var open=new ToolStripMenuItem("Открыть RDC Relay");
    open.Click+=(s,e)=>OpenGui();
-   var status=new ToolStripMenuItem("Статус: RC1 — Remote не подключён");
-   status.Enabled=false;
-   var exit=new ToolStripMenuItem("Завершить RDC Relay…");
-   exit.Click+=(s,e)=>{
-    if(MessageBox.Show("Завершить только данный RC1 Host и его собственный GUI? "+
-       "Настоящий Remote в этом режиме никогда не запускается.",
-       "RDC Relay 1.6.0 RC1 — только FAKE",
-       MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
+   trayStatusItem=new ToolStripMenuItem("Статус: RC1 — Remote не подключён");
+   trayStatusItem.Enabled=false;
+   trayExitItem=new ToolStripMenuItem("Завершить RDC Relay…");
+   trayExitItem.Click+=(s,e)=>{
+    string question=observedMode?
+     "Закрыть только RC1 Host и его GUI? Существующий Desktop Commander Remote продолжит работу.":
+     "Завершить только тестовый RC1 Host и его собственный GUI?";
+    if(MessageBox.Show(question,
+       "RDC Relay 1.6.0 RC1",MessageBoxButtons.YesNo,
+       MessageBoxIcon.Question)!=DialogResult.Yes)return;
     lock(gate){
      if(exitRequested)return;
-     exitRequested=true;closeGeneration++;Append("host","fake-only graceful exit requested");
+     exitRequested=true;closeGeneration++;
+     Append("host",observedMode?"observer detach requested":"fake-only graceful exit requested");
     }
    };
-   menu.Items.Add(open);menu.Items.Add(status);menu.Items.Add(new ToolStripSeparator());menu.Items.Add(exit);
+   menu.Items.Add(open);menu.Items.Add(trayStatusItem);menu.Items.Add(new ToolStripSeparator());menu.Items.Add(trayExitItem);
    tray.ContextMenuStrip=menu;
    tray.DoubleClick+=(s,e)=>OpenGui();
    pulse.Interval=250;
@@ -187,7 +192,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
   return RdcOwnerWire.Json.Serialize(new Dictionary<string,object>{
     {"pipe",pipeName},{"nonce",nonce},{"hostPid",hostPid},{"hostTicks",hostBorn},
     {"hostSession",hostSession},{"hostGeneration",generation},
-    {"remoteMode","FAKE_ONLY_RC1"},{"protocol",1}});
+    {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":"FAKE_ONLY_RC1"},{"protocol",1}});
  }
  bool RemoveEmptyOwnedRunRoot(){
   if(!runRootCreated)return String.IsNullOrEmpty(stateRoot) || !Directory.Exists(stateRoot);
@@ -214,7 +219,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
   try{
    if(!gui.HasExited)return;
   }catch{guiState="UNVERIFIED";Append("gui","identity probe failed");return;}
-  if(trialRoot!=null && guiErrorTask!=null){
+  if((trialRoot!=null || observedMode) && guiErrorTask!=null){
    try{if(!guiErrorTask.IsCompleted){Console.WriteLine("RC1_TRIAL_GUI_STDERR_PENDING");}
     else {string detail=guiErrorTask.GetAwaiter().GetResult();
     if(!String.IsNullOrWhiteSpace(detail)){
@@ -258,7 +263,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
     info.WorkingDirectory=sourceRoot;
     info.UseShellExecute=false;
     info.CreateNoWindow=true;
-    if(trialRoot!=null)info.RedirectStandardError=true;
+    if(trialRoot!=null || observedMode)info.RedirectStandardError=true;
     gui=(Process)ticketStore.CreateThen(TicketPayload(),()=>{
      if(trialRoot!=null && trialFailGuiStartOnce){
       trialFailGuiStartOnce=false;
@@ -267,7 +272,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
      return Process.Start(info);
     });
     if(gui==null)throw new InvalidOperationException("RC1_GUI_START_FAILED");
-    if(trialRoot!=null)guiErrorTask=gui.StandardError.ReadToEndAsync();
+    if(trialRoot!=null || observedMode)guiErrorTask=gui.StandardError.ReadToEndAsync();
     childPid=gui.Id;childBorn=gui.StartTime.ToUniversalTime().Ticks;childSession=gui.SessionId;
     guiStarts++;guiState="SPAWNING";guiAuthenticated=false;Append("gui","spawned");
    }catch(Exception startError){
@@ -289,17 +294,63 @@ public sealed class RdcOwnerRuntime : IDisposable {
    }
   }
  }
+ // Read-only attachment to a preexisting legacy launcher. The caller must
+ // validate original cmd.exe commandline/log path and OS PID/birth/session.
+ // This grants no process ownership; RC1 never controls the adopted Remote.
+ public void EnableObservedRemote(int pid){
+  lock(gate){
+   if(disposed||gui!=null||observedMode||trialRoot!=null || pid<=0)
+    throw new InvalidOperationException("RC1_OBSERVER_MODE_BOUNDARY");
+   remoteSupervisor.AttachObservedReadOnly(pid);
+   observedMode=true;
+   tray.Text="RDC Relay 1.6 RC1 | наблюдение";
+   trayStatusItem.Text="Remote: существующая сессия (Adopted)";
+   trayExitItem.Text="Закрыть RC1 (Remote останется)";
+   Append("remote","read-only existing Remote observer attached");
+  }
+ }
+ public void RetargetObservedRemote(int pid){
+  lock(gate){
+   if(disposed||!observedMode||pid<=0)throw new InvalidOperationException("RC1_NOT_OBSERVING");
+   remoteSupervisor.RetargetObservedReadOnly(pid);
+   Append("remote","observed launcher replaced (read-only)");
+  }
+ }
+ public void UpdateObservedRemote(bool alive,string state,string detail){
+  lock(gate){
+   if(disposed||!observedMode)return;
+   string before=(string)remoteSupervisor.Snapshot()["state"];
+   remoteSupervisor.UpdateObservedReadOnly(alive,state,detail);
+   if(before!=state)Append("remote","observed state: "+state);
+  }
+ }
+ public void ObservedMarker(string marker){
+  lock(gate){
+   if(disposed||!observedMode)return;
+   remoteSupervisor.AddObservedMarker(marker);
+   Append("remote",marker);
+  }
+ }
+ // Bounded observer test exit: detach RC1 GUI/Host, never signal Remote.
+ public void RequestObservedDetach(){
+  lock(gate){
+   if(disposed||!observedMode||exitRequested)return;
+   exitRequested=true;closeGeneration++;
+   Append("host","observer-only test detach requested");
+  }
+ }
  Dictionary<string,object> Snapshot(){
   var observed=remoteSupervisor.Snapshot();
   return new Dictionary<string,object>{
    {"hostPid",hostPid},{"hostGeneration",generation},{"hostTicks",hostBorn},
-   {"remoteMode","FAKE_ONLY_RC1"},{"remoteId",remoteSupervisor.SessionId},
-   {"remote",observed},{"remoteConnected",false},{"account","DEMO: disabled"},
+   {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":"FAKE_ONLY_RC1"},{"remoteId",remoteSupervisor.SessionId},
+   {"remote",observed},{"remoteConnected",observedMode && (string)observed["state"]=="Ready"},
+   {"account",observedMode?"Existing Remote / observer only":"DEMO: disabled"},
    {"logTail",observed["tail"]},{"logCursor",observed["logCursor"]},
    {"logStreamEpoch",observed["logStreamEpoch"]},
    {"guiPid",childPid},{"guiState",guiState},{"guiStarts",guiStarts},
    {"guiFailures",guiFailures},{"closeGeneration",closeGeneration},{"lastEventSeq",sequence},
-   {"revision",sequence},{"remoteRevision",observed["revision"]},{"isActualRemote",false}
+   {"revision",sequence},{"remoteRevision",observed["revision"]},{"isActualRemote",observedMode}
   };
  }
  string Answer(string type,string requestId,object payload){
@@ -336,11 +387,11 @@ public sealed class RdcOwnerRuntime : IDisposable {
    }
    if(!guiAuthenticated)return Error(requestId,"HELLO_REQUIRED");
    if(verb=="GET_SNAPSHOT"){
-    if(trialRoot!=null)trialSnapshotClients.Add(osPid);
+    if(trialRoot!=null || observedMode)trialSnapshotClients.Add(osPid);
     return Answer("SNAPSHOT",requestId,Snapshot());
    }
    if(verb=="GET_EVENTS"){
-    if(trialRoot!=null)trialEventClients.Add(osPid);
+    if(trialRoot!=null || observedMode)trialEventClients.Add(osPid);
     long after=RdcOwnerWire.Number(request,"afterSequence");
     if(after<0||after>sequence)return Error(requestId,"INVALID_CURSOR");
     bool gap=events.Count>0 && after<Convert.ToInt64(events[0]["sequence"])-1;
@@ -380,6 +431,13 @@ public sealed class RdcOwnerRuntime : IDisposable {
      trialSnapshotClients.Count+" EVENT_GUI_COUNT="+trialEventClients.Count);
     Console.WriteLine("RC1_TRIAL_IPC_REJECTED="+server.Rejected+
      " TIMEOUTS="+server.Timeouts+" PEAK_ACTIVE="+server.PeakActive);
+   }
+   if(observedMode){
+    Console.WriteLine("RC1_OBSERVER_GUI_STARTS="+guiStarts+" FAILURES="+guiFailures+
+     " SNAPSHOT_GUI_COUNT="+trialSnapshotClients.Count+
+     " EVENT_GUI_COUNT="+trialEventClients.Count);
+    if(guiFailures>0)Console.WriteLine("RC1_OBSERVER_LAST_GUI_ERROR="+lastGuiError);
+    Console.WriteLine("RC1_OBSERVER_DETACHED_ONLY=TRUE");
    }
    if(!ipcClean || !filesClean || !guiClean)
     throw new InvalidOperationException("RC1_OWNER_SHUTDOWN_NOT_CLEAN");

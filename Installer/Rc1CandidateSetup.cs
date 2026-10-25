@@ -12,12 +12,14 @@ using System.Web.Script.Serialization;
 internal static class RdcRc1CandidateSetup {
  static readonly string[] Required=new string[]{
   "Source/remote-window.ps1","Source/rc1-tray-host.ps1","Source/rc1-owner-gui.ps1",
+  "Source/rc1-remote-observer.ps1",
   "Source/RdcOwnerWire.cs","Source/RdcOwnerRuntime.cs","Source/RdcOwnerProcess.cs",
   "Source/RdcOwnerTicketStore.cs","Source/RdcOwnerRemoteState.cs",
   "Source/rc1-candidate.json","Source/RDCRelay.ico",
   "Source/divider-caustic.ps","Source/divider-caustic-detail.ps",
   "Source/divider-particles.ps","Source/divider-particles-core.ps",
-  "Source/update-notice.ps1","Source/update.ps1","RdcOwnerRuntime.dll"
+  "Source/update-notice.ps1","Source/update.ps1","RdcOwnerRuntime.dll",
+  "RC1 Pilot Launcher.exe"
  };
  static void PathSafe(string path){
   string full=Path.GetFullPath(path),p=full;
@@ -45,10 +47,14 @@ internal static class RdcRc1CandidateSetup {
   var manifest=ReadJson(Path.Combine(root,"owner-source-manifest.json"));
   if((string)manifest["candidate"]!="1.6.0 RC1")throw new InvalidOperationException("RC1_BAD_CANDIDATE");
   var candidate=ReadJson(Path.Combine(root,"Source","rc1-candidate.json"));
-  // This guard is intentionally false in current topic branch. No installer
-  // runnable before changed, independently reviewed install transaction gate.
-  if(!Convert.ToBoolean(candidate["installable"]))
-   throw new InvalidOperationException("RC1_INSTALL_NOT_OWNER_AUTHORIZED");
+  // The repository Source marker stays blocked; only a newly staged, hashed
+  // owner-pilot payload explicitly enables the read-only observation mode.
+  if(!Convert.ToBoolean(candidate["installable"]) ||
+     !Convert.ToBoolean(candidate["liveRemoteEnabled"]) ||
+     Convert.ToBoolean(candidate["publishable"]) ||
+     Convert.ToBoolean(candidate["autoUpdateEnabled"]) ||
+     (string)candidate["observerMode"]!="OBSERVED_READ_ONLY_RC1")
+   throw new InvalidOperationException("RC1_NOT_ISOLATED_OBSERVER_CANDIDATE");
   var listed=new List<string>();
   var rows=(System.Collections.ArrayList)manifest["files"];
   foreach(Dictionary<string,object> item in rows)

@@ -38,9 +38,9 @@ function Start-RdcOwnerGui {
  Add-Type -Path (Join-Path $root 'RdcOwnerWire.cs') -ReferencedAssemblies @(
   'System.Core.dll','System.Web.Extensions.dll','System.dll','System.Security.dll')
  $ticket=[RdcOwnerWire]::Decode([IO.File]::ReadAllText($ticketFull,[Text.Encoding]::UTF8))
- if([string]$ticket.remoteMode -cne 'FAKE_ONLY_RC1' -or [int]$ticket.protocol -ne 1){
-  throw 'RC1_NOT_FAKE_OWNER'
- }
+ $script:ownerObservedMode=([string]$ticket.remoteMode -ceq 'OBSERVED_READ_ONLY_RC1')
+ if(([string]$ticket.remoteMode -cne 'FAKE_ONLY_RC1' -and -not $script:ownerObservedMode) -or
+    [int]$ticket.protocol -ne 1){throw 'RC1_UNKNOWN_OWNER_MODE'}
  $script:ownerIdentity=([string]$ticket.hostPid)+'|'+([string]$ticket.hostTicks)+'|'+([string]$ticket.hostSession)
  $script:ownerGeneration=[string]$ticket.hostGeneration
  $script:ownerNonce=[string]$ticket.nonce
@@ -58,8 +58,12 @@ function Start-RdcOwnerGui {
   $script:ownerPipe,$script:ownerIdentity,[RdcOwnerWire]::Json.Serialize($hello),1200))
  if([string]$handshake.type -cne 'WELCOME'){throw 'RC1_OWNER_HELLO_REJECTED'}
  if([string]$handshake.payload.hostGeneration -cne $script:ownerGeneration -or
-    [bool]$handshake.payload.isActualRemote){throw 'RC1_OWNER_SNAPSHOT_MISMATCH'}
- $form.Text='RDC Relay 1.6.0 RC1 — Remote не подключён (режим проверки)'
+    [bool]$handshake.payload.isActualRemote -ne $script:ownerObservedMode){
+  throw 'RC1_OWNER_SNAPSHOT_MISMATCH'
+ }
+ $form.Text=if($script:ownerObservedMode){
+  'RDC Relay 1.6.0 RC1 — существующий Remote (наблюдение)'
+ }else{'RDC Relay 1.6.0 RC1 — Remote не подключён (режим проверки)'}
  $finish.Enabled=$false;$accountButton.Enabled=$false
  foreach($item in @($switchAccountItem,$reconnectItem,$devicesItem,$verifyDeviceItem,$openLogItem)){
    if($item){$item.Enabled=$false}
@@ -69,13 +73,19 @@ function Start-RdcOwnerGui {
  $script:ownerEventCursor=0
  $script:ownerNextVerb='GET_SNAPSHOT'
  $script:ownerPending=$null
- $script:ownerStatus='FAKE_ONLY_RC1'
+ $script:ownerStatus=if($script:ownerObservedMode){'OBSERVED_READ_ONLY_RC1'}else{'FAKE_ONLY_RC1'}
  $script:ownerLastShownRevision=-1
  $script:ownerLastLogCursor=0
  $script:ownerLastLogEpoch=-1
- Set-State 'Демонстрация RC1' 'Настоящий Desktop Commander Remote не подключён; действия недоступны.' ([Drawing.Color]::Khaki)
- Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Тестовый Host / Remote не подключён' $true
- Add-CompletedEvent 'RDC Relay 1.6.0 RC1. Авторитетный Host использует только синтетическое состояние; настоящий Remote НЕ запущен.'
+ if($script:ownerObservedMode){
+  Set-State 'Подключение к Host' 'Наблюдение за существующим Remote; управление и остановка отключены.' ([Drawing.Color]::Khaki)
+  Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Remote: существующая сессия / Adopted' $true
+  Add-CompletedEvent 'RC1 подключён к работающему Desktop Commander Remote только для наблюдения. X закрывает GUI; Remote не затрагивается.'
+ }else{
+  Set-State 'Демонстрация RC1' 'Настоящий Desktop Commander Remote не подключён; действия недоступны.' ([Drawing.Color]::Khaki)
+  Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Тестовый Host / Remote не подключён' $true
+  Add-CompletedEvent 'RDC Relay 1.6.0 RC1. Host использует синтетическое состояние; настоящий Remote не запущен.'
+ }
  Render-CompactLog
  $script:ownerTimer=New-Object Windows.Forms.Timer
  $script:ownerTimer.Interval=150
@@ -86,20 +96,25 @@ function Start-RdcOwnerGui {
     if([string]$reply.type -eq 'SNAPSHOT'){
      $snapshot=$reply.payload
      if([string]$snapshot.hostGeneration -cne $script:ownerGeneration -or
-        [bool]$snapshot.isActualRemote){throw 'RC1_OWNER_GENERATION_OR_MODE_CHANGED'}
+        [bool]$snapshot.isActualRemote -ne $script:ownerObservedMode){
+      throw 'RC1_OWNER_GENERATION_OR_MODE_CHANGED'
+     }
      if([int]$snapshot.closeGeneration -gt $script:ownerCloseGeneration){$form.Close();return}
      # The Host, never this GUI, owns the monotonic fake log cursor/state.
      # A fresh GUI reconstructs its journal from the bounded Host snapshot.
      $remoteSnapshot=$snapshot.remote
-     if(-not $remoteSnapshot -or [bool]$remoteSnapshot.isActualRemote){
-      throw 'RC1_FAKE_SNAPSHOT_REQUIRED'
+     if(-not $remoteSnapshot -or
+        [bool]$remoteSnapshot.isActualRemote -ne $script:ownerObservedMode){
+      throw 'RC1_REMOTE_MODE_MISMATCH'
      }
      $epoch=[long]$remoteSnapshot.logStreamEpoch
      if($epoch -ne $script:ownerLastLogEpoch){
       $script:ownerLastLogEpoch=$epoch
       $script:ownerLastLogCursor=0
       Reset-CompactLogSession
-      Add-CompletedEvent 'RC1: Host synthetic journal snapshot (not a real Remote log).'
+      Add-CompletedEvent $(if($script:ownerObservedMode){
+       'RC1: восстановлен обезличенный журнал наблюдения Host.'
+      }else{'RC1: синтетический журнал Host.'})
      }
      $lastCursor=[long]$remoteSnapshot.logCursor
      if($lastCursor -lt $script:ownerLastLogCursor){throw 'RC1_LOG_CURSOR_REGRESSED'}
@@ -110,15 +125,26 @@ function Start-RdcOwnerGui {
       $lineCursor=[long]$Matches[1]
       if($lineCursor -le $script:ownerLastLogCursor){continue}
       if($lineCursor -gt $lastCursor){throw 'RC1_LOG_CURSOR_MISMATCH'}
-      Add-CompletedEvent ('[Host fake '+[string]$lineCursor+'] '+$line.Substring($Matches[0].Length))
+      Add-CompletedEvent ('[Host '+$(if($script:ownerObservedMode){'Remote'}else{'fake'})+' '+
+       [string]$lineCursor+'] '+$line.Substring($Matches[0].Length))
       $script:ownerLastLogCursor=$lineCursor
       $hasNewLog=$true
      }
      if($hasNewLog){Render-CompactLog}
      if([long]$snapshot.revision -ne $script:ownerLastShownRevision){
       $script:ownerLastShownRevision=[long]$snapshot.revision
-      Set-State 'Remote отключён (RC1)' ('Host: '+[string]$remoteSnapshot.state+'; только синтетические данные.') ([Drawing.Color]::Khaki)
-      Set-RuntimeDisplay ('Host PID '+[string]$snapshot.hostPid) 'Remote НЕ подключён | RC1' $true
+      if($script:ownerObservedMode){
+       $online=([string]$remoteSnapshot.state -ceq 'Ready')
+       $color=if($online){[Drawing.Color]::PaleGreen}elseif([string]$remoteSnapshot.state -ceq 'Fault'){
+        [Drawing.Color]::LightCoral
+       }else{[Drawing.Color]::Khaki}
+       $statusText=if($online){'Remote подключён (наблюдение)'}else{'Remote: '+[string]$remoteSnapshot.state}
+       Set-State $statusText ([string]$remoteSnapshot.status+'; управление отключено.') $color
+       Set-RuntimeDisplay ('Remote PID '+[string]$remoteSnapshot.processPid) 'Существующая сессия / Adopted' $true
+      }else{
+       Set-State 'Remote отключён (RC1)' ('Host: '+[string]$remoteSnapshot.state+'; только синтетические данные.') ([Drawing.Color]::Khaki)
+       Set-RuntimeDisplay ('Host PID '+[string]$snapshot.hostPid) 'Remote НЕ подключён | RC1' $true
+      }
      }
      $script:ownerNextVerb='GET_EVENTS'
     }elseif([string]$reply.type -eq 'EVENT_BATCH'){
@@ -138,7 +164,7 @@ function Start-RdcOwnerGui {
     }else{throw 'RC1_BAD_REPLY'}
    }catch{
     $script:ownerNextVerb='GET_SNAPSHOT'
-    Set-State 'Связь с Host' 'IPC временно недоступен, Remote не подключён.' ([Drawing.Color]::Khaki)
+    Set-State 'Связь с Host' 'IPC временно недоступен; состояние Remote неизвестно, остановка запрещена.' ([Drawing.Color]::Khaki)
    }finally{$script:ownerPending=$null}
   }
   if(-not $script:ownerPending -and -not $form.IsDisposed){

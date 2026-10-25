@@ -31,6 +31,16 @@ try{
  $startNullThrew=$false
  try{$unused=$store.CreateThen($json,[Func[object]]{return $null})}catch{$startNullThrew=$true}
  Assert ($startNullThrew -and -not [IO.File]::Exists($store.PathName)) 'null process handle revoked and retryable'
+ $observedJson=[RdcOwnerWire]::Json.Serialize(@{
+  hostGeneration=$gen;nonce=[Guid]::NewGuid().ToString('N');remoteMode='OBSERVED_READ_ONLY_RC1'})
+ $observed=$store.CreateThen($observedJson,[Func[object]]{return (New-Object Object)})
+ Assert ($null -ne $observed -and [IO.File]::Exists($store.PathName)) 'observed read-only GUI mode gets private ticket'
+ Assert ($store.RevokeOnlyOwned() -and -not [IO.File]::Exists($store.PathName)) 'observed ticket revokes verified own bytes'
+ $unsafeModeJson=[RdcOwnerWire]::Json.Serialize(@{
+  hostGeneration=$gen;nonce=[Guid]::NewGuid().ToString('N');remoteMode='REMOTE_OWNED_STOP'})
+ $unsafeRefused=$false
+ try{$store.Create($unsafeModeJson)}catch{$unsafeRefused=$true}
+ Assert ($unsafeRefused -and -not [IO.File]::Exists($store.PathName)) 'unrecognized control mode cannot create ticket'
  $foreign='fixture-unattested-foreign-ticket'
  [IO.File]::WriteAllText($store.PathName,$foreign,(New-Object Text.UTF8Encoding($false)))
  $foreignDenied=$false
