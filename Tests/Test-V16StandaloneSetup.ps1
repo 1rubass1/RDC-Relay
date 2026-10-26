@@ -16,6 +16,7 @@ try{
  $asm=[Reflection.Assembly]::Load([IO.File]::ReadAllBytes($download))
  $type=$asm.GetType('RdcRc1CandidateSetup',$true)
  $flags=[Reflection.BindingFlags]'Static,NonPublic'
+ Check ($null -ne $type.GetMethod('StartPrivateObserver',$flags)) 'EXE reviewed first-install GUI launch route compiled'
  $list=[string[]]$type.GetField('Required',$flags).GetValue($null)
  $items=@($list)+@('owner-source-manifest.json')
  $found=@($asm.GetManifestResourceNames())

@@ -76,14 +76,14 @@ try {
  $b[0]=[string]$release;$b[1]=[string]$local;$b[2]=[string]$desktop
  $switch=[string]$activate.Invoke($null,$b)
  $active=$ws.CreateShortcut($shortcutFile)
- Check ($switch -ceq 'SWITCHED' -and
+ Check ($switch -ceq 'SWITCHED_STABLE' -and
   $active.TargetPath -ieq (Join-Path $release 'RC1 Pilot Launcher.exe')) 'MANUAL recognized stable shortcut switched'
  $backup=@(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($release)) -Filter 'primary-shortcut-backup-*.lnk' -File)
  Check ($backup.Count -eq 1 -and
   $ws.CreateShortcut($backup[0].FullName).TargetPath -ieq $short.TargetPath) 'MANUAL old shortcut recoverably backed up'
  Check (([string]$activate.Invoke($null,$b)) -ceq 'ALREADY_ACTIVE') 'MANUAL repeated shortcut switch idempotent'
- # A subsequent downloaded RC1 build must replace only its main shortcut;
- # the earlier immutable release and rollback link remain available.
+ # A later RC1 may still have a running old source-root Host.
+ # Stage the payload, but never switch its shortcut without Host handoff.
  $nextPackage=Join-Path $root 'next-package'
  [void][IO.Directory]::CreateDirectory($nextPackage)
  foreach($name in $required){
@@ -96,10 +96,11 @@ try {
  $a[0]=[string]$nextPackage
  $nextRelease=[string]$prepare.Invoke($null,$a)
  $b[0]=[string]$nextRelease
- $upgrade=[string]$activate.Invoke($null,$b)
- Check ($upgrade -ceq 'SWITCHED' -and $nextRelease -cne $release -and
-  $ws.CreateShortcut($shortcutFile).TargetPath -ieq (Join-Path $nextRelease 'RC1 Pilot Launcher.exe') -and
-  [IO.Directory]::Exists($release)) 'MANUAL later RC1 replaces shortcut, not previous release'
+ $denied=$false;try{[void]$activate.Invoke($null,$b)}catch{$denied=$true}
+ Check ($denied -and $nextRelease -cne $release -and
+  $ws.CreateShortcut($shortcutFile).TargetPath -ieq (Join-Path $release 'RC1 Pilot Launcher.exe') -and
+  [IO.Directory]::Exists($nextRelease) -and
+  @(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($release)) -Filter 'primary-shortcut-backup-*.lnk' -File).Count -eq 1) 'MANUAL different RC1 denied until Host handoff'
  $badDesktop=Join-Path $root 'unrelated-desktop'
  [void][IO.Directory]::CreateDirectory($badDesktop)
  $bad=Join-Path $badDesktop 'RDC Relay.lnk'

@@ -142,6 +142,7 @@ internal static class RdcRc1ManualUpgrade {
   string desktopLink=Path.Combine(desktop,"RDC Relay.lnk");
   CheckPath(desktopLink);
   bool firstInstall=!File.Exists(desktopLink);
+  bool switchedFromStable=false;
   Type shellType=Type.GetTypeFromProgID("WScript.Shell");
   if(shellType==null)throw new InvalidOperationException("RC1_MANUAL_NO_SHELL_LINK_COM");
   object shell=Activator.CreateInstance(shellType);
@@ -173,9 +174,15 @@ internal static class RdcRc1ManualUpgrade {
       String.Equals(oldArgs.Trim(),"--observe-existing",StringComparison.Ordinal);
     if(!isStable&&!isOldRc1)
      throw new InvalidOperationException("RC1_MANUAL_UNKNOWN_OLD_SHORTCUT_REFUSED");
+    switchedFromStable=isStable;
     if(String.Equals(Path.GetFullPath(oldTarget),Path.GetFullPath(launcher),StringComparison.OrdinalIgnoreCase)&&
         String.Equals(oldArgs.Trim(),"--observe-existing",StringComparison.Ordinal))
      return "ALREADY_ACTIVE";
+    // Different RC1 releases own different source-root-bound Host mutexes.
+    // Without exact old Host/GUI cooperative handoff, changing the shortcut
+    // could start a second Host while the previous one is still alive.
+    // Never claim a safe automatic RC1->RC1 replacement yet.
+    if(isOldRc1)throw new InvalidOperationException("RC1_MANUAL_PREVIOUS_RC1_HANDOFF_REQUIRED");
    }
    string temporary=Path.Combine(desktop,".rdc-rc1-"+Guid.NewGuid().ToString("N")+".lnk");
    string backup=Path.Combine(Path.GetDirectoryName(release),
@@ -210,7 +217,7 @@ internal static class RdcRc1ManualUpgrade {
    if(Sha(desktopLink)!=candidateLinkHash)
     throw new IOException("RC1_MANUAL_LINK_PUBLICATION_MISMATCH");
    Console.WriteLine("RC1_MANUAL_PREVIOUS_SHORTCUT_BACKUP:"+backup);
-   return "SWITCHED";
+   return switchedFromStable?"SWITCHED_STABLE":"SWITCHED_RC1";
   }finally{
    if(newLink!=null)Marshal.FinalReleaseComObject(newLink);
    if(old!=null)Marshal.FinalReleaseComObject(old);

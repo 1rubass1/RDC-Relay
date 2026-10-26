@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
 using System.Reflection;
+using System.Diagnostics;
 using System.Web.Script.Serialization;
 
 internal static class RdcRc1CandidateSetup {
@@ -123,6 +124,22 @@ internal static class RdcRc1CandidateSetup {
   }
   Directory.Delete(staging,false);
  }
+ static void StartPrivateObserver(string release){
+  // Open only our pinned read-only GUI launcher. The launcher returns after
+  // spawning the private Host; never wait for or signal persistent descendants.
+  string launcher=Path.Combine(release,"RC1 Pilot Launcher.exe");
+  PathSafe(launcher);
+  if(!File.Exists(launcher))throw new InvalidOperationException("RC1_AUTOLAUNCH_MISSING");
+  var start=new ProcessStartInfo(launcher,"--observe-existing");
+  start.UseShellExecute=false;
+  start.CreateNoWindow=true;
+  start.WorkingDirectory=release;
+  using(Process child=Process.Start(start)){
+   if(child==null)throw new InvalidOperationException("RC1_AUTOLAUNCH_START_REFUSED");
+   if(!child.WaitForExit(12000))throw new InvalidOperationException("RC1_AUTOLAUNCH_TIMEOUT");
+   if(child.ExitCode!=0)throw new InvalidOperationException("RC1_AUTOLAUNCH_LAUNCHER_FAILED");
+  }
+ }
  static int Main(string[] args){
 #if RDC_RC1_BLOCKED
   // Build and inspect only; this file intentionally cannot install today.
@@ -164,14 +181,37 @@ internal static class RdcRc1CandidateSetup {
     Console.WriteLine("RC1_MANUAL_RELEASE="+release);
     Console.WriteLine("RC1_MANUAL_PRIMARY_SHORTCUT="+result);
     Console.WriteLine("RC1_MANUAL_REMOTE_NOT_TOUCHED=TRUE");
-    if(args.Length==0)System.Windows.Forms.MessageBox.Show(
-     "RDC Relay 1.6.0 RC1 подготовлена. Основной ярлык теперь открывает новую оболочку." +
-     Environment.NewLine + Environment.NewLine +
-     "Старые файлы и настоящий Remote сохранены. Если старая оболочка ещё открыта, "+
-     "не закрывайте её через X: она может остановить Remote.",
-     "RDC Relay 1.6.0 RC1",
-     System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Information);
-    return 0;
+    // Only a known legacy stable->RC1 transition (or first install) permits
+    // eager Host/GUI launch. A prior RC1 may have a running Host from another
+    // release root; do not create a second Host without a verified handoff.
+    bool autoOpen=result=="CREATED"||result=="SWITCHED_STABLE";
+    bool launchFailed=false;
+    if(autoOpen){
+     try{
+      StartPrivateObserver(release);
+      Console.WriteLine("RC1_AUTOLAUNCH_LAUNCHER_EXIT_ZERO");
+     }catch(Exception launchError){
+      launchFailed=true;
+      Console.Error.WriteLine("RC1_AUTOLAUNCH_FAILED:"+launchError.GetType().Name);
+     }
+    }else Console.WriteLine("RC1_AUTOLAUNCH_DEFERRED_OLD_RC1_HOST_UNKNOWN");
+    if(args.Length==0){
+     string notice=launchFailed?
+      "Новые файлы и основной ярлык подготовлены, но автоматический запуск не удался."+
+      Environment.NewLine+"Попробуйте ярлык RDC Relay. Если окно не появится, сообщите об ошибке.":
+      (autoOpen?
+       "Новая оболочка RDC Relay 1.6.0 RC1 запускается. Если окно не появилось, используйте основной ярлык.":
+       "Новая RC1 подготовлена. Автоматический запуск отложен: прежний RC1 Host может ещё работать."+
+       Environment.NewLine+"Штатно завершите прежний RC1 Host перед запуском нового ярлыка.");
+     System.Windows.Forms.MessageBox.Show(
+      notice+Environment.NewLine+Environment.NewLine+
+      "Настоящий Remote не остановлен. Не закрывайте старую v1.5.18 через X ради установки.",
+      "RDC Relay 1.6.0 RC1",
+      System.Windows.Forms.MessageBoxButtons.OK,
+      launchFailed?System.Windows.Forms.MessageBoxIcon.Warning:System.Windows.Forms.MessageBoxIcon.Information);
+    }
+    // Exit 44 distinguishes a published install from a failed GUI launch.
+    return launchFailed?44:0;
    }
    string root=Path.Combine(local,"RDCRelayOwnerPilot","1.6.0-RC1");
    string app=Path.Combine(root,"app");
