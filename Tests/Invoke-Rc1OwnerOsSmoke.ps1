@@ -201,6 +201,22 @@ try{
    }finally{$hung.Dispose()}
    Check (Verified $hostProcess $powerShellFile $PID) 'OS-23 Host survives oversized and partial frames'
    Write-Output ('OS_HOST_EPOCH='+[string]$ticket.hostGeneration)
+   # Reusable real Host activation route: exact release root + session-local
+   # logon ACL event. A repeated launcher requests the same GUI, not a Host.
+   $activationSha=[Security.Cryptography.SHA256]::Create()
+   try{$activationKey=[BitConverter]::ToString($activationSha.ComputeHash(
+     [Text.Encoding]::UTF8.GetBytes($src.TrimEnd([char]92).ToLowerInvariant()))).Replace('-','').Substring(0,32)}
+   finally{$activationSha.Dispose()}
+   $activationName='Local\RdcRelayRC1Open-'+$activationKey
+   $activation=[Threading.EventWaitHandle]::OpenExisting($activationName)
+   try{
+    Check ($activation.Set()) 'OS Host same-release activation event accepts GUI reopen request'
+    Start-Sleep -Milliseconds 500
+    $firstGui.Refresh()
+    Check ((-not $firstGui.HasExited) -and
+      (Verified $hostProcess $powerShellFile $PID) -and
+      (FindOwnGui $hostProcess 0).Id -eq $firstGui.Id) 'OS activation reuses exact original Host and GUI identity'
+   }finally{$activation.Dispose()}
    if($ProbeDuplicateHost){
     # A second launcher may only be a disposable *refused* Host.
     $dupPsi=New-Object Diagnostics.ProcessStartInfo

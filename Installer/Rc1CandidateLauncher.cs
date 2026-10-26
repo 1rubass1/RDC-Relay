@@ -6,7 +6,24 @@ using System.Diagnostics;
 using System.Text;
 using System.Web.Script.Serialization;
 using System.Collections.Generic;
+using System.Threading;
 internal static class RdcRc1CandidateLauncher {
+ static bool SignalExistingGui(string eventName) {
+  try {
+   using(EventWaitHandle activation=EventWaitHandle.OpenExisting(eventName)) {
+    if(!activation.Set())throw new InvalidOperationException("RC1_GUI_SIGNAL_FAILED");
+    return true;
+   }
+  } catch(WaitHandleCannotBeOpenedException) {
+   return false; // No live same-release Host advertises GUI activation.
+  }
+ }
+ static string GuiEventName(string source) {
+  string normalized=Path.GetFullPath(source).TrimEnd(Path.DirectorySeparatorChar).ToLowerInvariant();
+  byte[] key=new System.Security.Cryptography.SHA256Managed().ComputeHash(
+    Encoding.UTF8.GetBytes(normalized));
+  return @"Local\RdcRelayRC1Open-"+BitConverter.ToString(key).Replace("-","").Substring(0,32);
+ }
  static int Main(string[] args) {
 #if RDC_RC1_BLOCKED
   Console.Error.WriteLine("RC1_OWNER_LAUNCHER_BLOCKED_PENDING_OWNER_GO");
@@ -36,6 +53,11 @@ internal static class RdcRc1CandidateLauncher {
     if(!File.Exists(file)||(File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0)
      throw new InvalidOperationException("RC1_MISSING_OR_LINKED_SOURCE:"+name);
    }
+   string guiEvent=GuiEventName(source);
+   if(SignalExistingGui(guiEvent)){
+    Console.WriteLine("RC1_EXISTING_HOST_GUI_REOPEN_REQUESTED");
+    return 0;
+   }
    string ps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
      @"WindowsPowerShell\v1.0\powershell.exe");
    var psi=new ProcessStartInfo(ps,
@@ -46,8 +68,19 @@ internal static class RdcRc1CandidateLauncher {
    psi.WorkingDirectory=source;
    using(var child=Process.Start(psi)){
     if(child==null)throw new InvalidOperationException("RC1_HOST_START_FAILED");
+    // Never report success merely because PowerShell accepted a new process.
+    // A dying Host (singleton conflict / compile error) must fail visibly.
+    var clock=Stopwatch.StartNew();
+    while(clock.ElapsedMilliseconds<8000){
+     if(child.HasExited)throw new InvalidOperationException("RC1_HOST_EARLY_EXIT_"+child.ExitCode);
+     if(SignalExistingGui(guiEvent)){
+      Console.WriteLine("RC1_HOST_STARTED_GUI_ACTIVATION_REQUESTED");
+      return 0;
+     }
+     Thread.Sleep(250);
+    }
+    throw new InvalidOperationException("RC1_HOST_NO_GUI_ACTIVATION_ENDPOINT");
    }
-   return 0;
   }catch(Exception e){
    Console.Error.WriteLine("RC1_OWNER_LAUNCH_REFUSED:"+e.GetType().Name);
    return 42;

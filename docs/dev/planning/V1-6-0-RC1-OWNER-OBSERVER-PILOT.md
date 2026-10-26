@@ -1,5 +1,16 @@
 # RDC Relay 1.6.0 RC1 — private STARMER observer pilot (2026-10-25)
 
+## 2026-10-26 — repeat-click/launch failure recovery, after owner clarification
+
+The owner's failed new manual install is distinct from the subsequently rolled-back visible read-only observer. We did not confirm the historical installation's exact process-exit cause. The old downloaded Setup did not open a Host/GUI automatically, and old Launcher returned exit0 on `Process.Start` without waiting for Host readiness; duplicate same-release clicks lacked a route to the persistent Host. Product changes add an ACL-restricted local per-release `RdcRelayRC1Open-<sha256>` activation signal consumed in Host's GUI thread, and a Launcher that reopens an existing Host GUI or waits bounded for new Host endpoint / reports early failure. This signal has **no Remote command authority**; Adopted Remote remains read-only.
+
+- New staged source-only candidate: `dist\RDCRelay-1.6.0-RC1-ObserverPilot-5b554b5fc299427995d700fac80adb4c\package`; Setup SHA-256 `ED603E90126B4E867ED8C08E2D532AD2C7566D479A4350325D68F2EE664C9115`; Portable SHA-256 `55FA579A10D777A0576255B00EB9AB317BABCB5DDE55DFA208F6C58AC01285C3`; **not installed or placed on Desktop**.
+- `Tests/Invoke-Rc1OwnerOsSmoke.ps1 -Execute -Cycles 1 -ProbeDuplicateHost`: **20 PASS/0 FAIL/0 NOT CHECKED/exit0**, includes real named event signal, stable GUI PID after repeat, Host singleton denial, native X and reopen, authenticated IPC, no survivors, attested cleanup of its own new trial root.
+- `Tests/Invoke-V16Rc1SafeRegression.ps1`: **21/21 suites PASS/exit0**.
+- `Tests/Test-V16StandaloneSetup.ps1 -SetupPath <new Setup>`: **12 PASS/0 FAIL/exit0**, includes verified embedded launcher and unknown-event negative. One early assertion argument conversion caused FAIL/retained disposable extraction; code corrected, extraction's exact 20 members SHA-validated then cleaned via its own Setup's scoped cleanup, rerun 12/12.
+- Current STARMER rollback shortcut targets `releases\rc1-3a8fb74ad5b3eed0c20702b7`; Host PID25888 and GUI PID16716 were alive during this inspection. Do not treat this observer window as proof of the user's failed newer Setup. Existing Remote, stable 1.5.18, archives, link and installed roots intentionally unchanged.
+- **Open gate:** only one controlled user-observed launch of the newly built candidate after explicit same-root Host handoff; verify actual HWND visibility and X/tray/shortcut repeat. No Windows login autostart was added; no true Remote start/stop/account control granted. No stable publication, no PR merge.
+
 **Role / task:** Programmer, PROG-006A-INTEGRATION continuation. Existing Draft [PR #23](https://github.com/1rubass1/RDC-Relay/pull/23), branch `feature/v1.6-host-gui-owner-pilot`.
 
 **Disposition:** A real, installed, side-by-side Windows **observer** pilot is running on STARMER with the original full WinForms GUI, persistent tray Host and protected IPC. **PARTIAL product acceptance, NO-GO for stable release, Remote lifecycle ownership, reconnect/start/stop, full Exit or updater publication.** The owner explicitly authorized Windows tests and private RC1 installation, not public release. The existing installed v1.5.18, its shortcut and actual Desktop Commander Remote were not intentionally modified or controlled by RC1.

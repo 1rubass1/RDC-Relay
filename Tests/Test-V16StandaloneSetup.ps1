@@ -40,6 +40,20 @@ try{
   if(-not [IO.File]::Exists($expected)) {throw ('EXE_ITEM_MISSING '+$entry)}
  }
  Check $true 'EXE exact required files extracted'
+ # Inspect the embedded product Launcher, never execute its Main or spawn a Host.
+ $launcherBytes=[IO.File]::ReadAllBytes((Join-Path $extracted 'RC1 Pilot Launcher.exe'))
+ $launcherAssembly=[Reflection.Assembly]::Load($launcherBytes)
+ $launcherType=$launcherAssembly.GetType('RdcRc1CandidateLauncher',$true)
+ $activate=$launcherType.GetMethod('SignalExistingGui',$flags)
+ $eventNameMethod=$launcherType.GetMethod('GuiEventName',$flags)
+ Check ($null -ne $activate -and $null -ne $eventNameMethod) 'EXE launcher contains guarded same-release GUI activation route'
+ if($activate -and $eventNameMethod){
+  $sourceForName=[string](Join-Path $extracted 'Source')
+  $derived=[string]$eventNameMethod.Invoke($null,[object[]]@($sourceForName))
+  Check ($derived -match '^Local\\RdcRelayRC1Open-[0-9A-F]{32}$') 'EXE launcher event identity rooted in exact Source release'
+  $unknown='Local\RdcRelayRC1Open-'+[Guid]::NewGuid().ToString('N')
+  Check (-not [bool]$activate.Invoke($null,[object[]]@($unknown))) 'EXE missing activation event fails closed without launching Host'
+ }
  [void]$cleanup.Invoke($null,[object[]]@($extracted))
  Check (-not [IO.Directory]::Exists($extracted)) 'EXE private extraction safely removed'
  $extracted=$null

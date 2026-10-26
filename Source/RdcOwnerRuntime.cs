@@ -28,6 +28,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
  bool runRootCreated=false;
  readonly int hostPid, hostSession; readonly long hostBorn;
  readonly Mutex singleton;
+ readonly EventWaitHandle reopenSignal;
  readonly ApplicationContext context=new ApplicationContext();
  readonly NotifyIcon tray=new NotifyIcon();
  readonly System.Windows.Forms.Timer pulse=new System.Windows.Forms.Timer();
@@ -74,6 +75,17 @@ public sealed class RdcOwnerRuntime : IDisposable {
   singleton=new Mutex(true,@"Local\RdcRelayRC1Owner-"+mutexKey,out created);
   if(!created){singleton.Dispose();throw new InvalidOperationException("RC1_HOST_ALREADY_RUNNING_NO_KILL");}
   try{
+   // Only same-logon local callers can ask this Host to reopen its GUI.
+   // This event has no Remote/action authority and is scoped to this release.
+   var eventAcl=new EventWaitHandleSecurity();
+   eventAcl.SetAccessRuleProtection(true,false);
+   eventAcl.AddAccessRule(new EventWaitHandleAccessRule(new SecurityIdentifier(logonSid),
+     EventWaitHandleRights.FullControl,AccessControlType.Allow));
+   byte[] activationHash=new System.Security.Cryptography.SHA256Managed().ComputeHash(
+     Encoding.UTF8.GetBytes(sourceRoot.ToLowerInvariant()));
+   string activationName=@"Local\RdcRelayRC1Open-"+BitConverter.ToString(activationHash).Replace("-","").Substring(0,32);
+   bool eventCreated;
+   reopenSignal=new EventWaitHandle(false,EventResetMode.AutoReset,activationName,out eventCreated,eventAcl);
    instance=Guid.NewGuid().ToString("N");
    generation=Guid.NewGuid().ToString("N");
    pipeName="rdc-rc1-gui-"+instance;
@@ -131,6 +143,10 @@ public sealed class RdcOwnerRuntime : IDisposable {
    pulse.Tick+=(s,e)=>{
     lock(gate){
      RefreshGui();
+     if(reopenSignal!=null && reopenSignal.WaitOne(0) && !exitRequested){
+      Append("host","verified local GUI activation requested");
+      OpenGui();
+     }
      if(trialRoot!=null){
       if(!exitRequested && trialReopensRemaining>0 && guiStarts>0 && gui==null && guiState=="NONE"){
        trialReopensRemaining--;OpenGui();
@@ -151,6 +167,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
   }catch{
    // Fail-closed unwind of partly created host-owned resources.
    try{pulse.Stop();pulse.Dispose();}catch{}
+   try{if(reopenSignal!=null)reopenSignal.Dispose();}catch{}
    try{tray.Visible=false;tray.Dispose();}catch{}
    bool ipcClean=true;
    try{if(server!=null)server.Dispose();}catch{ipcClean=false;}
@@ -446,6 +463,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    if(disposed)return;
    disposed=true;
    pulse.Stop();pulse.Dispose();tray.Visible=false;tray.Dispose();
+   if(reopenSignal!=null)reopenSignal.Dispose();
    bool ipcClean=true,filesClean=false,guiClean=(gui==null);
    try{if(server!=null)server.Dispose();}catch{ipcClean=false;}
    if(gui!=null)gui.Dispose(); // no force kill or unverified child stop
