@@ -18,6 +18,7 @@ internal static class RdcRc1CandidateSetup {
   "Source/rc1-remote-observer.ps1",
   "Source/RdcOwnerWire.cs","Source/RdcOwnerRuntime.cs","Source/RdcOwnerProcess.cs",
   "Source/RdcOwnerTicketStore.cs","Source/RdcOwnerRemoteState.cs",
+  "Source/RdcOwnerManagedProcess.cs",
   "Source/rc1-candidate.json","Source/RDCRelay.ico",
   "Source/divider-caustic.ps","Source/divider-caustic-detail.ps",
   "Source/divider-particles.ps","Source/divider-particles-core.ps",
@@ -56,8 +57,8 @@ internal static class RdcRc1CandidateSetup {
      !Convert.ToBoolean(candidate["liveRemoteEnabled"]) ||
      Convert.ToBoolean(candidate["publishable"]) ||
      Convert.ToBoolean(candidate["autoUpdateEnabled"]) ||
-     (string)candidate["observerMode"]!="OBSERVED_READ_ONLY_RC1")
-   throw new InvalidOperationException("RC1_NOT_ISOLATED_OBSERVER_CANDIDATE");
+     (string)candidate["ownerMode"]!="FULL_HOST_GUI_RC1")
+   throw new InvalidOperationException("RC1_NOT_ISOLATED_FULL_CANDIDATE");
   var listed=new List<string>();
   var rows=(System.Collections.ArrayList)manifest["files"];
   foreach(Dictionary<string,object> item in rows)
@@ -124,19 +125,19 @@ internal static class RdcRc1CandidateSetup {
   }
   Directory.Delete(staging,false);
  }
- static void StartPrivateObserver(string release){
+ static void StartPrivateFull(string release){
   // Open only our pinned read-only GUI launcher. The launcher returns after
   // spawning the private Host; never wait for or signal persistent descendants.
   string launcher=Path.Combine(release,"RC1 Pilot Launcher.exe");
   PathSafe(launcher);
   if(!File.Exists(launcher))throw new InvalidOperationException("RC1_AUTOLAUNCH_MISSING");
-  var start=new ProcessStartInfo(launcher,"--observe-existing");
+  var start=new ProcessStartInfo(launcher,"--full");
   start.UseShellExecute=false;
   start.CreateNoWindow=true;
   start.WorkingDirectory=release;
   using(Process child=Process.Start(start)){
    if(child==null)throw new InvalidOperationException("RC1_AUTOLAUNCH_START_REFUSED");
-   if(!child.WaitForExit(12000))throw new InvalidOperationException("RC1_AUTOLAUNCH_TIMEOUT");
+   if(!child.WaitForExit(18000))throw new InvalidOperationException("RC1_AUTOLAUNCH_TIMEOUT");
    if(child.ExitCode!=0)throw new InvalidOperationException("RC1_AUTOLAUNCH_LAUNCHER_FAILED");
   }
  }
@@ -163,8 +164,10 @@ internal static class RdcRc1CandidateSetup {
    if(manualUpgrade&&args.Length==0){
     var answer=System.Windows.Forms.MessageBox.Show(
      "Установить RDC Relay 1.6.0 RC1 как основную оболочку?" + Environment.NewLine + Environment.NewLine +
-     "Старые файлы будут сохранены. Remote не будет завершён или перезапущен. "+
-     "Эта RC1 наблюдает за существующим Remote: запуск, остановка и смена аккаунта пока недоступны.",
+     "Старые файлы будут сохранены. Существующий Remote не будет прерван. "+
+     "При существующей сессии действует режим Adopted (без управления); "+
+     "новый Remote, созданный Host, поддерживает запуск, остановку и переподключение. "+
+     "Смена аккаунта пока недоступна.",
      "RDC Relay 1.6.0 RC1 — ручное обновление",
      System.Windows.Forms.MessageBoxButtons.YesNo,System.Windows.Forms.MessageBoxIcon.Warning);
     if(answer!=System.Windows.Forms.DialogResult.Yes)return 1;
@@ -184,11 +187,13 @@ internal static class RdcRc1CandidateSetup {
     // Only a known legacy stable->RC1 transition (or first install) permits
     // eager Host/GUI launch. A prior RC1 may have a running Host from another
     // release root; do not create a second Host without a verified handoff.
-    bool autoOpen=result=="CREATED"||result=="SWITCHED_STABLE";
+    // Exact previous RC1 Host mutex was locked through the shortcut handoff.
+    // Launch is safe for a fully stopped predecessor as well as stable->RC1.
+    bool autoOpen=result=="CREATED"||result=="SWITCHED_STABLE"||result=="SWITCHED_RC1"||result=="ALREADY_ACTIVE";
     bool launchFailed=false;
     if(autoOpen){
      try{
-      StartPrivateObserver(release);
+      StartPrivateFull(release);
       Console.WriteLine("RC1_AUTOLAUNCH_LAUNCHER_EXIT_ZERO");
      }catch(Exception launchError){
       launchFailed=true;

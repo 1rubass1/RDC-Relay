@@ -24,9 +24,9 @@ try{
  Check ($gui.Contains('if (-not $SelfTest -and -not $OwnerGui)') -and
         $gui.Contains('$script:enableUpdateNotice = -not $OwnerGui')) 'owner GUI bypasses legacy destructive singleton and update'
  Check ($owner.Contains('[Windows.Forms.Application]::Run($form)') -and
-        $owner.Contains('$finish.Enabled=$false') -and
+        $owner.Contains('$finish.Enabled=$script:ownerManagedMode') -and
         $owner.Contains('$accountButton.Enabled=$true') -and
-        $owner.Contains('$reconnectItem.Enabled=$false')) 'X exits GUI; safe account menu retained, Remote control denied'
+        $owner.Contains('$reconnectItem.Enabled=$false')) 'X exits GUI; Adopted read-only and Managed capabilities separated'
  Check ($runtime.Contains('NotifyIcon') -and $runtime.Contains('StartGui') -eq $false -and
         $runtime.Contains('public void OpenGui()')) 'persistent tray owns separate GUI process creation'
  Check ($runtime.Contains('gui.MainWindowHandle') -and
@@ -49,7 +49,7 @@ try{
  Check ($runtime.Contains('if(verb=="GET_SNAPSHOT")') -and $runtime.Contains('if(verb=="GET_EVENTS")') -and
         $runtime.Contains('if(verb=="OPEN_EXTERNAL")') -and $runtime.Contains('if(verb=="REMOTE_ACTION")') -and
         $runtime.Contains('ADOPTED_REMOTE_READ_ONLY') -and $runtime.Contains('if(verb=="DETACH")') -and
-        $runtime.Contains('return Error(requestId,"VERB_DENIED")')) 'authenticated IPC allowlist: navigation safe, Remote actions denied'
+        $runtime.Contains('return Error(requestId,"VERB_DENIED")')) 'authenticated IPC allowlist: Adopted denied; Managed actions require confirmed GUI'
  Check ($runtime.Contains('events.Count>128') -and $runtime.Contains('events.Count>0 && after<') -and
         $owner.Contains('if([bool]$eventData.gap)')) 'bounded monotonic ring and lost-event recovery'
  Check ($runtime.Contains('INCOMPATIBLE_GUI') -and
@@ -62,7 +62,7 @@ try{
         $runtime.Contains('remote-window.ps1')) 'Host uses current original GUI source, not a new demo window'
  Check ($runtime.Contains('exitRequested=true;closeGeneration++') -and
         $runtime.Contains('if(exitRequested && gui==null && guiState=="NONE")context.ExitThread();') -and
-        $runtime.Contains('if(!fakeOnly)throw')) 'fake-only Exit waits for GUI process; real Remote Exit remains blocked'
+        $runtime.Contains('if(!fakeOnly)throw')) 'Exit waits for GUI process; managed job requires verified stop before completion'
  # C# compiler never executes the generated DLL, WinForms or any process.
  $compiler=@((Join-Path $env:WINDIR 'Microsoft.NET\Framework64/v4.0.30319/csc.exe'),
              (Join-Path $env:WINDIR 'Microsoft.NET/Framework/v4.0.30319/csc.exe'))|Where-Object{[IO.File]::Exists($_)}|Select-Object -First 1
@@ -70,7 +70,7 @@ try{
  $dll=Join-Path $root 'dist\v1.6.0-RC1-BLOCKED-PREFLIGHT\RdcOwnerRuntime.STATIC_TEST.dll'
  if([IO.File]::Exists($dll)){throw 'Unrecognized previous DLL; refuse overwrite'}
  try{
-  & $compiler /nologo /target:library ('/out:'+$dll) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll (Join-Path $src 'RdcOwnerWire.cs') (Join-Path $src 'RdcOwnerProcess.cs') (Join-Path $src 'RdcOwnerTicketStore.cs') (Join-Path $src 'RdcOwnerRemoteState.cs') (Join-Path $src 'RdcOwnerRuntime.cs')
+  & $compiler /nologo /target:library ('/out:'+$dll) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Management.dll (Join-Path $src 'RdcOwnerWire.cs') (Join-Path $src 'RdcOwnerProcess.cs') (Join-Path $src 'RdcOwnerTicketStore.cs') (Join-Path $src 'RdcOwnerRemoteState.cs') (Join-Path $src 'RdcOwnerManagedProcess.cs') (Join-Path $src 'RdcOwnerRuntime.cs')
   Check ($LASTEXITCODE -eq 0 -and [IO.File]::Exists($dll)) 'real product Host+IPC source compiled into .NET Framework DLL'
  }finally{if([IO.File]::Exists($dll)){[IO.File]::Delete($dll)}}
 }catch{$fail++;Write-Output ('FAIL unexpected '+$_.Exception.Message)}

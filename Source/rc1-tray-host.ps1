@@ -1,11 +1,16 @@
 ﻿# RDC Relay 1.6.0 RC1 persistent product Tray Host entry point.
 # Candidate supports isolated fake testing OR read-only observation of the
 # user's already running pinned Remote, never start/stop/reconnect/logout.
-param([switch]$FakeOnly,[switch]$ObserveExisting,[int]$ObserveAutoExitSeconds=0,
+param([switch]$FakeOnly,[switch]$ObserveExisting,[switch]$Full,[int]$ObserveAutoExitSeconds=0,
  [string]$TrialRoot='',[switch]$TrialFailGuiStartOnce,[switch]$TrialFailConstructorOnce,
  [int]$TrialAutoExitSeconds=0,[switch]$TrialReopenOnce,[int]$TrialReopenCount=0)
 $ErrorActionPreference='Stop'
-if([bool]$FakeOnly -eq [bool]$ObserveExisting){throw 'RC1_SELECT_EXACTLY_ONE_MODE'}
+if(([int][bool]$FakeOnly+[int][bool]$ObserveExisting+[int][bool]$Full) -ne 1){
+ throw 'RC1_SELECT_EXACTLY_ONE_MODE'
+}
+if($Full -and ($TrialRoot -or $TrialFailGuiStartOnce -or $TrialFailConstructorOnce -or
+ $TrialAutoExitSeconds -ne 0 -or $TrialReopenOnce -or $TrialReopenCount -ne 0 -or
+ $ObserveAutoExitSeconds -ne 0)){throw 'RC1_FULL_TRIAL_FLAGS_FORBIDDEN'}
 if($ObserveExisting -and ($TrialRoot -or $TrialFailGuiStartOnce -or $TrialFailConstructorOnce -or
  $TrialAutoExitSeconds -ne 0 -or $TrialReopenOnce -or $TrialReopenCount -ne 0)){
  throw 'RC1_OBSERVER_TRIAL_FLAGS_FORBIDDEN'
@@ -15,18 +20,27 @@ if($ObserveAutoExitSeconds -ne 0 -and (-not $ObserveExisting -or
  throw 'RC1_OBSERVER_AUTOEXIT_BOUNDS'
 }
 $root=[IO.Path]::GetFullPath($PSScriptRoot)
-foreach($name in @('remote-window.ps1','rc1-owner-gui.ps1','RdcOwnerWire.cs','RdcOwnerRuntime.cs','RdcOwnerTicketStore.cs','RdcOwnerRemoteState.cs','RdcOwnerProcess.cs')){
+foreach($name in @('remote-window.ps1','rc1-owner-gui.ps1','RdcOwnerWire.cs','RdcOwnerRuntime.cs','RdcOwnerTicketStore.cs','RdcOwnerRemoteState.cs','RdcOwnerProcess.cs','RdcOwnerManagedProcess.cs')){
  if(-not [IO.File]::Exists((Join-Path $root $name))){throw ('RC1_REQUIRED_RUNTIME_MISSING: '+$name)}
 }
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
-Add-Type -Path @((Join-Path $root 'RdcOwnerWire.cs'),(Join-Path $root 'RdcOwnerProcess.cs'),(Join-Path $root 'RdcOwnerTicketStore.cs'),(Join-Path $root 'RdcOwnerRemoteState.cs'),(Join-Path $root 'RdcOwnerRuntime.cs')) -ReferencedAssemblies @('System.Core.dll','System.Web.Extensions.dll','System.Security.dll','System.Windows.Forms.dll','System.Drawing.dll','System.dll')
+Add-Type -Path @((Join-Path $root 'RdcOwnerWire.cs'),(Join-Path $root 'RdcOwnerProcess.cs'),(Join-Path $root 'RdcOwnerTicketStore.cs'),(Join-Path $root 'RdcOwnerRemoteState.cs'),(Join-Path $root 'RdcOwnerManagedProcess.cs'),(Join-Path $root 'RdcOwnerRuntime.cs')) -ReferencedAssemblies @('System.Core.dll','System.Web.Extensions.dll','System.Security.dll','System.Windows.Forms.dll','System.Drawing.dll','System.Management.dll','System.dll')
 $owner=$null
 $observerTimer=$null
 try{
- if($ObserveExisting){
+ if($ObserveExisting -or $Full){
   . (Join-Path $root 'rc1-remote-observer.ps1')
   $owner=New-Object RdcOwnerRuntime -ArgumentList @($root,$true)
-  $observer=Initialize-Rc1RemoteObserver $owner
+  $observer=$null
+  if($Full){
+   try{$observer=Initialize-Rc1RemoteObserver $owner}catch{
+    $reason=[string]$_.Exception.Message
+    if($reason -match 'RC1_OBSERVER_AMBIGUOUS_OR_ABSENT_0|RC1_OBSERVER_LEGACY_LOG_NOT_FOUND'){
+     $owner.EnableManagedRemote()
+    }else{throw}
+   }
+  }else{$observer=Initialize-Rc1RemoteObserver $owner}
+  if($observer){
   # Read-only monitoring does not send ANY command to the pinned Remote.
   Invoke-Rc1RemoteObserverPoll $owner $observer
   $observerClock=[Diagnostics.Stopwatch]::StartNew()
@@ -41,6 +55,7 @@ try{
    }
   })
   $observerTimer.Start()
+  }
  }else{
  if($TrialReopenOnce -and $TrialReopenCount -ne 0){throw 'RC1_TRIAL_REOPEN_CONFLICT'}
  if($TrialReopenCount -lt 0 -or $TrialReopenCount -gt 10){throw 'RC1_TRIAL_REOPEN_LIMIT'}

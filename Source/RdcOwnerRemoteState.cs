@@ -16,9 +16,35 @@ public sealed class RdcOwnerRemoteState {
  Ownership ownership=Ownership.Unknown;
  ProcessEvidence identity;
  long epoch=1,revision=1,cursor=0,missed=0;
- bool sourceIsReal=false,stopApproved=false,observedAlive=false;
+ bool sourceIsReal=false,stopApproved=false,observedAlive=false,managedMode=false;
  int observedPid=0;
  public string SessionId {get{return session;}}
+ // A Managed Host starts disconnected. Only its private kernel Job adapter
+ // may supply PID/state; the GUI and discovered processes never grant ownership.
+ public void EnableManaged(){
+  lock(sync){
+   if(sourceIsReal)throw new InvalidOperationException("RC1_MANAGED_ALREADY_ATTACHED");
+   sourceIsReal=true;managedMode=true;ownership=Ownership.Owned;
+   observedPid=0;observedAlive=false;stopApproved=false;
+   state="Disconnected";status="RC1 Host ready to start pinned Remote";
+   epoch++;tail.Clear();cursor=0;revision++;AddDiagnostic("Managed mode initialized");
+  }
+ }
+ public void ManagedStatus(int pid,bool alive,string next,string detail){
+  if(next!="Disconnected"&&next!="Connecting"&&next!="AuthPending"&&next!="Ready"&&
+     next!="Fault"&&next!="Reconnecting")throw new ArgumentException("RC1_MANAGED_STATE");
+  lock(sync){
+   if(!managedMode||ownership!=Ownership.Owned)throw new InvalidOperationException("RC1_NOT_MANAGED");
+   if(alive&&pid<=0)throw new InvalidOperationException("RC1_MANAGED_PID_MISSING");
+   detail=(detail??"").Replace("\r"," ").Replace("\n"," ");
+   if(detail.Length>160)detail=detail.Substring(0,160);
+   if(observedPid==pid&&observedAlive==alive&&state==next&&status==detail)return;
+   if(pid!=observedPid){epoch++;tail.Clear();cursor=0;}
+   observedPid=pid;observedAlive=alive;stopApproved=alive;
+   state=next;status=detail;revision++;
+   AddDiagnostic("Managed state: "+next);
+  }
+ }
  // A preexisting pinned Desktop Commander launcher is OBSERVED, not owned.
  // No method in this store can grant stop/reconnect/logout authority.
  public void AttachObservedReadOnly(int pid) {
@@ -100,7 +126,7 @@ public sealed class RdcOwnerRemoteState {
  public bool CanStop(){
   // Disposable tree OS identity, cooperative shutdown and actual Remote
   // support are NOT authorized; even synthetic Owned evidence is non-destructive.
-  lock(sync){return sourceIsReal && stopApproved && false;}
+  lock(sync){return managedMode && stopApproved && observedAlive;}
  }
  public void RequireSafeStop(){
   throw new InvalidOperationException("RC1_STOP_BLOCKED_PENDING_OS_CHILD_TREE_OWNER_GO");
@@ -147,13 +173,14 @@ public sealed class RdcOwnerRemoteState {
     {"sessionId",session},{"fake",!sourceIsReal},{"isActualRemote",sourceIsReal},
     {"ownership",ownership.ToString()},{"processAlive",sourceIsReal?(observedAlive?"observed_alive":"observed_exited"):"unknown"},
     {"processPid",sourceIsReal?observedPid:0},
-    {"transportReady",state=="Ready"?(sourceIsReal?"OBSERVED_READY":"FAKE_READY"):"not_connected"},
-    {"authState",state=="AuthPending"?(sourceIsReal?"OBSERVED_AUTH":"FAKE_AUTH"):"unavailable"},
+    {"transportReady",state=="Ready"?(managedMode?"MANAGED_READY":sourceIsReal?"OBSERVED_READY":"FAKE_READY"):"not_connected"},
+    {"authState",state=="AuthPending"?(managedMode?"MANAGED_AUTH":sourceIsReal?"OBSERVED_AUTH":"FAKE_AUTH"):"unavailable"},
     {"toolActivity","idle"},{"state",state},{"status",status},
     {"logStreamEpoch",epoch},{"logCursor",cursor},{"missed",missed},
     {"tail",tail.ToArray()},{"diagnostics",diagnostics.ToArray()},
-    {"revision",revision},{"canStop",false},{"canReconnect",false},
-    {"canStart",false},{"canUpdate",false},{"canLogout",false}
+    {"revision",revision},{"canStop",managedMode&&observedAlive},
+    {"canReconnect",managedMode&&observedAlive},
+    {"canStart",managedMode&&!observedAlive},{"canUpdate",false},{"canLogout",false}
    };
   }
  }

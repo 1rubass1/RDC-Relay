@@ -4,6 +4,9 @@
 using System;
 using System.IO;
 using System.Security.Cryptography;
+using System.Security.Principal;
+using System.Text;
+using System.Threading;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -18,6 +21,29 @@ internal static class RdcRc1ManualUpgrade {
  [DllImport("kernel32.dll",SetLastError=true)]
  static extern bool GetFileInformationByHandleEx(SafeFileHandle handle,int informationClass,
   out FileAttributeTagInfo info,uint size);
+ [DllImport("advapi32.dll",SetLastError=true)]
+ static extern bool GetTokenInformation(IntPtr token,int kind,byte[] buffer,int length,out int required);
+ // RC1 Host uses SHA256(exact Source root | OS logon SID) for its singleton.
+ // Setup must use precisely the same key; no guessed PID or process-name kill.
+ static string OldHostMutexName(string oldRelease){
+  string source=Path.GetFullPath(Path.Combine(oldRelease,"Source")).TrimEnd(Path.DirectorySeparatorChar);
+  string sid;
+  using(WindowsIdentity identity=WindowsIdentity.GetCurrent()){
+   byte[] data=new byte[256];int count;
+   if(!GetTokenInformation(identity.Token,28,data,data.Length,out count)||count<16)
+    throw new UnauthorizedAccessException("RC1_MANUAL_LOGON_SID_UNAVAILABLE");
+   GCHandle pin=GCHandle.Alloc(data,GCHandleType.Pinned);
+   try{
+    IntPtr ptr=Marshal.ReadIntPtr(pin.AddrOfPinnedObject(),8);
+    if(ptr==IntPtr.Zero)throw new UnauthorizedAccessException("RC1_MANUAL_LOGON_SID_NULL");
+    sid=new SecurityIdentifier(ptr).Value;
+   }finally{pin.Free();}
+  }
+  using(var sha=SHA256.Create()){
+   byte[] key=sha.ComputeHash(Encoding.UTF8.GetBytes(source.ToLowerInvariant()+"|"+sid));
+   return @"Local\RdcRelayRC1Owner-"+BitConverter.ToString(key).Replace("-","").Substring(0,32);
+  }
+ }
  static bool IsWindowsDesktopCloudAncestor(string inspected,string requested) {
   // Only an OS-reported Desktop or its direct child may cross an OS Desktop
   // Cloud Files placeholder. Junctions and symbolic links still fail closed.
@@ -147,6 +173,8 @@ internal static class RdcRc1ManualUpgrade {
   if(shellType==null)throw new InvalidOperationException("RC1_MANUAL_NO_SHELL_LINK_COM");
   object shell=Activator.CreateInstance(shellType);
   object old=null,newLink=null;
+  Mutex oldHostLock=null;
+  bool oldHostLocked=false;
   try {
    if(!firstInstall){
     old=OpenShortcut(shell,desktopLink);
@@ -171,18 +199,24 @@ internal static class RdcRc1ManualUpgrade {
        oldDir.Substring(releaseRoot.Length).IndexOf(Path.DirectorySeparatorChar)<0);
     bool isOldRc1=String.Equals(Path.GetFileName(oldFull),"RC1 Pilot Launcher.exe",StringComparison.OrdinalIgnoreCase)&&
       knownPilotDirectory&&File.Exists(oldFull)&&
-      String.Equals(oldArgs.Trim(),"--observe-existing",StringComparison.Ordinal);
+      (String.Equals(oldArgs.Trim(),"--observe-existing",StringComparison.Ordinal)||
+       String.Equals(oldArgs.Trim(),"--full",StringComparison.Ordinal));
     if(!isStable&&!isOldRc1)
      throw new InvalidOperationException("RC1_MANUAL_UNKNOWN_OLD_SHORTCUT_REFUSED");
     switchedFromStable=isStable;
     if(String.Equals(Path.GetFullPath(oldTarget),Path.GetFullPath(launcher),StringComparison.OrdinalIgnoreCase)&&
-        String.Equals(oldArgs.Trim(),"--observe-existing",StringComparison.Ordinal))
+        String.Equals(oldArgs.Trim(),"--full",StringComparison.Ordinal))
      return "ALREADY_ACTIVE";
-    // Different RC1 releases own different source-root-bound Host mutexes.
-    // Without exact old Host/GUI cooperative handoff, changing the shortcut
-    // could start a second Host while the previous one is still alive.
-    // Never claim a safe automatic RC1->RC1 replacement yet.
-    if(isOldRc1)throw new InvalidOperationException("RC1_MANUAL_PREVIOUS_RC1_HANDOFF_REQUIRED");
+    // Hold the old exact source-root/logon Host mutex across shortcut
+    // replacement. A running Host (even an unidentified process with this
+    // mutex) causes a refusal; no RC1 process receives a stop signal.
+    if(isOldRc1){
+     CheckPath(oldDir);
+     bool acquired;
+     oldHostLock=new Mutex(true,OldHostMutexName(oldDir),out acquired);
+     if(!acquired)throw new InvalidOperationException("RC1_MANUAL_PREVIOUS_RC1_HOST_ACTIVE");
+     oldHostLocked=true;
+    }
    }
    string temporary=Path.Combine(desktop,".rdc-rc1-"+Guid.NewGuid().ToString("N")+".lnk");
    string backup=Path.Combine(Path.GetDirectoryName(release),
@@ -191,10 +225,10 @@ internal static class RdcRc1ManualUpgrade {
    if(File.Exists(temporary)||File.Exists(backup))throw new IOException("RC1_MANUAL_SHORTCUT_COLLISION");
    newLink=OpenShortcut(shell,temporary);
    SetShortcut(newLink,"TargetPath",launcher);
-   SetShortcut(newLink,"Arguments","--observe-existing");
+   SetShortcut(newLink,"Arguments","--full");
    SetShortcut(newLink,"WorkingDirectory",release);
    SetShortcut(newLink,"IconLocation",Path.Combine(release,"Source","RDCRelay.ico")+",0");
-   SetShortcut(newLink,"Description","RDC Relay 1.6.0 RC1 (read-only observer)");
+   SetShortcut(newLink,"Description","RDC Relay 1.6.0 RC1 (full Host/GUI candidate)");
    SaveShortcut(newLink);
    Marshal.FinalReleaseComObject(newLink);newLink=null;
    if(!File.Exists(temporary))throw new IOException("RC1_MANUAL_NEW_SHORTCUT_MISSING");
@@ -222,6 +256,10 @@ internal static class RdcRc1ManualUpgrade {
    if(newLink!=null)Marshal.FinalReleaseComObject(newLink);
    if(old!=null)Marshal.FinalReleaseComObject(old);
    Marshal.FinalReleaseComObject(shell);
+   if(oldHostLock!=null){
+    if(oldHostLocked)oldHostLock.ReleaseMutex();
+    oldHostLock.Dispose();
+   }
   }
  }
 }

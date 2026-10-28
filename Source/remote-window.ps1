@@ -3623,7 +3623,7 @@ $hintSep = New-Object Windows.Forms.Label
 $hintSep.AutoSize = $true
 $hintSep.Text = '•'
 $hintSep.ForeColor = $accentOrange
-$hintSep.Margin = New-Object Windows.Forms.Padding(2,2,6,0)
+$hintSep.Margin = New-Object Windows.Forms.Padding(0,2,6,0)
 
 $hintVersion = New-Object Windows.Forms.Label
 $hintVersion.AutoSize = $true
@@ -3631,7 +3631,7 @@ $hintVersion.Text = 'v' + $appVersion
 $hintVersion.Font = $hint.Font
 $hintVersion.ForeColor = [Drawing.Color]::Gray
 # Align the shorter version glyph line with the adjacent footer hint baseline.
-$hintVersion.Margin = New-Object Windows.Forms.Padding(0,4,0,0)
+$hintVersion.Margin = New-Object Windows.Forms.Padding(0,6,0,0)
 
 $hintHost.Controls.Add($hint)
 $hintHost.Controls.Add($hintSep)
@@ -5503,6 +5503,19 @@ function Complete-RuntimeInitialization {
 }
 
 $finish.Add_Click({
+    if ($OwnerGui) {
+        if (-not $script:ownerManagedMode) { return }
+        if ($script:ownerCanStop) {
+            $answer=[Windows.Forms.MessageBox]::Show(
+                'Остановить только Remote, созданный этим RC1 Host?',
+                'RDC Relay 1.6.0 RC1',
+                [Windows.Forms.MessageBoxButtons]::YesNo,
+                [Windows.Forms.MessageBoxIcon]::Question)
+            if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
+            $script:ownerQueuedAction='STOP'
+        } elseif ($script:ownerCanStart) { $script:ownerQueuedAction='START' }
+        return
+    }
     if ($script:remoteOperation -or $script:initializing) { return }
     if ($script:proc -and -not $script:proc.HasExited) {
         Begin-RemoteOperation 'stop'
@@ -5521,18 +5534,32 @@ $finish.Add_Click({
 $accountButton.Add_Click({
     $accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))
 })
-$switchAccountItem.Add_Click({ Switch-RemoteAccount })
-$reconnectItem.Add_Click({ Restart-Remote })
+$switchAccountItem.Add_Click({
+    if ($OwnerGui) { return } # Credentials are not managed by this release.
+    Switch-RemoteAccount
+})
+$reconnectItem.Add_Click({
+    if ($OwnerGui) {
+        if (-not $script:ownerManagedMode -or -not $script:ownerCanReconnect) { return }
+        $answer=[Windows.Forms.MessageBox]::Show(
+            'Перезапустить Remote, принадлежащий текущему RC1 Host?',
+            'RDC Relay 1.6.0 RC1',[Windows.Forms.MessageBoxButtons]::YesNo,
+            [Windows.Forms.MessageBoxIcon]::Question)
+        if ($answer -eq [Windows.Forms.DialogResult]::Yes) { $script:ownerQueuedAction='RECONNECT' }
+        return
+    }
+    Restart-Remote
+})
 $devicesItem.Add_Click({
     if ($OwnerGui) {
-        if ($script:ownerObservedMode) { $script:ownerQueuedNavigation='DEVICE_MANAGEMENT' }
+        if ($script:ownerRealMode) { $script:ownerQueuedNavigation='DEVICE_MANAGEMENT' }
         return
     }
     try { Start-Process 'https://mcp.desktopcommander.app/' } catch {}
 })
 $verifyDeviceItem.Add_Click({
     if ($OwnerGui) {
-        if ($script:ownerObservedMode) { $script:ownerQueuedNavigation='DEVICE_VERIFICATION' }
+        if ($script:ownerRealMode) { $script:ownerQueuedNavigation='DEVICE_VERIFICATION' }
         return
     }
     try { Start-Process 'https://mcp.desktopcommander.app/device/verify' } catch {}
@@ -5587,6 +5614,15 @@ $aboutItem.Add_Click({
               'Аккаунт ▾ открывает безопасные ссылки управления устройствами и подтверждения в браузере.' + $nl +
               'Справка → Показать журнал RC1 переводит к обезличенному журналу Host в нижней панели.' + $nl +
               'Автообновления RC1 и полный выход реального Remote отключены до проверки владения.'
+        }elseif($script:ownerManagedMode){
+            $helpText = 'RDC Relay 1.6.0 RC1 — управляемая оболочка' + $nl + $nl +
+              'Host запускает Desktop Commander Remote 0.2.52 в отдельной проверяемой Windows Job.' + $nl +
+              'Кнопки «Запустить», «Остановить» и «Переподключить» управляют только процессами этого Host.' + $nl +
+              'Остановка завершает только созданную Host группу процессов после явного подтверждения.' + $nl +
+              'X закрывает только окно GUI; Host и Remote продолжают работать.' + $nl +
+              'Повторное открытие через трей восстанавливает состояние и журнал Host.' + $nl +
+              'Смена аккаунта и автоматическая публикация обновлений пока заблокированы.' + $nl +
+              'Если найден прежний Remote, он не будет принудительно завершён: используйте режим Adopted.'
         }else{
             $helpText = 'RDC Relay 1.6.0 RC1' + $nl +
               'Режим проверки: настоящий Remote не подключён.' + $nl + $nl +

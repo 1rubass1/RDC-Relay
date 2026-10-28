@@ -39,7 +39,9 @@ function Start-RdcOwnerGui {
   'System.Core.dll','System.Web.Extensions.dll','System.dll','System.Security.dll')
  $ticket=[RdcOwnerWire]::Decode([IO.File]::ReadAllText($ticketFull,[Text.Encoding]::UTF8))
  $script:ownerObservedMode=([string]$ticket.remoteMode -ceq 'OBSERVED_READ_ONLY_RC1')
- if(([string]$ticket.remoteMode -cne 'FAKE_ONLY_RC1' -and -not $script:ownerObservedMode) -or
+ $script:ownerManagedMode=([string]$ticket.remoteMode -ceq 'MANAGED_OWNER_RC1')
+ $script:ownerRealMode=$script:ownerObservedMode -or $script:ownerManagedMode
+ if(([string]$ticket.remoteMode -cne 'FAKE_ONLY_RC1' -and -not $script:ownerRealMode) -or
     [int]$ticket.protocol -ne 1){throw 'RC1_UNKNOWN_OWNER_MODE'}
  $script:ownerIdentity=([string]$ticket.hostPid)+'|'+([string]$ticket.hostTicks)+'|'+([string]$ticket.hostSession)
  $script:ownerGeneration=[string]$ticket.hostGeneration
@@ -58,17 +60,24 @@ function Start-RdcOwnerGui {
   $script:ownerPipe,$script:ownerIdentity,[RdcOwnerWire]::Json.Serialize($hello),1200))
  if([string]$handshake.type -cne 'WELCOME'){throw 'RC1_OWNER_HELLO_REJECTED'}
  if([string]$handshake.payload.hostGeneration -cne $script:ownerGeneration -or
-    [bool]$handshake.payload.isActualRemote -ne $script:ownerObservedMode){
+    [bool]$handshake.payload.isActualRemote -ne $script:ownerRealMode){
   throw 'RC1_OWNER_SNAPSHOT_MISMATCH'
  }
  $form.Text=if($script:ownerObservedMode){
-  'RDC Relay 1.6.0 RC1 — существующий Remote (наблюдение)'
+  'RDC Relay 1.6.0 RC1 — существующий Remote (только чтение)'
+ }elseif($script:ownerManagedMode){
+  'RDC Relay 1.6.0 RC1 — управляемый Host/GUI'
  }else{'RDC Relay 1.6.0 RC1 — Remote не подключён (режим проверки)'}
  # Keep the real original Account/Help controls functional for SAFE routes.
  # Only Remote/account-mutating actions remain disabled for Adopted/Unknown.
- $finish.Enabled=$false
- $finish.AccessibleDescription='Остановка и запуск Remote недоступны: сессия не принадлежит RC1.'
- $tip.SetToolTip($finish,'Remote — существующий Adopted процесс. Остановка запрещена.')
+ $finish.Enabled=$script:ownerManagedMode
+ $finish.AccessibleDescription=if($script:ownerManagedMode){'Запуск или остановка только Remote, принадлежащего текущему Host.'}else{
+  'Управление существующим Remote недоступно: сессия не принадлежит RC1.'
+ }
+ $tipText=if($script:ownerManagedMode){'Управление только собственным Remote этого Host.'}else{
+  'Remote — существующий Adopted процесс. Остановка запрещена.'
+ }
+ $tip.SetToolTip($finish,$tipText)
  $accountButton.Enabled=$true
  $accountButton.AccessibleDescription='Аккаунт: переход к управлению устройствами без изменения Remote.'
  $switchAccountItem.Enabled=$false
@@ -86,7 +95,9 @@ function Start-RdcOwnerGui {
  $script:ownerPending=$null
  $script:ownerQueuedNavigation=''
  $script:ownerRequestedNavigation=''
- $script:ownerStatus=if($script:ownerObservedMode){'OBSERVED_READ_ONLY_RC1'}else{'FAKE_ONLY_RC1'}
+ $script:ownerQueuedAction=''
+ $script:ownerRequestedAction=''
+ $script:ownerStatus=if($script:ownerObservedMode){'OBSERVED_READ_ONLY_RC1'}elseif($script:ownerManagedMode){'MANAGED_OWNER_RC1'}else{'FAKE_ONLY_RC1'}
  $script:ownerLastShownRevision=-1
  $script:ownerLastLogCursor=0
  $script:ownerLastLogEpoch=-1
@@ -94,6 +105,15 @@ function Start-RdcOwnerGui {
   Set-State 'Подключение к Host' 'Наблюдение за существующим Remote; управление и остановка отключены.' ([Drawing.Color]::Khaki)
   Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Remote: существующая сессия / Adopted' $true
   Add-CompletedEvent 'RC1 подключён к работающему Desktop Commander Remote только для наблюдения. X закрывает GUI; Remote не затрагивается.'
+ }elseif($script:ownerManagedMode){
+  Set-FinishButtonMode $false
+  $finish.Enabled=[bool]$initialCapabilities.startRemote
+  $script:ownerCanStart=[bool]$initialCapabilities.startRemote
+  $script:ownerCanStop=$false
+  $script:ownerCanReconnect=$false
+  Set-State 'Remote отключён' 'Host готов запустить новую управляемую сессию Desktop Commander.' ([Drawing.Color]::Khaki)
+  Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Remote: Host-owned / ожидание запуска' $true
+  Add-CompletedEvent 'RDC Relay RC1: управление Remote выполняет постоянный Host. X закрывает только это окно.'
  }else{
   Set-State 'Демонстрация RC1' 'Настоящий Desktop Commander Remote не подключён; действия недоступны.' ([Drawing.Color]::Khaki)
   Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Тестовый Host / Remote не подключён' $true
@@ -109,7 +129,7 @@ function Start-RdcOwnerGui {
     if([string]$reply.type -eq 'SNAPSHOT'){
      $snapshot=$reply.payload
      if([string]$snapshot.hostGeneration -cne $script:ownerGeneration -or
-        [bool]$snapshot.isActualRemote -ne $script:ownerObservedMode){
+        [bool]$snapshot.isActualRemote -ne $script:ownerRealMode){
       throw 'RC1_OWNER_GENERATION_OR_MODE_CHANGED'
      }
      if([int]$snapshot.closeGeneration -gt $script:ownerCloseGeneration){$form.Close();return}
@@ -121,8 +141,16 @@ function Start-RdcOwnerGui {
      $devicesItem.Enabled=[bool]$snapshot.capabilities.deviceManagementLink
      $verifyDeviceItem.Enabled=[bool]$snapshot.capabilities.deviceVerificationLink
      $openLogItem.Enabled=[bool]$snapshot.capabilities.sanitizedJournal
+     if($script:ownerManagedMode){
+      $script:ownerCanStart=[bool]$snapshot.capabilities.startRemote
+      $script:ownerCanStop=[bool]$snapshot.capabilities.stopRemote
+      $script:ownerCanReconnect=[bool]$snapshot.capabilities.reconnectRemote
+      $finish.Enabled=($script:ownerCanStart -or $script:ownerCanStop)
+      Set-FinishButtonMode $script:ownerCanStop
+      $reconnectItem.Enabled=$script:ownerCanReconnect
+     }
      if(-not $remoteSnapshot -or
-        [bool]$remoteSnapshot.isActualRemote -ne $script:ownerObservedMode){
+        [bool]$remoteSnapshot.isActualRemote -ne $script:ownerRealMode){
       throw 'RC1_REMOTE_MODE_MISMATCH'
      }
      $epoch=[long]$remoteSnapshot.logStreamEpoch
@@ -132,6 +160,8 @@ function Start-RdcOwnerGui {
       Reset-CompactLogSession
       Add-CompletedEvent $(if($script:ownerObservedMode){
        'RC1: восстановлен обезличенный журнал наблюдения Host.'
+      }elseif($script:ownerManagedMode){
+       'RC1: восстановлен журнал управляемого Remote из Host.'
       }else{'RC1: синтетический журнал Host.'})
      }
      $lastCursor=[long]$remoteSnapshot.logCursor
@@ -143,7 +173,7 @@ function Start-RdcOwnerGui {
       $lineCursor=[long]$Matches[1]
       if($lineCursor -le $script:ownerLastLogCursor){continue}
       if($lineCursor -gt $lastCursor){throw 'RC1_LOG_CURSOR_MISMATCH'}
-      Add-CompletedEvent ('[Host '+$(if($script:ownerObservedMode){'Remote'}else{'fake'})+' '+
+      Add-CompletedEvent ('[Host '+$(if($script:ownerRealMode){'Remote'}else{'fake'})+' '+
        [string]$lineCursor+'] '+$line.Substring($Matches[0].Length))
       $script:ownerLastLogCursor=$lineCursor
       $hasNewLog=$true
@@ -159,6 +189,16 @@ function Start-RdcOwnerGui {
        $statusText=if($online){'Remote подключён (наблюдение)'}else{'Remote: '+[string]$remoteSnapshot.state}
        Set-State $statusText ([string]$remoteSnapshot.status+'; управление отключено.') $color
        Set-RuntimeDisplay ('Remote PID '+[string]$remoteSnapshot.processPid) 'Существующая сессия / Adopted' $true
+      }elseif($script:ownerManagedMode){
+       $connected=([string]$remoteSnapshot.state -ceq 'Ready')
+       $color=if($connected){[Drawing.Color]::PaleGreen}elseif([string]$remoteSnapshot.state -ceq 'Fault'){
+        [Drawing.Color]::LightCoral
+       }else{[Drawing.Color]::Khaki}
+       $name=if($connected){'Remote подключён'}elseif([string]$remoteSnapshot.state -ceq 'Disconnected'){
+        'Remote отключён'
+       }else{'Remote: '+[string]$remoteSnapshot.state}
+       Set-State $name ([string]$remoteSnapshot.status) $color
+       Set-RuntimeDisplay ('Remote PID '+[string]$remoteSnapshot.processPid) 'Управление: Host-owned Job' $true
       }else{
        Set-State 'Remote отключён (RC1)' ('Host: '+[string]$remoteSnapshot.state+'; только синтетические данные.') ([Drawing.Color]::Khaki)
        Set-RuntimeDisplay ('Host PID '+[string]$snapshot.hostPid) 'Remote НЕ подключён | RC1' $true
@@ -179,6 +219,12 @@ function Start-RdcOwnerGui {
       }
       $script:ownerNextVerb=if($eventData.moreAvailable){'GET_EVENTS'}else{'GET_SNAPSHOT'}
      }
+    }elseif([string]$reply.type -eq 'ACK'){
+     if(-not $script:ownerRequestedAction -or
+        [string]$reply.payload.action -cne $script:ownerRequestedAction -or
+        -not [bool]$reply.payload.success){throw 'RC1_REMOTE_ACK_MISMATCH'}
+     Add-CompletedEvent ('Host подтвердил выполнение: '+$script:ownerRequestedAction)
+     $script:ownerNextVerb='GET_SNAPSHOT'
     }elseif([string]$reply.type -eq 'NAVIGATION'){
      $route=[string]$reply.payload.route
      $url=[string]$reply.payload.url
@@ -198,25 +244,32 @@ function Start-RdcOwnerGui {
     $script:ownerNextVerb='GET_SNAPSHOT'
     if($script:ownerRequestedNavigation){
      Set-State 'Операция не выполнена' 'Host отклонил переход или браузер недоступен. Remote не изменён.' ([Drawing.Color]::Khaki)
+    }elseif($script:ownerRequestedAction){
+     Set-State 'Операция отклонена' ('Host не подтвердил '+$script:ownerRequestedAction+'. Перепроверьте состояние Remote.') ([Drawing.Color]::LightCoral)
     }else{
      Set-State 'Связь с Host' 'IPC временно недоступен; состояние Remote неизвестно, остановка запрещена.' ([Drawing.Color]::Khaki)
     }
-   }finally{$script:ownerPending=$null;$script:ownerRequestedNavigation=''}
+   }finally{$script:ownerPending=$null;$script:ownerRequestedNavigation='';$script:ownerRequestedAction=''}
   }
   if(-not $script:ownerPending -and -not $form.IsDisposed){
    # One shared sequence and one in-flight IPC call: a user menu action can
    # never overtake the background state/event poll and be rejected as replay.
    $navigation=[string]$script:ownerQueuedNavigation
-   $verb=if($navigation){'OPEN_EXTERNAL'}else{$script:ownerNextVerb}
+   $action=[string]$script:ownerQueuedAction
+   $verb=if($action){'REMOTE_ACTION'}elseif($navigation){'OPEN_EXTERNAL'}else{$script:ownerNextVerb}
    $script:ownerRequestedNavigation=$navigation
+   $script:ownerRequestedAction=$action
    $script:ownerQueuedNavigation=''
+   $script:ownerQueuedAction=''
    $script:ownerRequestSequence++
    $packet=[RdcOwnerWire]::Decode([RdcOwnerWire]::Request($verb,$script:ownerNonce,
      $script:ownerGeneration,[long]$script:ownerEventCursor,$null,[long]$script:ownerRequestSequence))
    if($navigation){$packet['navigation']=$navigation}
+   if($action){$packet['action']=$action;$packet['userConfirmed']='YES'}
    $wire=[RdcOwnerWire]::Json.Serialize($packet)
+   $timeout=if($action){15000}else{800}
    $script:ownerPending=[RdcOwnerWire]::CallBackground($script:ownerPipe,
-    $script:ownerIdentity,$wire,800)
+    $script:ownerIdentity,$wire,$timeout)
   }
  })
  $form.Add_FormClosed({if($script:ownerTimer){$script:ownerTimer.Stop();$script:ownerTimer.Dispose()}})

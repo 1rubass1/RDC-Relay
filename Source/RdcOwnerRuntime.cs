@@ -12,6 +12,7 @@ using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
 using System.Threading;
+using System.Management;
 
 public sealed class RdcOwnerRuntime : IDisposable {
  readonly object gate=new object();
@@ -23,12 +24,17 @@ public sealed class RdcOwnerRuntime : IDisposable {
  bool trialFailGuiStartOnce=false;
  int trialReopensRemaining=0;
  readonly RdcOwnerRemoteState remoteSupervisor=new RdcOwnerRemoteState();
- bool observedMode=false;
+ bool observedMode=false,managedMode=false;
+ RdcOwnerManagedProcess managedProcess=null;
+ readonly List<string> managedLogs=new List<string>();
+ string managedLogPath="",managedLogFragment="",managedState="Disconnected",managedDetail="";
+ long managedLogOffset=0;
  ToolStripMenuItem trayStatusItem,trayExitItem;
  bool runRootCreated=false;
  readonly int hostPid, hostSession; readonly long hostBorn;
  readonly Mutex singleton;
  readonly EventWaitHandle reopenSignal;
+ readonly EventWaitHandle guiReadySignal;
  readonly ApplicationContext context=new ApplicationContext();
  readonly NotifyIcon tray=new NotifyIcon();
  readonly System.Windows.Forms.Timer pulse=new System.Windows.Forms.Timer();
@@ -86,6 +92,9 @@ public sealed class RdcOwnerRuntime : IDisposable {
    string activationName=@"Local\RdcRelayRC1Open-"+BitConverter.ToString(activationHash).Replace("-","").Substring(0,32);
    bool eventCreated;
    reopenSignal=new EventWaitHandle(false,EventResetMode.AutoReset,activationName,out eventCreated,eventAcl);
+   string readyName=@"Local\RdcRelayRC1GuiReady-"+BitConverter.ToString(activationHash).Replace("-","").Substring(0,32);
+   guiReadySignal=new EventWaitHandle(false,EventResetMode.ManualReset,readyName,out eventCreated,eventAcl);
+   guiReadySignal.Reset();
    instance=Guid.NewGuid().ToString("N");
    generation=Guid.NewGuid().ToString("N");
    pipeName="rdc-rc1-gui-"+instance;
@@ -126,14 +135,29 @@ public sealed class RdcOwnerRuntime : IDisposable {
    trayExitItem.Click+=(s,e)=>{
     string question=observedMode?
      "Закрыть только RC1 Host и его GUI? Существующий Desktop Commander Remote продолжит работу.":
+     managedMode?
+     "Полностью завершить RDC Relay? Только Remote, запущенный этим Host, будет остановлен; чужие процессы не затрагиваются.":
      "Завершить только тестовый RC1 Host и его собственный GUI?";
     if(MessageBox.Show(question,
        "RDC Relay 1.6.0 RC1",MessageBoxButtons.YesNo,
        MessageBoxIcon.Question)!=DialogResult.Yes)return;
     lock(gate){
      if(exitRequested)return;
+     if(managedMode && managedProcess!=null && managedProcess.Running){
+      try{
+       if(!managedProcess.StopOwnedOnly(10000)){
+        MessageBox.Show("Remote ещё работает; полное завершение заблокировано.","RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+        return;
+       }
+       remoteSupervisor.ManagedStatus(0,false,"Disconnected","Host-owned Remote exited");
+      }catch(Exception error){
+       MessageBox.Show("Невозможно безопасно остановить управляемый Remote: "+error.GetType().Name,
+        "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Error);
+       return;
+      }
+     }
      exitRequested=true;closeGeneration++;
-     Append("host",observedMode?"observer detach requested":"fake-only graceful exit requested");
+     Append("host",observedMode?"observer detach requested":managedMode?"managed full exit requested":"fake-only graceful exit requested");
     }
    };
    menu.Items.Add(open);menu.Items.Add(trayStatusItem);menu.Items.Add(new ToolStripSeparator());menu.Items.Add(trayExitItem);
@@ -143,6 +167,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    pulse.Tick+=(s,e)=>{
     lock(gate){
      RefreshGui();
+     if(managedMode)RefreshManagedRemote();
      if(reopenSignal!=null && reopenSignal.WaitOne(0) && !exitRequested){
       Append("host","verified local GUI activation requested");
       OpenGui();
@@ -168,6 +193,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    // Fail-closed unwind of partly created host-owned resources.
    try{pulse.Stop();pulse.Dispose();}catch{}
    try{if(reopenSignal!=null)reopenSignal.Dispose();}catch{}
+   try{if(guiReadySignal!=null)guiReadySignal.Dispose();}catch{}
    try{tray.Visible=false;tray.Dispose();}catch{}
    bool ipcClean=true;
    try{if(server!=null)server.Dispose();}catch{ipcClean=false;}
@@ -209,7 +235,22 @@ public sealed class RdcOwnerRuntime : IDisposable {
   return RdcOwnerWire.Json.Serialize(new Dictionary<string,object>{
     {"pipe",pipeName},{"nonce",nonce},{"hostPid",hostPid},{"hostTicks",hostBorn},
     {"hostSession",hostSession},{"hostGeneration",generation},
-    {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":"FAKE_ONLY_RC1"},{"protocol",1}});
+    {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":managedMode?"MANAGED_OWNER_RC1":"FAKE_ONLY_RC1"},{"protocol",1}});
+ }
+ bool RemoveOwnedManagedLogs(){
+  if(!managedMode)return true;
+  if(managedProcess!=null && managedProcess.Running)return false;
+  foreach(string path in managedLogs){
+   try{
+    if(Path.GetDirectoryName(path)!=stateRoot ||
+       !System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(path),
+        @"^remote-[0-9a-f]{32}\.log$",System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+     return false;
+    CheckPath(path);
+    if(File.Exists(path))File.Delete(path);
+   }catch{return false;}
+  }
+  return true;
  }
  bool RemoveEmptyOwnedRunRoot(){
   if(!runRootCreated)return String.IsNullOrEmpty(stateRoot) || !Directory.Exists(stateRoot);
@@ -236,7 +277,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
   try{
    if(!gui.HasExited)return;
   }catch{guiState="UNVERIFIED";Append("gui","identity probe failed");return;}
-  if((trialRoot!=null || observedMode) && guiErrorTask!=null){
+  if((trialRoot!=null || observedMode || managedMode) && guiErrorTask!=null){
    try{if(!guiErrorTask.IsCompleted){Console.WriteLine("RC1_TRIAL_GUI_STDERR_PENDING");}
     else {string detail=guiErrorTask.GetAwaiter().GetResult();
     if(!String.IsNullOrWhiteSpace(detail)){
@@ -247,6 +288,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    }catch{Console.WriteLine("RC1_TRIAL_GUI_STDERR_UNAVAILABLE");}
   }
   guiErrorTask=null;
+  if(guiReadySignal!=null)guiReadySignal.Reset();
   gui.Dispose();gui=null;childPid=0;childBorn=0;childSession=0;guiAuthenticated=false;
   nonce="";lastRequestSequence=0;requestIds.Clear();requestOrder.Clear();
   if(!ticketStore.RevokeOnlyOwned()){
@@ -270,6 +312,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    try{
     CheckPath(guiScript);
     CheckPath(stateRoot);
+    if(guiReadySignal!=null)guiReadySignal.Reset();
     nonce=Guid.NewGuid().ToString("N");
     string ps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
       @"WindowsPowerShell\v1.0\powershell.exe");
@@ -280,7 +323,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
     info.WorkingDirectory=sourceRoot;
     info.UseShellExecute=false;
     info.CreateNoWindow=true;
-    if(trialRoot!=null || observedMode)info.RedirectStandardError=true;
+    if(trialRoot!=null || observedMode || managedMode)info.RedirectStandardError=true;
     gui=(Process)ticketStore.CreateThen(TicketPayload(),()=>{
      if(trialRoot!=null && trialFailGuiStartOnce){
       trialFailGuiStartOnce=false;
@@ -289,7 +332,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
      return Process.Start(info);
     });
     if(gui==null)throw new InvalidOperationException("RC1_GUI_START_FAILED");
-    if(trialRoot!=null || observedMode)guiErrorTask=gui.StandardError.ReadToEndAsync();
+    if(trialRoot!=null || observedMode || managedMode)guiErrorTask=gui.StandardError.ReadToEndAsync();
     childPid=gui.Id;childBorn=gui.StartTime.ToUniversalTime().Ticks;childSession=gui.SessionId;
     guiStarts++;guiState="SPAWNING";guiAuthenticated=false;Append("gui","spawned");
    }catch(Exception startError){
@@ -310,6 +353,138 @@ public sealed class RdcOwnerRuntime : IDisposable {
     // relaunch; do NOT kill it or clear its record after an identity failure.
    }
   }
+ }
+ // Product mode: actions are available ONLY for a newly spawned process
+ // in the private kernel Job of this exact Host. Legacy Remote remains Adopted.
+ public void EnableManagedRemote(){
+  lock(gate){
+   if(disposed||trialRoot!=null||observedMode||managedMode||gui!=null)
+    throw new InvalidOperationException("RC1_MANAGED_MODE_BOUNDARY");
+   managedMode=true;remoteSupervisor.EnableManaged();
+   tray.Text="RDC Relay 1.6.0 RC1 | Host";
+   trayStatusItem.Text="Remote: готов к управляемому запуску";
+   Append("remote","managed ownership mode enabled");
+  }
+ }
+ static string ResolvePinnedNpx(){
+  string[] candidates=new string[]{
+   Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"nodejs","npx.cmd"),
+   Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"npm","npx.cmd"),
+   Path.Combine(Environment.GetEnvironmentVariable("ProgramFiles(x86)")??@"C:\Program Files (x86)","nodejs","npx.cmd")
+  };
+  foreach(string file in candidates){
+   CheckPath(file);
+   if(File.Exists(file))return file;
+  }
+  throw new FileNotFoundException("RC1_PINNED_NPX_MISSING");
+ }
+ static bool AnotherDesktopCommanderRemote(){
+  try{
+   using(var search=new ManagementObjectSearcher(
+    "SELECT CommandLine FROM Win32_Process WHERE Name='cmd.exe' OR Name='node.exe'")){
+    using(ManagementObjectCollection rows=search.Get()){
+     foreach(ManagementBaseObject row in rows){
+      string line=Convert.ToString(row["CommandLine"])??"";
+      if(line.IndexOf("desktop-commander",StringComparison.OrdinalIgnoreCase)>=0 &&
+        System.Text.RegularExpressions.Regex.IsMatch(line,@"\bremote\b",
+         System.Text.RegularExpressions.RegexOptions.IgnoreCase))return true;
+     }
+    }
+   }
+   return false;
+  }catch{throw new InvalidOperationException("RC1_EXTERNAL_REMOTE_SCAN_UNAVAILABLE");}
+ }
+ void StartManagedRemote(){
+  if(!managedMode||observedMode||exitRequested)
+   throw new InvalidOperationException("RC1_NOT_MANAGED");
+  if(managedProcess!=null && managedProcess.Running)
+   throw new InvalidOperationException("RC1_OWNED_REMOTE_ALREADY_RUNNING");
+  if(AnotherDesktopCommanderRemote())
+   throw new InvalidOperationException("RC1_EXISTING_REMOTE_ADOPTED_NO_DUPLICATE");
+  string npx=ResolvePinnedNpx();
+  var child=new RdcOwnerManagedProcess();
+  string file=Path.Combine(stateRoot,"remote-"+Guid.NewGuid().ToString("N")+".log");
+  CheckPath(file);
+  try{
+   child.Start(npx,"--yes @wonderwhy-er/desktop-commander@0.2.52 remote",sourceRoot,file);
+   if(managedProcess!=null)managedProcess.Dispose();
+   managedProcess=child;managedLogPath=file;managedLogs.Add(file);managedLogOffset=0;
+   managedLogFragment="";managedState="Connecting";managedDetail="Starting pinned Desktop Commander Remote";
+   remoteSupervisor.ManagedStatus(child.Pid,true,managedState,managedDetail);
+   Append("remote","new Host-owned Remote launched in verified private Job");
+  }catch{child.Dispose();throw;}
+ }
+ void StopManagedRemote(){
+  if(!managedMode||managedProcess==null || !managedProcess.HasStarted)
+   throw new InvalidOperationException("RC1_NO_MANAGED_REMOTE");
+  if(!managedProcess.StopOwnedOnly(10000))
+   throw new InvalidOperationException("RC1_OWNED_REMOTE_SURVIVORS");
+  managedState="Disconnected";managedDetail="Host-owned Remote stopped";
+  remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
+  Append("remote","all members of the private owned Job exited");
+ }
+ static string SafeRemoteMarker(string line,out string next){
+  next="";
+  if(line.IndexOf("Desktop Commander Remote is connected",StringComparison.OrdinalIgnoreCase)>=0||
+     line.IndexOf("Presence tracked (device ",StringComparison.OrdinalIgnoreCase)>=0){
+   next="Ready";return "Remote connected";
+  }
+  if(line.IndexOf("Authenticating with Remote MCP server",StringComparison.OrdinalIgnoreCase)>=0||
+     line.IndexOf("waiting for authentication",StringComparison.OrdinalIgnoreCase)>=0){
+   next="AuthPending";return "Authentication pending";
+  }
+  if(line.IndexOf("Channel error:",StringComparison.OrdinalIgnoreCase)>=0||
+     line.IndexOf("Device marked as offline",StringComparison.OrdinalIgnoreCase)>=0){
+   next="Fault";return "Remote channel unavailable";
+  }
+  if(line.IndexOf("Local Desktop Commander MCP went away",StringComparison.OrdinalIgnoreCase)>=0){
+   next="Reconnecting";return "Local MCP recovering";
+  }
+  if(line.IndexOf("Device startup failed:",StringComparison.OrdinalIgnoreCase)>=0){
+   next="Fault";return "Remote start failed";
+  }
+  return "";
+ }
+ void RefreshManagedRemote(){
+  if(!managedMode||managedProcess==null||!managedProcess.HasStarted)return;
+  if(!managedProcess.Running){
+   if(managedState!="Disconnected"){
+    managedState="Disconnected";managedDetail="Host-owned Remote process exited";
+    remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
+    Append("remote","owned Job no longer running");
+   }
+   return;
+  }
+  if(String.IsNullOrEmpty(managedLogPath)||!File.Exists(managedLogPath))return;
+  try{
+   CheckPath(managedLogPath);
+   using(var stream=new FileStream(managedLogPath,FileMode.Open,FileAccess.Read,
+     FileShare.ReadWrite|FileShare.Delete)){
+    if(stream.Length<managedLogOffset){managedLogOffset=0;managedLogFragment="";}
+    long count=Math.Min(32768,stream.Length-managedLogOffset);
+    if(count<=0)return;
+    stream.Seek(managedLogOffset,SeekOrigin.Begin);
+    byte[] buffer=new byte[(int)count];
+    int read=stream.Read(buffer,0,buffer.Length);
+    managedLogOffset+=read;
+    string joined=managedLogFragment+Encoding.UTF8.GetString(buffer,0,read);
+    int end=joined.LastIndexOf('\n');
+    if(end<0){managedLogFragment=joined.Length<=2048?joined:"";return;}
+    managedLogFragment=joined.Substring(end+1);
+    string[] lines=joined.Substring(0,end).Split('\n');
+    int start=Math.Max(0,lines.Length-100),emitted=0;
+    for(int i=start;i<lines.Length;i++){
+     string next;
+     string marker=SafeRemoteMarker(lines[i].TrimEnd('\r'),out next);
+     if(marker=="")continue;
+     if(emitted++<24)remoteSupervisor.AddSyntheticLogLine(marker);
+     if(next!=""){
+      managedState=next;managedDetail=marker;
+      remoteSupervisor.ManagedStatus(managedProcess.Pid,true,next,marker);
+     }
+    }
+   }
+  }catch(Exception error){Append("remote","managed journal unavailable: "+error.GetType().Name);}
  }
  // Read-only attachment to a preexisting legacy launcher. The caller must
  // validate original cmd.exe commandline/log path and OS PID/birth/session.
@@ -360,20 +535,22 @@ public sealed class RdcOwnerRuntime : IDisposable {
   var observed=remoteSupervisor.Snapshot();
   return new Dictionary<string,object>{
    {"hostPid",hostPid},{"hostGeneration",generation},{"hostTicks",hostBorn},
-   {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":"FAKE_ONLY_RC1"},{"remoteId",remoteSupervisor.SessionId},
-   {"remote",observed},{"remoteConnected",observedMode && (string)observed["state"]=="Ready"},
-   {"account",observedMode?"Existing Remote / observer only":"DEMO: disabled"},
+   {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":managedMode?"MANAGED_OWNER_RC1":"FAKE_ONLY_RC1"},{"remoteId",remoteSupervisor.SessionId},
+   {"remote",observed},{"remoteConnected",(managedMode||observedMode) && (string)observed["state"]=="Ready"},
+   {"account",observedMode?"Existing Remote / read-only":managedMode?"RC1 Host-owned Remote":"DEMO: disabled"},
    {"logTail",observed["tail"]},{"logCursor",observed["logCursor"]},
    {"logStreamEpoch",observed["logStreamEpoch"]},
    {"guiPid",childPid},{"guiState",guiState},{"guiStarts",guiStarts},
    {"guiFailures",guiFailures},{"closeGeneration",closeGeneration},{"lastEventSeq",sequence},
-   {"revision",sequence},{"remoteRevision",observed["revision"]},{"isActualRemote",observedMode},
+   {"revision",sequence},{"remoteRevision",observed["revision"]},{"isActualRemote",observedMode||managedMode},
    {"capabilities",new Dictionary<string,object>{
-     {"deviceManagementLink",observedMode},{"deviceVerificationLink",observedMode},
+     {"deviceManagementLink",observedMode||managedMode},{"deviceVerificationLink",observedMode||managedMode},
      {"sanitizedJournal",true},{"about",true},
-     {"startRemote",false},{"stopRemote",false},{"reconnectRemote",false},
-     {"switchAccount",false},{"update",false},{"fullExit",false},
-     {"reason",observedMode?"ADOPTED_REMOTE_READ_ONLY":"NO_OWNED_REMOTE"}
+     {"startRemote",managedMode && (managedProcess==null||!managedProcess.Running)},
+     {"stopRemote",managedMode && managedProcess!=null&&managedProcess.Running},
+     {"reconnectRemote",managedMode && managedProcess!=null&&managedProcess.Running},
+     {"switchAccount",false},{"update",false},{"fullExit",managedMode},
+     {"reason",observedMode?"ADOPTED_REMOTE_READ_ONLY":managedMode?"KERNEL_JOB_OWNED_ONLY":"NO_OWNED_REMOTE"}
    }}
   };
  }
@@ -407,6 +584,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
     if(RdcOwnerWire.String(request,"guiBuild")!="1.6.0 RC1")
      return Error(requestId,"INCOMPATIBLE_GUI");
     guiAuthenticated=true;guiState="CONNECTED";Append("gui","authenticated");
+    if(guiReadySignal!=null)guiReadySignal.Set();
     return Answer("WELCOME",requestId,Snapshot());
    }
    if(!guiAuthenticated)return Error(requestId,"HELLO_REQUIRED");
@@ -432,7 +610,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    if(verb=="OPEN_EXTERNAL"){
     // GUI has no authority to synthesize a destination URL. Exact harmless
     // official device pages only, with Host-side observed-mode permission.
-    if(!observedMode)return Error(requestId,"NO_ACTUAL_REMOTE_FOR_NAVIGATION");
+    if(!observedMode&&!managedMode)return Error(requestId,"NO_ACTUAL_REMOTE_FOR_NAVIGATION");
     string destination=RdcOwnerWire.String(request,"navigation");
     if(destination=="DEVICE_MANAGEMENT")return Answer("NAVIGATION",requestId,new {
      route=destination,url="https://mcp.desktopcommander.app/"});
@@ -441,14 +619,33 @@ public sealed class RdcOwnerRuntime : IDisposable {
     return Error(requestId,"NAVIGATION_NOT_ALLOWLISTED");
    }
    if(verb=="REMOTE_ACTION"){
-    // The authenticated route is reserved for future proven RC1-Owned
-    // management. An existing legacy Remote is Adopted, never authorised
-    // by name, PID or GUI presence; no side effects on this RC1 candidate.
     string action=RdcOwnerWire.String(request,"action");
     if(action!="START" && action!="STOP" && action!="RECONNECT" &&
        action!="SWITCH_ACCOUNT" && action!="UPDATE" && action!="FULL_EXIT")
      return Error(requestId,"REMOTE_ACTION_UNKNOWN");
-    return Error(requestId,observedMode?"ADOPTED_REMOTE_READ_ONLY":"REMOTE_OWNER_NOT_VERIFIED");
+    if(observedMode)return Error(requestId,"ADOPTED_REMOTE_READ_ONLY");
+    if(!managedMode)return Error(requestId,"REMOTE_OWNER_NOT_VERIFIED");
+    // Only the authenticated active GUI's explicit click, not a background
+    // snapshot or tray discovery, can authorize a managed Remote action.
+    if(RdcOwnerWire.String(request,"userConfirmed")!="YES")
+     return Error(requestId,"REMOTE_ACTION_USER_CONFIRMATION_REQUIRED");
+    if(action=="SWITCH_ACCOUNT"||action=="UPDATE")
+     return Error(requestId,"REMOTE_ACTION_NOT_SAFELY_IMPLEMENTED");
+    try{
+     if(action=="START")StartManagedRemote();
+     else if(action=="STOP")StopManagedRemote();
+     else if(action=="RECONNECT"){
+      StopManagedRemote();
+      StartManagedRemote();
+     }else if(action=="FULL_EXIT"){
+      if(managedProcess!=null&&managedProcess.Running)StopManagedRemote();
+      exitRequested=true;closeGeneration++;
+     }
+     return Answer("ACK",requestId,new {action=action,success=true});
+    }catch(Exception problem){
+     Append("remote","managed action denied: "+problem.GetType().Name);
+     return Error(requestId,"MANAGED_"+problem.GetType().Name.ToUpperInvariant());
+    }
    }
    if(verb=="DETACH"){
     guiAuthenticated=false;guiState="DETACHED";Append("gui","detached");
@@ -464,12 +661,14 @@ public sealed class RdcOwnerRuntime : IDisposable {
    disposed=true;
    pulse.Stop();pulse.Dispose();tray.Visible=false;tray.Dispose();
    if(reopenSignal!=null)reopenSignal.Dispose();
+   if(guiReadySignal!=null)guiReadySignal.Dispose();
    bool ipcClean=true,filesClean=false,guiClean=(gui==null);
    try{if(server!=null)server.Dispose();}catch{ipcClean=false;}
    if(gui!=null)gui.Dispose(); // no force kill or unverified child stop
    if(guiClean && ticketStore!=null){
-    filesClean=ticketStore.RevokeOnlyOwned() && RemoveEmptyOwnedRunRoot();
+    filesClean=RemoveOwnedManagedLogs() && ticketStore.RevokeOnlyOwned() && RemoveEmptyOwnedRunRoot();
    }
+   if(managedProcess!=null)managedProcess.Dispose();
    try{singleton.ReleaseMutex();}catch{}
    singleton.Dispose();
    if(trialRoot!=null){

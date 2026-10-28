@@ -18,11 +18,20 @@ internal static class RdcRc1CandidateLauncher {
    return false; // No live same-release Host advertises GUI activation.
   }
  }
+ static bool WaitForGuiReady(string eventName,int timeout){
+  try{
+   using(EventWaitHandle ready=EventWaitHandle.OpenExisting(eventName))
+    return ready.WaitOne(timeout);
+  }catch(WaitHandleCannotBeOpenedException){return false;}
+ }
  static string GuiEventName(string source) {
   string normalized=Path.GetFullPath(source).TrimEnd(Path.DirectorySeparatorChar).ToLowerInvariant();
   byte[] key=new System.Security.Cryptography.SHA256Managed().ComputeHash(
     Encoding.UTF8.GetBytes(normalized));
   return @"Local\RdcRelayRC1Open-"+BitConverter.ToString(key).Replace("-","").Substring(0,32);
+ }
+ static string GuiReadyEventName(string source){
+  return GuiEventName(source).Replace("RdcRelayRC1Open-","RdcRelayRC1GuiReady-");
  }
  static int Main(string[] args) {
 #if RDC_RC1_BLOCKED
@@ -30,8 +39,8 @@ internal static class RdcRc1CandidateLauncher {
   return 42;
 #else
   try{
-   if(args.Length!=1 || args[0]!="--observe-existing")
-     throw new InvalidOperationException("RC1_OBSERVER_MODE_EXPLICIT_REQUIRED");
+   if(args.Length!=1 || args[0]!="--full")
+     throw new InvalidOperationException("RC1_FULL_MODE_EXPLICIT_REQUIRED");
    string root=Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
    string source=Path.Combine(root,"Source");
    string marker=Path.Combine(source,"rc1-candidate.json");
@@ -43,26 +52,28 @@ internal static class RdcRc1CandidateLauncher {
       !Convert.ToBoolean(values["liveRemoteEnabled"]) ||
       Convert.ToBoolean(values["publishable"]) ||
       Convert.ToBoolean(values["autoUpdateEnabled"]) ||
-      (string)values["observerMode"]!="OBSERVED_READ_ONLY_RC1")
-     throw new InvalidOperationException("RC1_NOT_VERIFIED_READ_ONLY_OBSERVER");
+      (string)values["ownerMode"]!="FULL_HOST_GUI_RC1")
+     throw new InvalidOperationException("RC1_NOT_VERIFIED_FULL_CANDIDATE");
    foreach(string name in new []{"rc1-tray-host.ps1","rc1-owner-gui.ps1",
        "rc1-remote-observer.ps1","remote-window.ps1",
        "RdcOwnerRuntime.cs","RdcOwnerWire.cs","RdcOwnerTicketStore.cs",
-       "RdcOwnerRemoteState.cs","RdcOwnerProcess.cs"}) {
+       "RdcOwnerRemoteState.cs","RdcOwnerProcess.cs","RdcOwnerManagedProcess.cs"}) {
     string file=Path.Combine(source,name);
     if(!File.Exists(file)||(File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0)
      throw new InvalidOperationException("RC1_MISSING_OR_LINKED_SOURCE:"+name);
    }
-   string guiEvent=GuiEventName(source);
+   string guiEvent=GuiEventName(source),readyEvent=GuiReadyEventName(source);
    if(SignalExistingGui(guiEvent)){
-    Console.WriteLine("RC1_EXISTING_HOST_GUI_REOPEN_REQUESTED");
+    if(!WaitForGuiReady(readyEvent,10000))
+     throw new InvalidOperationException("RC1_EXISTING_HOST_GUI_NOT_READY");
+    Console.WriteLine("RC1_EXISTING_HOST_GUI_READY");
     return 0;
    }
    string ps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
      @"WindowsPowerShell\v1.0\powershell.exe");
    var psi=new ProcessStartInfo(ps,
      "-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File \""+
-     Path.Combine(source,"rc1-tray-host.ps1")+"\" -ObserveExisting");
+     Path.Combine(source,"rc1-tray-host.ps1")+"\" -Full");
    psi.UseShellExecute=false;
    psi.CreateNoWindow=true;
    psi.WorkingDirectory=source;
@@ -71,10 +82,10 @@ internal static class RdcRc1CandidateLauncher {
     // Never report success merely because PowerShell accepted a new process.
     // A dying Host (singleton conflict / compile error) must fail visibly.
     var clock=Stopwatch.StartNew();
-    while(clock.ElapsedMilliseconds<8000){
+    while(clock.ElapsedMilliseconds<12000){
      if(child.HasExited)throw new InvalidOperationException("RC1_HOST_EARLY_EXIT_"+child.ExitCode);
-     if(SignalExistingGui(guiEvent)){
-      Console.WriteLine("RC1_HOST_STARTED_GUI_ACTIVATION_REQUESTED");
+     if(SignalExistingGui(guiEvent) && WaitForGuiReady(readyEvent,250)){
+      Console.WriteLine("RC1_HOST_STARTED_AUTHENTICATED_GUI_READY");
       return 0;
      }
      Thread.Sleep(250);

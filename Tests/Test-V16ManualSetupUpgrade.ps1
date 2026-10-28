@@ -82,8 +82,9 @@ try {
  Check ($backup.Count -eq 1 -and
   $ws.CreateShortcut($backup[0].FullName).TargetPath -ieq $short.TargetPath) 'MANUAL old shortcut recoverably backed up'
  Check (([string]$activate.Invoke($null,$b)) -ceq 'ALREADY_ACTIVE') 'MANUAL repeated shortcut switch idempotent'
- # A later RC1 may still have a running old source-root Host.
- # Stage the payload, but never switch its shortcut without Host handoff.
+ # A later RC1 may have a live Host. Exact old Host mutex locks out
+ # shortcut replacement until the earlier Host has fully exited.
+ # All checks run against a disposable fake release; no real Host involved.
  $nextPackage=Join-Path $root 'next-package'
  [void][IO.Directory]::CreateDirectory($nextPackage)
  foreach($name in $required){
@@ -96,11 +97,23 @@ try {
  $a[0]=[string]$nextPackage
  $nextRelease=[string]$prepare.Invoke($null,$a)
  $b[0]=[string]$nextRelease
- $denied=$false;try{[void]$activate.Invoke($null,$b)}catch{$denied=$true}
- Check ($denied -and $nextRelease -cne $release -and
-  $ws.CreateShortcut($shortcutFile).TargetPath -ieq (Join-Path $release 'RC1 Pilot Launcher.exe') -and
-  [IO.Directory]::Exists($nextRelease) -and
-  @(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($release)) -Filter 'primary-shortcut-backup-*.lnk' -File).Count -eq 1) 'MANUAL different RC1 denied until Host handoff'
+ $mutexMethod=$type.GetMethod('OldHostMutexName',$flags)
+ if(-not $mutexMethod){throw 'MANUAL_OLD_HOST_MUTEX_METHOD_MISSING'}
+ $oldHostMutex=[string]$mutexMethod.Invoke($null,[object[]]@($release))
+ $created=$false
+ $held=[System.Threading.Mutex]::new($true,$oldHostMutex,[ref]$created)
+ if(-not $created){throw 'MANUAL_DISPOSABLE_HOST_MUTEX_ALREADY_TAKEN'}
+ try{
+  $denied=$false;try{[void]$activate.Invoke($null,$b)}catch{$denied=$true}
+  Check ($denied -and $nextRelease -cne $release -and
+   $ws.CreateShortcut($shortcutFile).TargetPath -ieq (Join-Path $release 'RC1 Pilot Launcher.exe') -and
+   [IO.Directory]::Exists($nextRelease) -and
+   @(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($release)) -Filter 'primary-shortcut-backup-*.lnk' -File).Count -eq 1) 'MANUAL live old Host mutex denies RC1 replacement without touching old files'
+ }finally{$held.ReleaseMutex();$held.Dispose()}
+ $switch=[string]$activate.Invoke($null,$b)
+ Check ($switch -ceq 'SWITCHED_RC1' -and
+  $ws.CreateShortcut($shortcutFile).TargetPath -ieq (Join-Path $nextRelease 'RC1 Pilot Launcher.exe') -and
+  @(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($release)) -Filter 'primary-shortcut-backup-*.lnk' -File).Count -eq 2) 'MANUAL exited old Host permits RC1 to RC1 shortcut handoff with backup'
  $badDesktop=Join-Path $root 'unrelated-desktop'
  [void][IO.Directory]::CreateDirectory($badDesktop)
  $bad=Join-Path $badDesktop 'RDC Relay.lnk'

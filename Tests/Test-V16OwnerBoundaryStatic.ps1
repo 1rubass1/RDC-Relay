@@ -21,10 +21,10 @@ try{
   Check $ok ('guarded original action '+$name)
  }
  $owner=Get-Content -LiteralPath (Join-Path $src 'rc1-owner-gui.ps1') -Raw -Encoding UTF8
- Check ($owner.Contains('$finish.Enabled=$false') -and
+ Check ($owner.Contains('$finish.Enabled=$script:ownerManagedMode') -and
    $owner.Contains('$accountButton.Enabled=$true') -and
    $owner.Contains('$switchAccountItem.Enabled=$false') -and
-   $owner.Contains('$reconnectItem.Enabled=$false')) 'Adopted Remote mutating controls denied; safe account menu accessible'
+   $owner.Contains('$reconnectItem.Enabled=$false')) 'Adopted remains blocked; Managed mode gets Host-authorized actions'
  Check ($owner.Contains('$remoteSnapshot=$snapshot.remote') -and $owner.Contains('RC1_REMOTE_MODE_MISMATCH') -and
         $owner.Contains('$remoteSnapshot.logStreamEpoch') -and $owner.Contains('$remoteSnapshot.logCursor') -and
         $owner.Contains('Add-CompletedEvent') -and $owner.Contains('Reset-CompactLogSession')) 'GUI rehydrates bounded Host snapshot in exact observer/fake mode'
@@ -45,10 +45,10 @@ try{
  $launcher=Get-Content -LiteralPath (Join-Path $root 'Installer\Rc1CandidateLauncher.cs') -Raw -Encoding UTF8
  Check ($setup.Contains('#if RDC_RC1_BLOCKED') -and $setup.Contains('return 42;') -and $setup.Contains('RDC_RC1_OWNER_G1_GO')) 'isolated candidate Setup gated before install'
  Check ($launcher.Contains('#if RDC_RC1_BLOCKED') -and $launcher.Contains('return 42;') -and
-        $launcher.Contains('--observe-existing') -and $launcher.Contains('RC1_NOT_VERIFIED_READ_ONLY_OBSERVER')) 'private Launcher gated by exact read-only marker and explicit option'
+        $launcher.Contains('--full') -and $launcher.Contains('RC1_NOT_VERIFIED_FULL_CANDIDATE')) 'full Launcher gated by exact installable marker and explicit option'
  Check ($setup.Contains('RDCRelayOwnerPilot') -and $setup.Contains('RC1_TARGET_EXISTS') -and $setup.Contains('RC1_COPY_HASH_FAIL')) 'side-by-side target denies overwrite and verifies copied bytes'
  Check ($launcher.Contains('liveRemoteEnabled') -and $launcher.Contains('rc1-tray-host.ps1') -and
-        $launcher.Contains('-ObserveExisting') -and -not $launcher.Contains(' -FakeOnly')) 'private launcher observes existing Remote without starting it'
+        $launcher.Contains('-Full') -and -not $launcher.Contains(' -FakeOnly')) 'full launcher chooses Managed or Adopted without duplicate Remote'
 }catch{$fail++;Write-Output ('FAIL unexpected '+$_.Exception.Message)}
 Write-Output ('RC1_OWNER_BOUNDARY_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}

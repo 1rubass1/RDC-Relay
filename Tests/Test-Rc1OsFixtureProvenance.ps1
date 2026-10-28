@@ -83,12 +83,12 @@ try{
    Check (Refuses {Remove-Rc1AttestedFixture $id -InjectFailureAfterDeleted 7}) 'G7-R2 deliberate interruption after 7th own file fails nonzero'
    $partial=Get-Rc1CleanupProgress (Read-Rc1Attestation $id)
    Check ($partial.Completed -eq 6 -and $partial.Pending -eq 6 -and
-    [IO.Directory]::GetFiles($src).Length -eq 9) 'G7-R2 7 deleted files are exactly journalled, 9 original remain'
+    [IO.Directory]::GetFiles($src).Length -eq ($Rc1OsNames.Count-7)) 'G7-R2 7 deleted files are exactly journalled; remaining matches fixture manifest'
    $intent=Join-Path $p.Proof 'intent-07.json'
    $originalIntent=[IO.File]::ReadAllBytes($intent)
    [IO.File]::WriteAllBytes($intent,[Text.Encoding]::UTF8.GetBytes('{"fake":"journal"}'))
    Check (Refuses {Remove-Rc1AttestedFixture $id -ValidateOnly}) 'G7-R2 interrupted journal tampering denies resume'
-   Check ([IO.Directory]::GetFiles($src).Length -eq 9) 'G7-R2 journal tamper refuses all further deletion'
+   Check ([IO.Directory]::GetFiles($src).Length -eq ($Rc1OsNames.Count-7)) 'G7-R2 journal tamper refuses all further deletion'
    [IO.File]::WriteAllBytes($intent,$originalIntent)
    Check (-not (Refuses {Remove-Rc1AttestedFixture $id -ValidateOnly})) 'G7-R2 read-only validation accepts exact interrupted own journal'
    $resumed= -not (Refuses {Remove-Rc1AttestedFixture $id})
