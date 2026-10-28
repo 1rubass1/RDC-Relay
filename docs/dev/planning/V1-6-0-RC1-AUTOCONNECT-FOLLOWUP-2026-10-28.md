@@ -39,6 +39,44 @@ Code root causes:
 
 Desktop cleanup requested by owner: four earlier root installers/archives (previous Full Setup/Portable, Observer-TEST Setup and stable v1.5.18 rollback installer) moved without deletion to `Desktop\RemoteDesktopCommander\Old_Installers_2026-10-28`; the initial pre-notice AutoConnect candidate was also archived there. Only the two newest unambiguous AutoConnect distributables remain on desktop. Installed v1.5.18 and its live genuine Remote remained untouched.
 
+## G8B — Owner's real Setup warned that automatic GUI launch failed
+
+The owner installed the FULL AutoConnect Setup and received the actual warning
+`Новые файлы и основной ярлык подготовлены, но автоматический запуск не удался`.
+He observed a tray icon but no window, and tray reopen did not restore it.
+This warning is generated only after candidate file/shortcut publication and
+a nonzero/timeout result from the immediate Launcher. It does not reveal the
+original Host exception. When independently inspected, the Desktop shortcut
+again selected stable 1.5.18, which was already running.
+
+The historical failure was **not reproduced** on the subsequently running
+legacy Remote. Relevant bounded startup deadlines were only **12 seconds in
+the Launcher and 18 seconds in Setup**, potentially classifying slow cold
+PowerShell/WinForms initialization as failed. Corrected to **45/55 seconds**
+while monitoring early Host exit. The Launcher returns only allowlisted
+`RC1_*` exception codes; Setup redirects its two streams asynchronously and
+shows the sanitized code in the warning instead of an uninformative generic
+dialog. Arbitrary exception messages/paths are not sent to UI.
+
+| Test / artifact | Confirmed result |
+| --- | --- |
+| Current installed RC1 direct `-Full` observer Host with stable external Remote | **PASS** — Host PID31052; GUI PID18884 / HWND330152; live Remote PID38372 unchanged |
+| GUI X, installed Launcher reactivation, replacement GUI | **PASS** — old GUI gone, same Host retained, Launcher exit0, new GUI PID39712; 2 snapshot/event clients |
+| Exactly scoped diagnostic Host/GUI cooperative cleanup | **PASS** — Host exit0, both owned run directories removed, stable GUI PID33944 / Remote PID38372 still alive |
+| Rebuilt FULL candidate cold Launcher directly from staged executable, **without installation** | **PASS** — Launcher exit0, Host PID36068, GUI PID29220 with HWND; own Host/GUI then exited safely |
+| Embedded Setup+Launcher static/negative checks | **15 PASS / 0 FAIL / exit0** |
+| All isolated regression suites | **21 PASS / 0 FAIL / exit0** |
+| Setup and Portable compilation, private payload hash/package check | **PASS / builder exit0**, 20 manifest entries |
+| Owner's original automatic Setup launch with no old Remote | **NOT REPRODUCED / NOT CHECKED** for new candidate |
+| Real new Job-owned Remote auto-start, connection and daily usage | **NOT CHECKED** without ending old session |
+
+Candidate (not installed):
+- Desktop `RDC-Relay-1.6.0-RC1-Full-LaunchFix-Setup.exe` and `RDC-Relay-1.6.0-RC1-Full-LaunchFix-Portable.zip` — exact post-copy SHA verified.
+- Superseded AutoConnect files moved without deletion to `Desktop/RemoteDesktopCommander/Old_Installers_2026-10-28/Superseded_AutoConnect_G8B_2026-10-28`, original hashes verified and older archive contents preserved.
+- Setup SHA256 `607B121451BFAAF777A980B99651A625D234E2FAF882275B5896CBC1BE493085`.
+- Portable SHA256 `5296AD663E6DB17644B0BA9C333A006C963DE79290AE8CDD200002256177434D`.
+- Existing 1.5.18 binaries and live Remote remained untouched; Draft PR #23, no merge or stable publication.
+
 ## Next owner live trial (not executed)
 
 1. When ready to tolerate a brief Remote connection interruption, back up the running work and complete a **normal owner-controlled shutdown** of the old 1.5.18 shell and its Remote. Never use taskkill by name or force-stop unknown processes. If old GUI remains running, the RC1 Host must continue to refuse spawning a duplicate.

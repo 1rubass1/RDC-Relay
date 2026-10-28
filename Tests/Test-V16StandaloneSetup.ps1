@@ -16,7 +16,7 @@ try{
  $asm=[Reflection.Assembly]::Load([IO.File]::ReadAllBytes($download))
  $type=$asm.GetType('RdcRc1CandidateSetup',$true)
  $flags=[Reflection.BindingFlags]'Static,NonPublic'
- Check ($null -ne $type.GetMethod('StartPrivateObserver',$flags)) 'EXE reviewed first-install GUI launch route compiled'
+ Check ($null -ne $type.GetMethod('StartPrivateFull',$flags)) 'EXE reviewed first-install full Host/GUI launch route compiled'
  $list=[string[]]$type.GetField('Required',$flags).GetValue($null)
  $items=@($list)+@('owner-source-manifest.json')
  $found=@($asm.GetManifestResourceNames())
@@ -46,7 +46,17 @@ try{
  $launcherType=$launcherAssembly.GetType('RdcRc1CandidateLauncher',$true)
  $activate=$launcherType.GetMethod('SignalExistingGui',$flags)
  $eventNameMethod=$launcherType.GetMethod('GuiEventName',$flags)
+ $safeFailure=$launcherType.GetMethod('SafeFailureCode',$flags)
  Check ($null -ne $activate -and $null -ne $eventNameMethod) 'EXE launcher contains guarded same-release GUI activation route'
+ Check ($null -ne $safeFailure) 'EXE launcher exposes bounded sanitized launch error code'
+ if($safeFailure){
+  $ownError=[InvalidOperationException]::new('RC1_HOST_NO_GUI_ACTIVATION_ENDPOINT')
+  $otherError=[InvalidOperationException]::new('C:\\private\\untrusted path')
+  Check ([string]$safeFailure.Invoke($null,[object[]]@($ownError)) -ceq
+   'RC1_HOST_NO_GUI_ACTIVATION_ENDPOINT') 'EXE launcher preserves safe RC1 failure reason'
+  Check ([string]$safeFailure.Invoke($null,[object[]]@($otherError)) -ceq
+   'InvalidOperationException') 'EXE launcher redacts arbitrary exception detail'
+ }
  if($activate -and $eventNameMethod){
   $sourceForName=[string](Join-Path $extracted 'Source')
   $derived=[string]$eventNameMethod.Invoke($null,[object[]]@($sourceForName))

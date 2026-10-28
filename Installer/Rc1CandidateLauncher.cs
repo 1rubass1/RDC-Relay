@@ -33,6 +33,12 @@ internal static class RdcRc1CandidateLauncher {
  static string GuiReadyEventName(string source){
   return GuiEventName(source).Replace("RdcRelayRC1Open-","RdcRelayRC1GuiReady-");
  }
+ static string SafeFailureCode(Exception error) {
+  string code=error.Message??"";
+  if(System.Text.RegularExpressions.Regex.IsMatch(code,@"^RC1_[A-Z0-9_]{3,100}$"))
+   return code;
+  return error.GetType().Name;
+ }
  static int Main(string[] args) {
 #if RDC_RC1_BLOCKED
   Console.Error.WriteLine("RC1_OWNER_LAUNCHER_BLOCKED_PENDING_OWNER_GO");
@@ -82,7 +88,9 @@ internal static class RdcRc1CandidateLauncher {
     // Never report success merely because PowerShell accepted a new process.
     // A dying Host (singleton conflict / compile error) must fail visibly.
     var clock=Stopwatch.StartNew();
-    while(clock.ElapsedMilliseconds<12000){
+    // A first cold PowerShell/WinForms compilation may take longer than a
+    // subsequent tray reopen. Keep the check bounded and monitor Host death.
+    while(clock.ElapsedMilliseconds<45000){
      if(child.HasExited)throw new InvalidOperationException("RC1_HOST_EARLY_EXIT_"+child.ExitCode);
      if(SignalExistingGui(guiEvent) && WaitForGuiReady(readyEvent,250)){
       Console.WriteLine("RC1_HOST_STARTED_AUTHENTICATED_GUI_READY");
@@ -93,7 +101,7 @@ internal static class RdcRc1CandidateLauncher {
     throw new InvalidOperationException("RC1_HOST_NO_GUI_ACTIVATION_ENDPOINT");
    }
   }catch(Exception e){
-   Console.Error.WriteLine("RC1_OWNER_LAUNCH_REFUSED:"+e.GetType().Name);
+   Console.Error.WriteLine("RC1_OWNER_LAUNCH_REFUSED:"+SafeFailureCode(e));
    return 42;
   }
 #endif

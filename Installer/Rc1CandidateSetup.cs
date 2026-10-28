@@ -134,11 +134,24 @@ internal static class RdcRc1CandidateSetup {
   var start=new ProcessStartInfo(launcher,"--full");
   start.UseShellExecute=false;
   start.CreateNoWindow=true;
+  start.RedirectStandardError=true;
+  start.RedirectStandardOutput=true;
   start.WorkingDirectory=release;
   using(Process child=Process.Start(start)){
    if(child==null)throw new InvalidOperationException("RC1_AUTOLAUNCH_START_REFUSED");
-   if(!child.WaitForExit(18000))throw new InvalidOperationException("RC1_AUTOLAUNCH_TIMEOUT");
-   if(child.ExitCode!=0)throw new InvalidOperationException("RC1_AUTOLAUNCH_LAUNCHER_FAILED");
+   // Read both streams asynchronously: a child cannot deadlock the Setup
+   // on a full redirected pipe while the bounded startup check is active.
+   var errors=child.StandardError.ReadToEndAsync();
+   var output=child.StandardOutput.ReadToEndAsync();
+   if(!child.WaitForExit(55000))throw new InvalidOperationException("RC1_AUTOLAUNCH_TIMEOUT");
+   if(child.ExitCode!=0){
+    string detail=errors.IsCompleted?errors.GetAwaiter().GetResult():"";
+    var match=System.Text.RegularExpressions.Regex.Match(detail,
+     @"RC1_OWNER_LAUNCH_REFUSED:(RC1_[A-Z0-9_]{3,100})");
+    throw new InvalidOperationException(match.Success?
+     match.Groups[1].Value:"RC1_AUTOLAUNCH_LAUNCHER_EXIT_"+child.ExitCode);
+   }
+   // The launcher exit code is authoritative. Its stdout is diagnostic only.
   }
  }
  static int Main(string[] args){
@@ -191,19 +204,24 @@ internal static class RdcRc1CandidateSetup {
     // Launch is safe for a fully stopped predecessor as well as stable->RC1.
     bool autoOpen=result=="CREATED"||result=="SWITCHED_STABLE"||result=="SWITCHED_RC1"||result=="ALREADY_ACTIVE";
     bool launchFailed=false;
+    string launchCode="";
     if(autoOpen){
      try{
       StartPrivateFull(release);
       Console.WriteLine("RC1_AUTOLAUNCH_LAUNCHER_EXIT_ZERO");
      }catch(Exception launchError){
       launchFailed=true;
-      Console.Error.WriteLine("RC1_AUTOLAUNCH_FAILED:"+launchError.GetType().Name);
+      string detail=launchError.Message??"";
+      launchCode=System.Text.RegularExpressions.Regex.IsMatch(detail,@"^RC1_[A-Z0-9_]{3,100}$")?
+       detail:launchError.GetType().Name;
+      Console.Error.WriteLine("RC1_AUTOLAUNCH_FAILED:"+launchCode);
      }
     }else Console.WriteLine("RC1_AUTOLAUNCH_DEFERRED_OLD_RC1_HOST_UNKNOWN");
     if(args.Length==0){
      string notice=launchFailed?
       "Новые файлы и основной ярлык подготовлены, но автоматический запуск не удался."+
-      Environment.NewLine+"Попробуйте ярлык RDC Relay. Если окно не появится, сообщите об ошибке.":
+      Environment.NewLine+"Код ошибки: "+launchCode+
+      Environment.NewLine+"Попробуйте ярлык RDC Relay. Если окно не появится, сообщите код ошибки.":
       (autoOpen?
        "Новая оболочка RDC Relay 1.6.0 RC1 запускается. Если окно не появилось, используйте основной ярлык.":
        "Новая RC1 подготовлена. Автоматический запуск отложен: прежний RC1 Host может ещё работать."+
