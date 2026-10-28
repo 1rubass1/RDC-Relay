@@ -19,6 +19,7 @@ try{
  $hostScript=Get-Content -LiteralPath (Join-Path $src 'rc1-tray-host.ps1') -Raw -Encoding UTF8
  $runtime=Get-Content -LiteralPath (Join-Path $src 'RdcOwnerRuntime.cs') -Raw -Encoding UTF8
  $wire=Get-Content -LiteralPath (Join-Path $src 'RdcOwnerWire.cs') -Raw -Encoding UTF8
+ $observer=Get-Content -LiteralPath (Join-Path $src 'rc1-remote-observer.ps1') -Raw -Encoding UTF8
  Check ($gui.Contains('if ($OwnerGui) {') -and $gui.Contains("Start-RdcOwnerGui") -and
         $gui.Contains('$Preview=$true')) 'owner GUI reuses original complete WinForms source and suppresses legacy startup'
  Check ($gui.Contains('if (-not $SelfTest -and -not $OwnerGui)') -and
@@ -29,6 +30,18 @@ try{
         $owner.Contains('$reconnectItem.Enabled=$false')) 'X exits GUI; Adopted read-only and Managed capabilities separated'
  Check ($runtime.Contains('NotifyIcon') -and $runtime.Contains('StartGui') -eq $false -and
         $runtime.Contains('public void OpenGui()')) 'persistent tray owns separate GUI process creation'
+ Check ($hostScript.Contains('[void]$owner.TryAutoStartManagedRemote()') -and
+        $runtime.Contains('public bool TryAutoStartManagedRemote()') -and
+        $runtime.Contains('AnotherDesktopCommanderRemote()') -and
+        $runtime.Contains('AnotherLegacyShell()')) 'full Host autostart requires absence of legacy GUI and external Remote'
+ Check ($observer.Contains('MissingSinceTicks') -and
+        $observer.Contains('FromSeconds(5)') -and
+        $observer.Contains('CanPromoteObservedRemote') -and
+        $runtime.Contains('PromoteObservedRemoteToManaged()') -and
+        $runtime.Contains('reopenAfterModeChange')) 'lost Adopted identity needs five-second external absence before managed GUI handoff'
+ Check ($runtime.Contains('remoteSupervisor.PromoteObservedToManaged()') -and
+        $runtime.Contains('closeGeneration++; // old read-only GUI') -and
+        $hostScript.Contains('if($observer.HandoffComplete)')) 'handoff rotates GUI generation before first Host-owned Remote autostart'
  Check ($runtime.Contains('gui.MainWindowHandle') -and
         -not [regex]::IsMatch($runtime,'(?m)^\s*(?:Stop-Process|taskkill|gui\.Kill\()')) 'GUI duplicate path has no HWND forced termination'
  $observer=Get-Content -LiteralPath (Join-Path $src 'rc1-remote-observer.ps1') -Raw -Encoding UTF8

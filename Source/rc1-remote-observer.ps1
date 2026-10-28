@@ -39,7 +39,8 @@ function Get-Rc1ObservedRemoteIdentity{
   Pid=[int]$record.ProcessId;Born=[long]$proc.StartTime.ToUniversalTime().Ticks;
   Session=[int]$proc.SessionId;Parent=[int]$record.ParentProcessId;
   Log=$log;Exe=$expectedExe;Offset=[long]0;DiscardFirst=$false;
-  Fragment='';State='Connecting';Detail='Existing pinned Remote; channel not yet confirmed'
+  Fragment='';State='Connecting';Detail='Existing pinned Remote; channel not yet confirmed';
+  MissingSinceTicks=[long]0;HandoffComplete=$false
  }
 }
 function Test-Rc1ObservedRemoteIdentity([hashtable]$ob){
@@ -161,12 +162,23 @@ function Invoke-Rc1RemoteObserverPoll([object]$owner,[hashtable]$ob){
    $owner.RetargetObservedRemote([int]$replacement.Pid)
    foreach($key in @('Pid','Born','Session','Parent','Log','Exe')){$ob[$key]=$replacement[$key]}
    $ob.Offset=([IO.FileInfo]$ob.Log).Length
-   $ob.Fragment='';$ob.DiscardFirst=$false
+   $ob.Fragment='';$ob.DiscardFirst=$false;$ob.MissingSinceTicks=[long]0
    $ob.State=[string]$history.State;$ob.Detail=[string]$history.Detail
    $owner.ObservedMarker('Remote launcher replaced')
    $owner.UpdateObservedRemote($true,$ob.State,$ob.Detail)
   }catch{
-   $owner.UpdateObservedRemote($false,'Disconnected','Existing Remote identity lost; observing without control')
+   $owner.UpdateObservedRemote($false,'Disconnected',
+    'Previous Remote stopped or replaced; waiting for verified safe handoff')
+   # Never treat a vanished PID alone as proof of permission to start a
+   # second Remote. Both the old shell AND all external Remote launchers
+   # must be absent continuously, including a fresh PID after restart.
+   if($owner.CanPromoteObservedRemote()){
+    $now=[DateTime]::UtcNow.Ticks
+    if([long]$ob.MissingSinceTicks -le 0){$ob.MissingSinceTicks=$now}
+    elseif($now-[long]$ob.MissingSinceTicks -ge [TimeSpan]::FromSeconds(5).Ticks){
+     if($owner.PromoteObservedRemoteToManaged()){$ob.HandoffComplete=$true}
+    }
+   }else{$ob.MissingSinceTicks=[long]0}
   }
   return
  }

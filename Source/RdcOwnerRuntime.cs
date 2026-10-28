@@ -1,7 +1,7 @@
 // RDC Relay 1.6.0 RC1 branch-only product Tray Host.
-// Executes ONLY with an explicit fake-only boot gate. It never launches or
-// adopts Desktop Commander Remote and never calls taskkill or Stop-Process.
-// The actual existing remote-window.ps1 supplies the separate GUI renderer.
+// Host can observe existing Remote read-only or start a NEW managed Remote
+// inside its own kernel Job. Never adopts stop rights for preexisting Remote.
+// The complete original remote-window.ps1 is the replaceable GUI renderer.
 using System;
 using System.IO;
 using System.Collections.Generic;
@@ -24,7 +24,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
  bool trialFailGuiStartOnce=false;
  int trialReopensRemaining=0;
  readonly RdcOwnerRemoteState remoteSupervisor=new RdcOwnerRemoteState();
- bool observedMode=false,managedMode=false;
+ bool observedMode=false,managedMode=false,reopenAfterModeChange=false,autoStartPending=false;
+ DateTime nextAutoStartUtc=DateTime.MinValue;
  RdcOwnerManagedProcess managedProcess=null;
  readonly List<string> managedLogs=new List<string>();
  string managedLogPath="",managedLogFragment="",managedState="Disconnected",managedDetail="";
@@ -167,7 +168,13 @@ public sealed class RdcOwnerRuntime : IDisposable {
    pulse.Tick+=(s,e)=>{
     lock(gate){
      RefreshGui();
-     if(managedMode)RefreshManagedRemote();
+     if(reopenAfterModeChange && gui==null && guiState=="NONE" && !exitRequested){
+      reopenAfterModeChange=false;OpenGui();
+     }
+     if(managedMode){
+      RefreshManagedRemote();
+      if(autoStartPending && DateTime.UtcNow>=nextAutoStartUtc)TryAutoStartManagedRemote();
+     }
      if(reopenSignal!=null && reopenSignal.WaitOne(0) && !exitRequested){
       Append("host","verified local GUI activation requested");
       OpenGui();
@@ -361,9 +368,61 @@ public sealed class RdcOwnerRuntime : IDisposable {
    if(disposed||trialRoot!=null||observedMode||managedMode||gui!=null)
     throw new InvalidOperationException("RC1_MANAGED_MODE_BOUNDARY");
    managedMode=true;remoteSupervisor.EnableManaged();
+   autoStartPending=true;nextAutoStartUtc=DateTime.MinValue;
    tray.Text="RDC Relay 1.6.0 RC1 | Host";
    trayStatusItem.Text="Remote: готов к управляемому запуску";
    Append("remote","managed ownership mode enabled");
+  }
+ }
+ // Automatic launch is one-shot at full Host boot or after a verified
+ // transition away from an EXTERNAL Remote; failure preserves the GUI.
+ public bool TryAutoStartManagedRemote(){
+  lock(gate){
+   if(disposed||exitRequested||observedMode||!managedMode)return false;
+   if(managedProcess!=null&&managedProcess.Running){autoStartPending=false;return true;}
+   try{StartManagedRemote();autoStartPending=false;return true;}
+   catch(Exception problem){
+    string code=problem.Message??"";
+    bool external=(code=="RC1_EXISTING_REMOTE_ADOPTED_NO_DUPLICATE"||
+      code=="RC1_LEGACY_GUI_STILL_ACTIVE"||code=="RC1_EXTERNAL_REMOTE_SCAN_UNAVAILABLE"||
+      code=="RC1_LEGACY_SHELL_SCAN_UNAVAILABLE");
+    // Only a verified external blocker may be retried after a bounded delay.
+    // A genuine launch failure remains visible until an explicit user retry.
+    autoStartPending=external;
+    nextAutoStartUtc=DateTime.UtcNow.AddSeconds(5);
+    string reason=external?
+     "Waiting for the previous Remote and shell to exit; no duplicate launched":
+     "Remote startup failed; inspect Host status and retry manually";
+    remoteSupervisor.ManagedStatus(0,false,external?"Disconnected":"Fault",reason);
+    Append("remote","automatic start refused: "+problem.GetType().Name);
+    return false;
+   }
+  }
+ }
+ // A missing observer PID is insufficient for promotion. Check BOTH any
+ // genuine Remote launcher AND any other original GUI: either could restart
+ // Remote. Unknown WMI state is fail-closed and keeps Adopted read-only.
+ public bool CanPromoteObservedRemote(){
+  lock(gate){
+   if(disposed||!observedMode||managedMode||trialRoot!=null||exitRequested)return false;
+   try{return !AnotherDesktopCommanderRemote()&&!AnotherLegacyShell();}
+   catch{return false;}
+  }
+ }
+ public bool PromoteObservedRemoteToManaged(){
+  lock(gate){
+   if(!CanPromoteObservedRemote())return false;
+   // Recheck immediately before changing modes; never import old PID.
+   if(AnotherDesktopCommanderRemote()||AnotherLegacyShell())return false;
+   remoteSupervisor.PromoteObservedToManaged();
+   observedMode=false;managedMode=true;reopenAfterModeChange=true;
+   autoStartPending=true;nextAutoStartUtc=DateTime.MinValue;
+   closeGeneration++; // old read-only GUI must exit before new ticket/GUI
+   tray.Text="RDC Relay 1.6.0 RC1 | Host";
+   trayStatusItem.Text="Remote: переход к управляемому запуску";
+   trayExitItem.Text="Завершить RDC Relay…";
+   Append("remote","verified external Remote and GUI gone; new Job-only session permitted");
+   return true;
   }
  }
  static string ResolvePinnedNpx(){
@@ -377,6 +436,21 @@ public sealed class RdcOwnerRuntime : IDisposable {
    if(File.Exists(file))return file;
   }
   throw new FileNotFoundException("RC1_PINNED_NPX_MISSING");
+ }
+ bool AnotherLegacyShell(){
+  try{
+   using(var search=new ManagementObjectSearcher(
+    "SELECT CommandLine FROM Win32_Process WHERE Name='powershell.exe' OR Name='pwsh.exe'")){
+    using(ManagementObjectCollection rows=search.Get()){
+     foreach(ManagementBaseObject row in rows){
+      string line=Convert.ToString(row["CommandLine"])??"";
+      if(line.IndexOf("remote-window.ps1",StringComparison.OrdinalIgnoreCase)>=0 &&
+         line.IndexOf(guiScript,StringComparison.OrdinalIgnoreCase)<0)return true;
+     }
+    }
+   }
+   return false;
+  }catch{throw new InvalidOperationException("RC1_LEGACY_SHELL_SCAN_UNAVAILABLE");}
  }
  static bool AnotherDesktopCommanderRemote(){
   try{
@@ -399,6 +473,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
    throw new InvalidOperationException("RC1_NOT_MANAGED");
   if(managedProcess!=null && managedProcess.Running)
    throw new InvalidOperationException("RC1_OWNED_REMOTE_ALREADY_RUNNING");
+  if(AnotherLegacyShell())
+   throw new InvalidOperationException("RC1_LEGACY_GUI_STILL_ACTIVE");
   if(AnotherDesktopCommanderRemote())
    throw new InvalidOperationException("RC1_EXISTING_REMOTE_ADOPTED_NO_DUPLICATE");
   string npx=ResolvePinnedNpx();
@@ -411,6 +487,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    managedProcess=child;managedLogPath=file;managedLogs.Add(file);managedLogOffset=0;
    managedLogFragment="";managedState="Connecting";managedDetail="Starting pinned Desktop Commander Remote";
    remoteSupervisor.ManagedStatus(child.Pid,true,managedState,managedDetail);
+   autoStartPending=false;
    Append("remote","new Host-owned Remote launched in verified private Job");
   }catch{child.Dispose();throw;}
  }
@@ -419,6 +496,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    throw new InvalidOperationException("RC1_NO_MANAGED_REMOTE");
   if(!managedProcess.StopOwnedOnly(10000))
    throw new InvalidOperationException("RC1_OWNED_REMOTE_SURVIVORS");
+  autoStartPending=false;
   managedState="Disconnected";managedDetail="Host-owned Remote stopped";
   remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
   Append("remote","all members of the private owned Job exited");

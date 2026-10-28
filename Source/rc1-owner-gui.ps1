@@ -1,7 +1,8 @@
 ﻿# RDC Relay 1.6 RC1 product GUI attach path.
 # Dot-sourced ONLY from Source/remote-window.ps1 -OwnerGui.
 # Reuses the original complete WinForms window, controls, geometry and renderer.
-# Remote/account/write operations are strictly disabled pending approved OS trials.
+# Adopted/Unknown Remote is immutable. Managed-mode Remote actions are
+# executed exclusively by the authenticated persistent Host after explicit UI.
 function Start-RdcOwnerGui {
  $ErrorActionPreference='Stop'
  if(-not $OwnerGui -or [string]::IsNullOrWhiteSpace($OwnerTicketPath)){
@@ -75,7 +76,7 @@ function Start-RdcOwnerGui {
   'Управление существующим Remote недоступно: сессия не принадлежит RC1.'
  }
  $tipText=if($script:ownerManagedMode){'Управление только собственным Remote этого Host.'}else{
-  'Remote — существующий Adopted процесс. Остановка запрещена.'
+  'Существующий Remote принадлежит старой оболочке. После её штатного завершения RC1 создаст новую управляемую сессию.'
  }
  $tip.SetToolTip($finish,$tipText)
  $accountButton.Enabled=$true
@@ -102,7 +103,7 @@ function Start-RdcOwnerGui {
  $script:ownerLastLogCursor=0
  $script:ownerLastLogEpoch=-1
  if($script:ownerObservedMode){
-  Set-State 'Подключение к Host' 'Наблюдение за существующим Remote; управление и остановка отключены.' ([Drawing.Color]::Khaki)
+  Set-State 'Подключение к Host' 'Старый Remote обнаружен. После штатного завершения прежней оболочки RC1 запустит новый.' ([Drawing.Color]::Khaki)
   Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Remote: существующая сессия / Adopted' $true
   Add-CompletedEvent 'RC1 подключён к работающему Desktop Commander Remote только для наблюдения. X закрывает GUI; Remote не затрагивается.'
  }elseif($script:ownerManagedMode){
@@ -187,7 +188,7 @@ function Start-RdcOwnerGui {
         [Drawing.Color]::LightCoral
        }else{[Drawing.Color]::Khaki}
        $statusText=if($online){'Remote подключён (наблюдение)'}else{'Remote: '+[string]$remoteSnapshot.state}
-       Set-State $statusText ([string]$remoteSnapshot.status+'; управление отключено.') $color
+       Set-State $statusText ([string]$remoteSnapshot.status+'; управление старой сессией отключено. RC1 ждёт её штатного завершения.') $color
        Set-RuntimeDisplay ('Remote PID '+[string]$remoteSnapshot.processPid) 'Существующая сессия / Adopted' $true
       }elseif($script:ownerManagedMode){
        $connected=([string]$remoteSnapshot.state -ceq 'Ready')

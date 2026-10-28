@@ -75,6 +75,38 @@ try{
   Check ($sink.Target -eq $identity.Pid -and $sink.Alive -and
     $sink.Marker -ceq 'Remote launcher replaced' -and $stale.Born -eq $identity.Born) 'stale birth safely reacquires verified same PID without process control'
  }
+ # Pure injected observer-loss route. Replace discovery functions inside this
+ # one disposable PowerShell test process only; never touch the real Remote.
+ Set-Item Function:\Get-Rc1ObservedRemoteIdentity {throw 'RC1_INJECTED_LEGACY_ABSENT'}
+ Set-Item Function:\Test-Rc1ObservedRemoteIdentity {param($record) return $false}
+ $handoff=[pscustomobject]@{Safe=$false;Accept=$true;Promotions=0;LastState='';Updates=0}
+ Add-Member -InputObject $handoff -MemberType ScriptMethod -Name UpdateObservedRemote -Value {
+  param([bool]$alive,[string]$state,[string]$detail)
+  $this.LastState=$state;$this.Updates++
+ }
+ Add-Member -InputObject $handoff -MemberType ScriptMethod -Name CanPromoteObservedRemote -Value {
+  return [bool]$this.Safe
+ }
+ Add-Member -InputObject $handoff -MemberType ScriptMethod -Name PromoteObservedRemoteToManaged -Value {
+  if(-not $this.Accept){return $false}
+  $this.Promotions++;return $true
+ }
+ $missing=@{Pid=77;Born=[long]5;Session=1;Parent=2;Log='C:\fake.txt';Exe='C:\cmd.exe';
+  MissingSinceTicks=[long]([DateTime]::UtcNow.Ticks-[TimeSpan]::FromSeconds(10).Ticks);HandoffComplete=$false}
+ Invoke-Rc1RemoteObserverPoll $handoff $missing
+ Check ($handoff.LastState -ceq 'Disconnected' -and $handoff.Promotions -eq 0 -and
+  [long]$missing.MissingSinceTicks -eq 0 -and -not $missing.HandoffComplete) 'foreign shell present denies promotion even after stale PID'
+ $handoff.Safe=$true
+ Invoke-Rc1RemoteObserverPoll $handoff $missing
+ Check ([long]$missing.MissingSinceTicks -gt 0 -and $handoff.Promotions -eq 0) 'fresh external absence starts grace period, not new Remote'
+ $missing.MissingSinceTicks=[long]([DateTime]::UtcNow.Ticks-[TimeSpan]::FromSeconds(6).Ticks)
+ Invoke-Rc1RemoteObserverPoll $handoff $missing
+ Check ($handoff.Promotions -eq 1 -and $missing.HandoffComplete) 'five-second verified absence permits one mode transition'
+ $handoff.Accept=$false
+ $refused=@{Pid=78;Born=[long]6;Session=1;Parent=2;Log='C:\fake2.txt';Exe='C:\cmd.exe';
+  MissingSinceTicks=[long]([DateTime]::UtcNow.Ticks-[TimeSpan]::FromSeconds(6).Ticks);HandoffComplete=$false}
+ Invoke-Rc1RemoteObserverPoll $handoff $refused
+ Check ($handoff.Promotions -eq 1 -and -not $refused.HandoffComplete) 'failed final external check does not claim migration success'
 }catch{ $fail++;Write-Output ('FAIL exception '+$_.Exception.Message)}
 Write-Output ('RC1_OBSERVED_REMOTE_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}

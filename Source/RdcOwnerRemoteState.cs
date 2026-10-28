@@ -30,6 +30,20 @@ public sealed class RdcOwnerRemoteState {
    epoch++;tail.Clear();cursor=0;revision++;AddDiagnostic("Managed mode initialized");
   }
  }
+ // Promote only after the Host independently proves the old external process
+ // and legacy GUI are both absent. This method does not grant ownership of
+ // the observed PID: it clears it, so only a NEW Job process can be stopped.
+ public void PromoteObservedToManaged(){
+  lock(sync){
+   if(!sourceIsReal||managedMode||ownership!=Ownership.Adopted||stopApproved)
+    throw new InvalidOperationException("RC1_OBSERVER_PROMOTION_REFUSED");
+   managedMode=true;ownership=Ownership.Owned;identity=null;
+   observedPid=0;observedAlive=false;stopApproved=false;
+   state="Disconnected";status="Previous Remote exited; RC1 Host preparing a new managed session";
+   epoch++;tail.Clear();cursor=0;revision++;
+   AddDiagnostic("Legacy session left; managed Host enabled");
+  }
+ }
  public void ManagedStatus(int pid,bool alive,string next,string detail){
   if(next!="Disconnected"&&next!="Connecting"&&next!="AuthPending"&&next!="Ready"&&
      next!="Fault"&&next!="Reconnecting")throw new ArgumentException("RC1_MANAGED_STATE");

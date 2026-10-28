@@ -64,6 +64,23 @@ try{
  $observed.AddObservedMarker('Remote launcher replaced')
  Check (($observed.Snapshot()).canStop -eq $false -and
    ($observed.Snapshot()).canReconnect -eq $false) 'reacquired launcher cannot be stopped or reconnected'
+ $refused=$false
+ try{$s.PromoteObservedToManaged()}catch{$refused=$true}
+ Check $refused 'fake or synthetic ownership cannot be promoted'
+ $epoch=[long]($observed.Snapshot()).logStreamEpoch
+ $observed.UpdateObservedReadOnly($false,'Disconnected','Old external Remote no longer observed')
+ $observed.PromoteObservedToManaged()
+ $promoted=$observed.Snapshot()
+ Check ($promoted.ownership -eq 'Owned' -and $promoted.processPid -eq 0 -and
+   $promoted.processAlive -eq 'observed_exited' -and -not $promoted.canStop -and
+   -not $promoted.canReconnect -and $promoted.canStart) 'promotion clears old external PID and stop authority'
+ Check ($promoted.logStreamEpoch -gt $epoch -and
+   @($promoted.tail).Count -eq 0 -and $promoted.state -eq 'Disconnected') 'promotion rotates external journal and resets health'
+ $refused=$false;try{$observed.PromoteObservedToManaged()}catch{$refused=$true}
+ Check $refused 'repeated promotion refused'
+ $observed.ManagedStatus(77777,$true,'Connecting','synthetic newly owned job status')
+ Check (($observed.Snapshot()).processPid -eq 77777 -and
+   ($observed.Snapshot()).canStop) 'only explicit managed status can enable managed stop indicator'
 }catch{$fail++;Write-Output ('FAIL exception '+$_.Exception.Message)}
 Write-Output ('RC1_OWNER_REMOTE_STATE_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}

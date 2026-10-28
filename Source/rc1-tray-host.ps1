@@ -1,6 +1,6 @@
 ﻿# RDC Relay 1.6.0 RC1 persistent product Tray Host entry point.
-# Candidate supports isolated fake testing OR read-only observation of the
-# user's already running pinned Remote, never start/stop/reconnect/logout.
+# FAKE_ONLY and OBSERVED_READ_ONLY remain isolated. Full mode either observes
+# an external Remote without control or starts a new private Job-owned Remote.
 param([switch]$FakeOnly,[switch]$ObserveExisting,[switch]$Full,[int]$ObserveAutoExitSeconds=0,
  [string]$TrialRoot='',[switch]$TrialFailGuiStartOnce,[switch]$TrialFailConstructorOnce,
  [int]$TrialAutoExitSeconds=0,[switch]$TrialReopenOnce,[int]$TrialReopenCount=0)
@@ -37,6 +37,7 @@ try{
     $reason=[string]$_.Exception.Message
     if($reason -match 'RC1_OBSERVER_AMBIGUOUS_OR_ABSENT_0|RC1_OBSERVER_LEGACY_LOG_NOT_FOUND'){
      $owner.EnableManagedRemote()
+     [void]$owner.TryAutoStartManagedRemote()
     }else{throw}
    }
   }else{$observer=Initialize-Rc1RemoteObserver $owner}
@@ -49,6 +50,11 @@ try{
   $observerTimer.Add_Tick({
    try{Invoke-Rc1RemoteObserverPoll $owner $observer}catch{
     $owner.UpdateObservedRemote($false,'Fault','RC1 observer failed; Remote not controlled')
+   }
+   if($observer.HandoffComplete){
+    $observerTimer.Stop()
+    [void]$owner.TryAutoStartManagedRemote()
+    return
    }
    if($ObserveAutoExitSeconds -gt 0 -and $observerClock.Elapsed.TotalSeconds -ge $ObserveAutoExitSeconds){
     $owner.RequestObservedDetach()
@@ -83,8 +89,8 @@ try{
   $owner=New-Object RdcOwnerRuntime -ArgumentList @($root,$true)
  }
  } # end fake-only trial/normal route
- # Only the RC1 GUI is started here. Real Remote observation is passive:
- # no process spawn, stop, restart, adoption of kill authority or logout.
+ # Full Host may have started its OWN Remote; an existing external Remote
+ # is still observed passively without importing any process-stop authority.
  $owner.OpenGui()
  if($TrialFailGuiStartOnce){
   if($owner.Status -cne 'NONE'){throw 'RC1_TRIAL_F2_TICKET_NOT_RETRYABLE'}

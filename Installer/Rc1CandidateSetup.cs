@@ -1,7 +1,7 @@
 // Private RDC Relay 1.6.0 RC1 Setup. The repository's blocked-marker
 // compiler path stays inert; only an exact-manifest owner-pilot package
-// embeds the read-only payload for standalone user-confirmed manual upgrades.
-// No Setup path is permitted to control the existing Desktop Commander Remote.
+// embeds the full Host/GUI payload for user-confirmed manual upgrades.
+// Setup never stops or takes ownership of an existing Desktop Commander Remote.
 using System;
 using System.IO;
 using System.Linq;
@@ -164,10 +164,10 @@ internal static class RdcRc1CandidateSetup {
    if(manualUpgrade&&args.Length==0){
     var answer=System.Windows.Forms.MessageBox.Show(
      "Установить RDC Relay 1.6.0 RC1 как основную оболочку?" + Environment.NewLine + Environment.NewLine +
-     "Старые файлы будут сохранены. Существующий Remote не будет прерван. "+
-     "При существующей сессии действует режим Adopted (без управления); "+
-     "новый Remote, созданный Host, поддерживает запуск, остановку и переподключение. "+
-     "Смена аккаунта пока недоступна.",
+     "Файлы рабочей 1.5.18 останутся для отката. Существующий Remote не будет прерван. "+
+     "Пока старая оболочка или её Remote работают, RC1 останется только для чтения "+
+     "и не создаст дубликат. После штатного завершения обоих старых процессов "+
+     "новый Host автоматически подключит свою сессию. Смена аккаунта пока недоступна.",
      "RDC Relay 1.6.0 RC1 — ручное обновление",
      System.Windows.Forms.MessageBoxButtons.YesNo,System.Windows.Forms.MessageBoxIcon.Warning);
     if(answer!=System.Windows.Forms.DialogResult.Yes)return 1;
@@ -210,7 +210,10 @@ internal static class RdcRc1CandidateSetup {
        Environment.NewLine+"Штатно завершите прежний RC1 Host перед запуском нового ярлыка.");
      System.Windows.Forms.MessageBox.Show(
       notice+Environment.NewLine+Environment.NewLine+
-      "Настоящий Remote не остановлен. Не закрывайте старую v1.5.18 через X ради установки.",
+      "Remote установщик не останавливал. Если старый Remote ещё работает, RC1 "+
+      "будет ждать завершения прежней оболочки и её сессии. "+
+      "Переключайте их штатно, когда готовы к краткому разрыву соединения; "+
+      "не используйте принудительное завершение.",
       "RDC Relay 1.6.0 RC1",
       System.Windows.Forms.MessageBoxButtons.OK,
       launchFailed?System.Windows.Forms.MessageBoxIcon.Warning:System.Windows.Forms.MessageBoxIcon.Information);
