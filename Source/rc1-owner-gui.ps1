@@ -100,6 +100,7 @@ function Start-RdcOwnerGui {
  $script:ownerRequestedAction=''
  $script:ownerStatus=if($script:ownerObservedMode){'OBSERVED_READ_ONLY_RC1'}elseif($script:ownerManagedMode){'MANAGED_OWNER_RC1'}else{'FAKE_ONLY_RC1'}
  $script:ownerLastShownRevision=-1
+ $script:ownerLastShownRemoteRevision=-1
  $script:ownerLastLogCursor=0
  $script:ownerLastLogEpoch=-1
  if($script:ownerObservedMode){
@@ -180,8 +181,13 @@ function Start-RdcOwnerGui {
       $hasNewLog=$true
      }
      if($hasNewLog){Render-CompactLog}
-     if([long]$snapshot.revision -ne $script:ownerLastShownRevision){
+     # The Remote store increments its own revision when the connection
+     # state changes. Host event sequence is independent and may not move.
+     $remoteRevision=[long]$remoteSnapshot.revision
+     if([long]$snapshot.revision -ne $script:ownerLastShownRevision -or
+        $remoteRevision -ne $script:ownerLastShownRemoteRevision){
       $script:ownerLastShownRevision=[long]$snapshot.revision
+      $script:ownerLastShownRemoteRevision=$remoteRevision
       if($script:ownerObservedMode){
        $online=([string]$remoteSnapshot.state -ceq 'Ready')
        $color=if($online){[Drawing.Color]::PaleGreen}elseif([string]$remoteSnapshot.state -ceq 'Fault'){
@@ -203,6 +209,31 @@ function Start-RdcOwnerGui {
       }else{
        Set-State 'Remote отключён (RC1)' ('Host: '+[string]$remoteSnapshot.state+'; только синтетические данные.') ([Drawing.Color]::Khaki)
        Set-RuntimeDisplay ('Host PID '+[string]$snapshot.hostPid) 'Remote НЕ подключён | RC1' $true
+      }
+      # Original UI's upper pane normally shows the raw startup banner.
+      # Product Owner GUI instead renders only allowlisted Host snapshot fields;
+      # private Remote logs, account names and device identifiers stay in Host.
+      if($script:ownerRealMode){
+       $safeState=switch([string]$remoteSnapshot.state){
+        'Ready' {'Connected'} 'Connecting' {'Connecting'} 'AuthPending' {'Authenticating'}
+        'Reconnecting' {'Reconnecting'} 'Fault' {'Connection fault'}
+        'Disconnected' {'Disconnected'} default {'Unknown'}
+       }
+       $modeLabel=if($script:ownerManagedMode){'Managed: Host-owned Job'}else{'Adopted: read-only'}
+       $statusProof=if([string]$remoteSnapshot.state -ceq 'Ready'){
+        'Remote connection marker received by Host'
+       }else{'Connected state not currently confirmed'}
+       $safePid=[int]$remoteSnapshot.processPid
+       $script:startupBlock=[string]::Join($nl,@(
+        'Remote Connection','',
+        'RDC Relay 1.6.0 RC1 / Desktop Commander 0.2.52',
+        ('Status: '+$safeState),
+        ('Process: '+$(if($safePid -gt 0){'PID '+$safePid}else{'not started'})),
+        ('Ownership: '+$modeLabel),
+        $statusProof,'',
+        'Connection details and private Remote logs remain protected in Host.'
+       ))
+       Render-CompactLog
       }
      }
      $script:ownerNextVerb='GET_EVENTS'
