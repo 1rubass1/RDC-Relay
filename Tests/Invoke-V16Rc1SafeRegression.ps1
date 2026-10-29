@@ -10,7 +10,7 @@ $names=@(
  'Test-V16OwnerBoundaryStatic.ps1','Test-V16ProductHostGuiSource.ps1',
  'Test-V16OwnerAddType.ps1','Test-V16OwnerStagePackage.ps1',
  'Test-V16OwnerContract.ps1','Test-V16BuildIsolation.ps1',
- 'Test-V16PackageManifestNegative.ps1',
+ 'Test-V16PackageManifestNegative.ps1','Test-V16Rc1DiagnosticCapture.ps1',
  'Test-RemoteCharacterization.ps1','Test-RemoteLineClassifier.ps1',
  'Test-ProcessOwnershipCharacterization.ps1','Test-WindowLifecycleCharacterization.ps1',
  'Test-UiLifecycle.ps1','Test-UpdateNoticeClick.ps1',
