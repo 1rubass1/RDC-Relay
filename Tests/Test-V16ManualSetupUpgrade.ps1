@@ -3,18 +3,26 @@
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 . (Join-Path $repo 'Scripts\rc1-private-upgrade-transaction.ps1')
-$type=Add-Type -Path (Join-Path $repo 'Installer\Rc1ManualUpgrade.cs') -PassThru |
+$type=Add-Type -Path (Join-Path $repo 'Installer\Rc1ManualUpgrade.cs') -ReferencedAssemblies @('System.Management.dll') -PassThru |
  Where-Object{$_.Name -eq 'RdcRc1ManualUpgrade'} | Select-Object -First 1
 if(-not $type){throw 'RC1_MANUAL_PRODUCT_TYPE_NOT_COMPILED'}
 $flags=[Reflection.BindingFlags]'Static,NonPublic'
 $prepare=$type.GetMethod('Prepare',$flags)
 $activate=$type.GetMethod('ActivateDesktop',$flags)
 $pathCheck=$type.GetMethod('CheckPath',$flags)
+$canDefer=$type.GetMethod('CanDeferPreviousHost',$flags)
 if(-not $prepare -or -not $activate -or -not $pathCheck){throw 'RC1_MANUAL_PRODUCT_METHODS_MISSING'}
 $pass=0;$fail=0
 function Check([bool]$ok,[string]$name){
  if($ok){$script:pass++;Write-Output ('PASS '+$name)}
  else{$script:fail++;Write-Output ('FAIL '+$name)}
+}
+Check ($null -ne $canDefer) 'MANUAL old Host defer decision available'
+if($canDefer){
+ Check ([bool]$canDefer.Invoke($null,[object[]]@($true,$true,$true))) 'MANUAL active RC1 Host with verified no Remote can stage deferred upgrade'
+ Check (-not [bool]$canDefer.Invoke($null,[object[]]@($true,$true,$false))) 'MANUAL active RC1 Host with Remote or unknown denies'
+ Check (-not [bool]$canDefer.Invoke($null,[object[]]@($false,$true,$true))) 'MANUAL unrelated Host cannot receive RC1 defer privilege'
+ Check (-not [bool]$canDefer.Invoke($null,[object[]]@($true,$false,$true))) 'MANUAL deferred route only when old Host really active'
 }
 # STARMER's OS-reported Desktop is under OneDrive Cloud Files reparse
 # directories. Read-only product path validation must accept that exact

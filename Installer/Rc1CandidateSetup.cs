@@ -202,7 +202,20 @@ internal static class RdcRc1CandidateSetup {
     // release root; do not create a second Host without a verified handoff.
     // Exact previous RC1 Host mutex was locked through the shortcut handoff.
     // Launch is safe for a fully stopped predecessor as well as stable->RC1.
+    bool deferredOldHost=result=="SWITCHED_RC1_DEFERRED_OLD_HOST";
     bool autoOpen=result=="CREATED"||result=="SWITCHED_STABLE"||result=="SWITCHED_RC1"||result=="ALREADY_ACTIVE";
+    if(deferredOldHost){
+     Console.WriteLine("RC1_MANUAL_UPGRADE_STAGED_OLD_HOST_IDLE");
+     // This is actionable: the old Host still owns its UI/mutex even though
+     // no Remote was detected. Never try to spawn a second Host in Setup.
+     if(args.Length==0)System.Windows.Forms.MessageBox.Show(
+      "Новая версия установлена, основной ярлык переключён."+
+      Environment.NewLine+"Прежний RC1 Host ещё работает, но Remote не обнаружен."+
+      Environment.NewLine+"Завершите прежний Host штатно через меню трея, затем откройте RDC Relay с рабочего стола."+
+      Environment.NewLine+"Установщик не останавливал никаких процессов.",
+      "RDC Relay 1.6.0 RC1 — требуется действие",
+      System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Warning);
+    }
     bool launchFailed=false;
     string launchCode="";
     if(autoOpen){
@@ -217,24 +230,15 @@ internal static class RdcRc1CandidateSetup {
       Console.Error.WriteLine("RC1_AUTOLAUNCH_FAILED:"+launchCode);
      }
     }else Console.WriteLine("RC1_AUTOLAUNCH_DEFERRED_OLD_RC1_HOST_UNKNOWN");
-    if(args.Length==0){
-     string notice=launchFailed?
-      "Новые файлы и основной ярлык подготовлены, но автоматический запуск не удался."+
-      Environment.NewLine+"Код ошибки: "+launchCode+
-      Environment.NewLine+"Попробуйте ярлык RDC Relay. Если окно не появится, сообщите код ошибки.":
-      (autoOpen?
-       "Новая оболочка RDC Relay 1.6.0 RC1 запускается. Если окно не появилось, используйте основной ярлык.":
-       "Новая RC1 подготовлена. Автоматический запуск отложен: прежний RC1 Host может ещё работать."+
-       Environment.NewLine+"Штатно завершите прежний RC1 Host перед запуском нового ярлыка.");
+    // A successful install needs no second informational OK dialog.
+    // Reserve UI alerts for an actual failure or an actionable deferred handoff.
+    if(args.Length==0 && launchFailed){
      System.Windows.Forms.MessageBox.Show(
-      notice+Environment.NewLine+Environment.NewLine+
-      "Remote установщик не останавливал. Если старый Remote ещё работает, RC1 "+
-      "будет ждать завершения прежней оболочки и её сессии. "+
-      "Переключайте их штатно, когда готовы к краткому разрыву соединения; "+
-      "не используйте принудительное завершение.",
+      "Новые файлы и основной ярлык подготовлены, но GUI не запустился."+
+      Environment.NewLine+"Код ошибки: "+launchCode+
+      Environment.NewLine+"Remote установщик не останавливал. Сообщите код ошибки.",
       "RDC Relay 1.6.0 RC1",
-      System.Windows.Forms.MessageBoxButtons.OK,
-      launchFailed?System.Windows.Forms.MessageBoxIcon.Warning:System.Windows.Forms.MessageBoxIcon.Information);
+      System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Warning);
     }
     // Exit 44 distinguishes a published install from a failed GUI launch.
     return launchFailed?44:0;

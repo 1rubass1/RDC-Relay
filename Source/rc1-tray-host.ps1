@@ -25,6 +25,17 @@ foreach($name in @('remote-window.ps1','rc1-owner-gui.ps1','RdcOwnerWire.cs','Rd
 }
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 Add-Type -Path @((Join-Path $root 'RdcOwnerWire.cs'),(Join-Path $root 'RdcOwnerProcess.cs'),(Join-Path $root 'RdcOwnerTicketStore.cs'),(Join-Path $root 'RdcOwnerRemoteState.cs'),(Join-Path $root 'RdcOwnerManagedProcess.cs'),(Join-Path $root 'RdcOwnerRuntime.cs')) -ReferencedAssemblies @('System.Core.dll','System.Web.Extensions.dll','System.Security.dll','System.Windows.Forms.dll','System.Drawing.dll','System.Management.dll','System.dll')
+# The old source-root mutex is release-specific. Before starting a product
+# Full Host, refuse any second RC1 Host from another release root; otherwise
+# two idle Hosts could both acquire independent mutexes and later start Remote.
+if($Full){
+ try{
+  $otherHosts=@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -ErrorAction Stop |
+   Where-Object { $_.ProcessId -ne $PID -and
+    $_.CommandLine -match '(?i)-File\s+"?[^"]*rc1-tray-host\.ps1"?\s+-Full(?:\s|$)' })
+ }catch{throw 'RC1_OTHER_RELEASE_HOST_SCAN_UNAVAILABLE'}
+ if($otherHosts.Count -gt 0){throw 'RC1_OTHER_RELEASE_HOST_STILL_RUNNING'}
+}
 $owner=$null
 $observerTimer=$null
 try{

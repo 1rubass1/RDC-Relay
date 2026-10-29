@@ -210,10 +210,19 @@ function Start-RdcOwnerGui {
        Set-State 'Remote отключён (RC1)' ('Host: '+[string]$remoteSnapshot.state+'; только синтетические данные.') ([Drawing.Color]::Khaki)
        Set-RuntimeDisplay ('Host PID '+[string]$snapshot.hostPid) 'Remote НЕ подключён | RC1' $true
       }
-      # Original UI's upper pane normally shows the raw startup banner.
-      # Product Owner GUI instead renders only allowlisted Host snapshot fields;
-      # private Remote logs, account names and device identifiers stay in Host.
+      # Authenticated Host supplies only strictly validated startup fields,
+      # not raw Remote stdout, tokens or unrecognized device metadata.
       if($script:ownerRealMode){
+       $safeUser=''
+       $safeDeviceName=''
+       $safeDeviceId=''
+       if($script:ownerManagedMode -and $snapshot.remoteIdentity){
+        $identity=$snapshot.remoteIdentity
+        if([string]$identity.user -cmatch '\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z'){$safeUser=[string]$identity.user}
+        if([string]$identity.deviceName -cmatch '\A[\p{L}\p{Nd} _().\-]{1,80}\z'){$safeDeviceName=[string]$identity.deviceName}
+        if([string]$identity.deviceId -cmatch '\A[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\z'){$safeDeviceId=[string]$identity.deviceId}
+       }
+       Set-AccountDisplay $safeUser
        $safeState=switch([string]$remoteSnapshot.state){
         'Ready' {'Connected'} 'Connecting' {'Connecting'} 'AuthPending' {'Authenticating'}
         'Reconnecting' {'Reconnecting'} 'Fault' {'Connection fault'}
@@ -226,12 +235,15 @@ function Start-RdcOwnerGui {
        $safePid=[int]$remoteSnapshot.processPid
        $script:startupBlock=[string]::Join($nl,@(
         'Remote Connection','',
-        'RDC Relay 1.6.0 RC1 / Desktop Commander 0.2.52',
+        'RDC Relay 1.6.0 RC1 / Desktop Commander 0.2.52','',
         ('Status: '+$safeState),
+        ('User: '+$(if($safeUser){$safeUser}else{'not reported'})),
+        ('Device Name: '+$(if($safeDeviceName){$safeDeviceName}else{'not reported'})),
+        ('Device ID: '+$(if($safeDeviceId){$safeDeviceId}else{'not reported'})),
         ('Process: '+$(if($safePid -gt 0){'PID '+$safePid}else{'not started'})),
         ('Ownership: '+$modeLabel),
         $statusProof,'',
-        'Connection details and private Remote logs remain protected in Host.'
+        'Private Remote logs and credentials remain in Host.'
        ))
        Render-CompactLog
       }

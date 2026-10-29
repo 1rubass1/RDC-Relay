@@ -29,6 +29,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
  RdcOwnerManagedProcess managedProcess=null;
  readonly List<string> managedLogs=new List<string>();
  string managedLogPath="",managedLogFragment="",managedState="Disconnected",managedDetail="";
+ string managedAccount="",managedDeviceName="",managedDeviceId="";
  long managedLogOffset=0;
  ToolStripMenuItem trayStatusItem,trayExitItem;
  bool runRootCreated=false;
@@ -488,7 +489,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
    child.Start(npx,"--yes @wonderwhy-er/desktop-commander@0.2.52 remote",sourceRoot,file);
    if(managedProcess!=null)managedProcess.Dispose();
    managedProcess=child;managedLogPath=file;managedLogs.Add(file);managedLogOffset=0;
-   managedLogFragment="";managedState="Connecting";managedDetail="Starting pinned Desktop Commander Remote";
+   managedLogFragment="";managedAccount="";managedDeviceName="";managedDeviceId="";
+   managedState="Connecting";managedDetail="Starting pinned Desktop Commander Remote";
    remoteSupervisor.ManagedStatus(child.Pid,true,managedState,managedDetail);
    autoStartPending=false;
    Append("remote","new Host-owned Remote launched in verified private Job");
@@ -500,9 +502,47 @@ public sealed class RdcOwnerRuntime : IDisposable {
   if(!managedProcess.StopOwnedOnly(10000))
    throw new InvalidOperationException("RC1_OWNED_REMOTE_SURVIVORS");
   autoStartPending=false;
+  managedAccount="";managedDeviceName="";managedDeviceId="";
   managedState="Disconnected";managedDetail="Host-owned Remote stopped";
   remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
   Append("remote","all members of the private owned Job exited");
+ }
+ static bool TrySafeIdentityLine(string raw,out string label,out string value){
+  label="";value="";
+  if(String.IsNullOrEmpty(raw))return false;
+  // The pinned Remote's private startup log has a structured '- User:',
+  // '- Device Name:' and '- Device ID:' header. Never export raw lines.
+  string line=System.Text.RegularExpressions.Regex.Replace(raw,
+   @"\x1B\[[0-?]*[ -/]*[@-~]","").TrimEnd('\r','\n');
+  var match=System.Text.RegularExpressions.Regex.Match(line,
+   @"^\s*-\s*(User|Device Name|Device ID):\s*([^\r\n]{1,180})\s*$",
+   System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+  if(!match.Success)return false;
+  string field=match.Groups[1].Value.ToLowerInvariant();
+  string data=match.Groups[2].Value.Trim();
+  if(field=="user" &&
+    System.Text.RegularExpressions.Regex.IsMatch(data,
+      @"\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z")){
+   label="user";value=data;return true;
+  }
+  if(field=="device name" && data.Length<=80 &&
+    System.Text.RegularExpressions.Regex.IsMatch(data,@"\A[\p{L}\p{Nd} _().\-]{1,80}\z")){
+   label="deviceName";value=data;return true;
+  }
+  if(field=="device id" && System.Text.RegularExpressions.Regex.IsMatch(data,
+    @"\A[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\z")){
+   label="deviceId";value=data;return true;
+  }
+  return false;
+ }
+ void AcceptManagedIdentityLine(string line){
+  string field,value;
+  if(!TrySafeIdentityLine(line,out field,out value))return;
+  bool changed=false;
+  if(field=="user" && managedAccount!=value){managedAccount=value;changed=true;}
+  else if(field=="deviceName" && managedDeviceName!=value){managedDeviceName=value;changed=true;}
+  else if(field=="deviceId" && managedDeviceId!=value){managedDeviceId=value;changed=true;}
+  if(changed)remoteSupervisor.NoteHostEvent("Owned Remote identity metadata received: "+field);
  }
  static string SafeRemoteMarker(string line,out string next){
   next="";
@@ -530,6 +570,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
   if(!managedMode||managedProcess==null||!managedProcess.HasStarted)return;
   if(!managedProcess.Running){
    if(managedState!="Disconnected"){
+    managedAccount="";managedDeviceName="";managedDeviceId="";
     managedState="Disconnected";managedDetail="Host-owned Remote process exited";
     remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
     Append("remote","owned Job no longer running");
@@ -554,9 +595,12 @@ public sealed class RdcOwnerRuntime : IDisposable {
     managedLogFragment=joined.Substring(end+1);
     string[] lines=joined.Substring(0,end).Split('\n');
     int start=Math.Max(0,lines.Length-100),emitted=0;
-    for(int i=start;i<lines.Length;i++){
+    for(int i=0;i<lines.Length;i++){
+     string cleanLine=lines[i].TrimEnd('\r');
+     AcceptManagedIdentityLine(cleanLine);
+     if(i<start)continue; // Only journal markers are bounded to the tail.
      string next;
-     string marker=SafeRemoteMarker(lines[i].TrimEnd('\r'),out next);
+     string marker=SafeRemoteMarker(cleanLine,out next);
      if(marker=="")continue;
      if(emitted++<24)remoteSupervisor.AddSyntheticLogLine(marker);
      if(next!=""){
@@ -619,6 +663,10 @@ public sealed class RdcOwnerRuntime : IDisposable {
    {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":managedMode?"MANAGED_OWNER_RC1":"FAKE_ONLY_RC1"},{"remoteId",remoteSupervisor.SessionId},
    {"remote",observed},{"remoteConnected",(managedMode||observedMode) && (string)observed["state"]=="Ready"},
    {"account",observedMode?"Existing Remote / read-only":managedMode?"RC1 Host-owned Remote":"DEMO: disabled"},
+   {"remoteIdentity",new Dictionary<string,object>{
+    {"user",managedMode?managedAccount:""},{"deviceName",managedMode?managedDeviceName:""},
+    {"deviceId",managedMode?managedDeviceId:""}
+   }},
    {"logTail",observed["tail"]},{"logCursor",observed["logCursor"]},
    {"logStreamEpoch",observed["logStreamEpoch"]},
    {"guiPid",childPid},{"guiState",guiState},{"guiStarts",guiStarts},

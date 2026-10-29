@@ -92,7 +92,7 @@ $setup=Join-Path $package 'RC1 Pilot Setup.exe'
 # runtime files and the exact source manifest live inside its PE resources.
 $resourceArgs=@(@($required)+@('owner-source-manifest.json')|
  ForEach-Object{('/resource:'+(Join-Path $package $_)+',RdcPayload.'+$_.Replace('/','.'))})
-& $compiler /nologo /target:winexe /optimize+ /reference:System.Core.dll /reference:System.Web.Extensions.dll ('/out:'+$setup) $resourceArgs (Join-Path $repo 'Installer\Rc1CandidateSetup.cs') (Join-Path $repo 'Installer\Rc1ManualUpgrade.cs')
+& $compiler /nologo /target:winexe /optimize+ /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Management.dll ('/out:'+$setup) $resourceArgs (Join-Path $repo 'Installer\Rc1CandidateSetup.cs') (Join-Path $repo 'Installer\Rc1ManualUpgrade.cs')
 if($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists($setup)){throw 'RC1_FULL_SETUP_COMPILE_FAILED'}
 # Source manifest is exact. Setup itself remains a separate distributable.
 $actual=@(Get-ChildItem -LiteralPath $package -Recurse -File -Force|

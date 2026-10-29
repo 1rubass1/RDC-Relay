@@ -11,6 +11,8 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
+using System.Management;
+using System.Text.RegularExpressions;
 
 internal static class RdcRc1ManualUpgrade {
  [StructLayout(LayoutKind.Sequential)]
@@ -154,6 +156,27 @@ internal static class RdcRc1ManualUpgrade {
     Console.Error.WriteLine("RC1_MANUAL_STAGING_RETAINED:"+stage);
   }
  }
+ static bool CanDeferPreviousHost(bool recognizedRc1,bool oldHostActive,bool noRemoteVerified){
+  return recognizedRc1 && oldHostActive && noRemoteVerified;
+ }
+ // This is a conservative ABSENCE check, not proof of ownership. Any pinned
+ // Remote (including orphaned Node descendants) prevents idle shortcut handoff.
+ // An unreadable WMI command line refuses; Setup must never kill a process.
+ static bool NoPinnedRemoteVerified(){
+  using(var query=new ManagementObjectSearcher(
+    "SELECT CommandLine FROM Win32_Process WHERE Name='cmd.exe' OR Name='node.exe'")){
+   using(var rows=query.Get()){
+    foreach(ManagementBaseObject item in rows){
+     string cmd=Convert.ToString(item["CommandLine"]);
+     if(String.IsNullOrEmpty(cmd))
+      throw new InvalidOperationException("RC1_MANUAL_REMOTE_SCAN_UNVERIFIED");
+     if(cmd.IndexOf("desktop-commander",StringComparison.OrdinalIgnoreCase)>=0 &&
+       Regex.IsMatch(cmd,@"\bremote\b",RegexOptions.IgnoreCase))return false;
+    }
+   }
+  }
+  return true;
+ }
  // Switches the *main Desktop shortcut* only when its original target is the
  // known stable 1.5.18 shell or an already validated private RC1 launcher.
  // No process termination or adopted Remote lifecycle permission is implied.
@@ -169,6 +192,7 @@ internal static class RdcRc1ManualUpgrade {
   CheckPath(desktopLink);
   bool firstInstall=!File.Exists(desktopLink);
   bool switchedFromStable=false;
+  bool previousRc1HostIdle=false;
   Type shellType=Type.GetTypeFromProgID("WScript.Shell");
   if(shellType==null)throw new InvalidOperationException("RC1_MANUAL_NO_SHELL_LINK_COM");
   object shell=Activator.CreateInstance(shellType);
@@ -214,8 +238,17 @@ internal static class RdcRc1ManualUpgrade {
      CheckPath(oldDir);
      bool acquired;
      oldHostLock=new Mutex(true,OldHostMutexName(oldDir),out acquired);
-     if(!acquired)throw new InvalidOperationException("RC1_MANUAL_PREVIOUS_RC1_HOST_ACTIVE");
-     oldHostLocked=true;
+     if(!acquired){
+      bool remoteAbsent;
+      try{remoteAbsent=NoPinnedRemoteVerified();}
+      catch{throw new InvalidOperationException("RC1_MANUAL_REMOTE_SCAN_UNVERIFIED");}
+      bool realInstall=String.Equals(Path.GetFullPath(localRoot),
+       Path.GetFullPath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)),
+       StringComparison.OrdinalIgnoreCase);
+      if(!realInstall||!CanDeferPreviousHost(true,true,remoteAbsent))
+       throw new InvalidOperationException("RC1_MANUAL_PREVIOUS_RC1_HOST_ACTIVE_REMOTE_UNVERIFIED");
+      previousRc1HostIdle=true;
+     }else oldHostLocked=true;
     }
    }
    string temporary=Path.Combine(desktop,".rdc-rc1-"+Guid.NewGuid().ToString("N")+".lnk");
@@ -251,7 +284,8 @@ internal static class RdcRc1ManualUpgrade {
    if(Sha(desktopLink)!=candidateLinkHash)
     throw new IOException("RC1_MANUAL_LINK_PUBLICATION_MISMATCH");
    Console.WriteLine("RC1_MANUAL_PREVIOUS_SHORTCUT_BACKUP:"+backup);
-   return switchedFromStable?"SWITCHED_STABLE":"SWITCHED_RC1";
+   return switchedFromStable?"SWITCHED_STABLE":previousRc1HostIdle?
+    "SWITCHED_RC1_DEFERRED_OLD_HOST":"SWITCHED_RC1";
   }finally{
    if(newLink!=null)Marshal.FinalReleaseComObject(newLink);
    if(old!=null)Marshal.FinalReleaseComObject(old);
