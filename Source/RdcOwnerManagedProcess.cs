@@ -50,6 +50,7 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
  int pid;long born;int session;
  bool started,disposed,stopRequested;
  public int Pid {get{return pid;}}
+ public long BornUtcTicks {get{return born;}}
  public long BirthTicks {get{return born;}}
  public int Session {get{return session;}}
  public bool HasStarted {get{return started;}}

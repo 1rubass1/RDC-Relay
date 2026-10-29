@@ -30,12 +30,16 @@ public sealed class RdcOwnerRuntime : IDisposable {
  readonly List<string> managedLogs=new List<string>();
  string managedLogPath="",managedLogFragment="",managedState="Disconnected",managedDetail="";
  string managedAccount="",managedDeviceName="",managedDeviceId="";
+ long managedBornUtcTicks=0;
+ readonly List<string> managedBannerArt=new List<string>();
+ int managedBannerScanned=0;
  long managedLogOffset=0;
  ToolStripMenuItem trayStatusItem,trayExitItem;
  bool runRootCreated=false;
  readonly int hostPid, hostSession; readonly long hostBorn;
  readonly Mutex singleton;
  readonly EventWaitHandle reopenSignal;
+ readonly EventWaitHandle idleUpgradeSignal;
  readonly EventWaitHandle guiReadySignal;
  readonly ApplicationContext context=new ApplicationContext();
  readonly NotifyIcon tray=new NotifyIcon();
@@ -94,6 +98,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
    string activationName=@"Local\RdcRelayRC1Open-"+BitConverter.ToString(activationHash).Replace("-","").Substring(0,32);
    bool eventCreated;
    reopenSignal=new EventWaitHandle(false,EventResetMode.AutoReset,activationName,out eventCreated,eventAcl);
+   idleUpgradeSignal=new EventWaitHandle(false,EventResetMode.AutoReset,
+     @"Local\RdcRelayRC1IdleUpgrade-"+mutexKey,out eventCreated,eventAcl);
    string readyName=@"Local\RdcRelayRC1GuiReady-"+BitConverter.ToString(activationHash).Replace("-","").Substring(0,32);
    guiReadySignal=new EventWaitHandle(false,EventResetMode.ManualReset,readyName,out eventCreated,eventAcl);
    guiReadySignal.Reset();
@@ -169,6 +175,18 @@ public sealed class RdcOwnerRuntime : IDisposable {
    pulse.Tick+=(s,e)=>{
     lock(gate){
      RefreshGui();
+     // Cooperative same-logon Setup handoff. The Host itself authorizes its
+     // idle exit, never accepting PID/name-based termination from Setup.
+     if(idleUpgradeSignal!=null && idleUpgradeSignal.WaitOne(0) && !exitRequested){
+      try{
+       if(managedMode && !observedMode &&
+          (managedProcess==null || !managedProcess.Running) &&
+          !AnotherDesktopCommanderRemote() && !AnotherLegacyShell()){
+        autoStartPending=false;exitRequested=true;closeGeneration++;
+        Append("host","verified idle Host accepted cooperative RC1 upgrade");
+       }else Append("host","idle upgrade refused: Remote or legacy shell active");
+      }catch{Append("host","idle upgrade refused: OS identity scan unavailable");}
+     }
      if(reopenAfterModeChange && gui==null && guiState=="NONE" && !exitRequested){
       reopenAfterModeChange=false;OpenGui();
      }
@@ -203,6 +221,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    // Fail-closed unwind of partly created host-owned resources.
    try{pulse.Stop();pulse.Dispose();}catch{}
    try{if(reopenSignal!=null)reopenSignal.Dispose();}catch{}
+   try{if(idleUpgradeSignal!=null)idleUpgradeSignal.Dispose();}catch{}
    try{if(guiReadySignal!=null)guiReadySignal.Dispose();}catch{}
    try{tray.Visible=false;tray.Dispose();}catch{}
    bool ipcClean=true;
@@ -490,6 +509,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    if(managedProcess!=null)managedProcess.Dispose();
    managedProcess=child;managedLogPath=file;managedLogs.Add(file);managedLogOffset=0;
    managedLogFragment="";managedAccount="";managedDeviceName="";managedDeviceId="";
+   managedBornUtcTicks=child.BornUtcTicks;managedBannerArt.Clear();managedBannerScanned=0;
    managedState="Connecting";managedDetail="Starting pinned Desktop Commander Remote";
    remoteSupervisor.ManagedStatus(child.Pid,true,managedState,managedDetail);
    autoStartPending=false;
@@ -502,10 +522,22 @@ public sealed class RdcOwnerRuntime : IDisposable {
   if(!managedProcess.StopOwnedOnly(10000))
    throw new InvalidOperationException("RC1_OWNED_REMOTE_SURVIVORS");
   autoStartPending=false;
-  managedAccount="";managedDeviceName="";managedDeviceId="";
+  managedAccount="";managedDeviceName="";managedDeviceId="";managedBornUtcTicks=0;
+  managedBannerArt.Clear();managedBannerScanned=0;
   managedState="Disconnected";managedDetail="Host-owned Remote stopped";
   remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
   Append("remote","all members of the private owned Job exited");
+ }
+ void AcceptManagedBannerArt(string raw){
+  if(managedBannerScanned++>=12 || managedBannerArt.Count>=7)return;
+  string line=System.Text.RegularExpressions.Regex.Replace(raw,
+   @"\x1B\[[0-?]*[ -/]*[@-~]","").TrimEnd('\r');
+  if(line.Length<10 || line.Length>180)return;
+  // Colored original banner is graphic-only; reject text and identifiers.
+  if(!System.Text.RegularExpressions.Regex.IsMatch(line,
+   @"\A[\s\u2500-\u259F\u00A0/\\_|.]+\z"))return;
+  managedBannerArt.Add(line);
+  remoteSupervisor.NoteHostEvent("Safe startup art updated");
  }
  static bool TrySafeIdentityLine(string raw,out string label,out string value){
   label="";value="";
@@ -570,7 +602,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
   if(!managedMode||managedProcess==null||!managedProcess.HasStarted)return;
   if(!managedProcess.Running){
    if(managedState!="Disconnected"){
-    managedAccount="";managedDeviceName="";managedDeviceId="";
+    managedAccount="";managedDeviceName="";managedDeviceId="";managedBornUtcTicks=0;
+    managedBannerArt.Clear();managedBannerScanned=0;
     managedState="Disconnected";managedDetail="Host-owned Remote process exited";
     remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
     Append("remote","owned Job no longer running");
@@ -597,6 +630,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
     int start=Math.Max(0,lines.Length-100),emitted=0;
     for(int i=0;i<lines.Length;i++){
      string cleanLine=lines[i].TrimEnd('\r');
+     AcceptManagedBannerArt(cleanLine);
      AcceptManagedIdentityLine(cleanLine);
      if(i<start)continue; // Only journal markers are bounded to the tail.
      string next;
@@ -663,6 +697,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
    {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":managedMode?"MANAGED_OWNER_RC1":"FAKE_ONLY_RC1"},{"remoteId",remoteSupervisor.SessionId},
    {"remote",observed},{"remoteConnected",(managedMode||observedMode) && (string)observed["state"]=="Ready"},
    {"account",observedMode?"Existing Remote / read-only":managedMode?"RC1 Host-owned Remote":"DEMO: disabled"},
+   {"remoteBornUtcTicks",managedMode?managedBornUtcTicks:0L},
+   {"remoteStartupArt",managedMode?String.Join("\n",managedBannerArt.ToArray()):""},
    {"remoteIdentity",new Dictionary<string,object>{
     {"user",managedMode?managedAccount:""},{"deviceName",managedMode?managedDeviceName:""},
     {"deviceId",managedMode?managedDeviceId:""}
@@ -790,6 +826,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    disposed=true;
    pulse.Stop();pulse.Dispose();tray.Visible=false;tray.Dispose();
    if(reopenSignal!=null)reopenSignal.Dispose();
+   if(idleUpgradeSignal!=null)idleUpgradeSignal.Dispose();
    if(guiReadySignal!=null)guiReadySignal.Dispose();
    bool ipcClean=true,filesClean=false,guiClean=(gui==null);
    try{if(server!=null)server.Dispose();}catch{ipcClean=false;}

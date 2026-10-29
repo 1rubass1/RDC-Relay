@@ -156,6 +156,18 @@ internal static class RdcRc1ManualUpgrade {
     Console.Error.WriteLine("RC1_MANUAL_STAGING_RETAINED:"+stage);
   }
  }
+ static bool TryIdleHostHandoff(string oldRelease,Mutex oldHostLock){
+  string eventName=OldHostMutexName(oldRelease).Replace(
+   "RdcRelayRC1Owner-","RdcRelayRC1IdleUpgrade-");
+  try{
+   using(var wake=EventWaitHandle.OpenExisting(eventName)){
+    if(!wake.Set())return false;
+   }
+  }catch(WaitHandleCannotBeOpenedException){return false;}
+  if(!oldHostLock.WaitOne(20000))
+   throw new InvalidOperationException("RC1_IDLE_HOST_HANDOFF_NOT_ACKNOWLEDGED");
+  return true;
+ }
  static bool CanDeferPreviousHost(bool recognizedRc1,bool oldHostActive,bool noRemoteVerified){
   return recognizedRc1 && oldHostActive && noRemoteVerified;
  }
@@ -247,7 +259,8 @@ internal static class RdcRc1ManualUpgrade {
        StringComparison.OrdinalIgnoreCase);
       if(!realInstall||!CanDeferPreviousHost(true,true,remoteAbsent))
        throw new InvalidOperationException("RC1_MANUAL_PREVIOUS_RC1_HOST_ACTIVE_REMOTE_UNVERIFIED");
-      previousRc1HostIdle=true;
+      previousRc1HostIdle=!TryIdleHostHandoff(oldDir,oldHostLock);
+      if(!previousRc1HostIdle)oldHostLocked=true;
      }else oldHostLocked=true;
     }
    }

@@ -101,6 +101,10 @@ function Start-RdcOwnerGui {
  $script:ownerStatus=if($script:ownerObservedMode){'OBSERVED_READ_ONLY_RC1'}elseif($script:ownerManagedMode){'MANAGED_OWNER_RC1'}else{'FAKE_ONLY_RC1'}
  $script:ownerLastShownRevision=-1
  $script:ownerLastShownRemoteRevision=-1
+ $script:ownerRemoteBornTicks=0
+ $script:ownerLastSnapshotUtcTicks=0
+ $script:ownerRemotePid=0
+ $script:ownerLastUptimeText=''
  $script:ownerLastLogCursor=0
  $script:ownerLastLogEpoch=-1
  if($script:ownerObservedMode){
@@ -138,6 +142,9 @@ function Start-RdcOwnerGui {
      # The Host, never this GUI, owns the monotonic fake log cursor/state.
      # A fresh GUI reconstructs its journal from the bounded Host snapshot.
      $remoteSnapshot=$snapshot.remote
+     $script:ownerRemoteBornTicks=if($script:ownerManagedMode){[long]$snapshot.remoteBornUtcTicks}else{0L}
+     $script:ownerRemotePid=[int]$remoteSnapshot.processPid
+     $script:ownerLastSnapshotUtcTicks=[DateTime]::UtcNow.Ticks
      if(-not $snapshot.capabilities){throw 'RC1_CAPABILITIES_MISSING'}
      # Permissions come from Host, never from a GUI-local PID/ownership guess.
      $devicesItem.Enabled=[bool]$snapshot.capabilities.deviceManagementLink
@@ -205,7 +212,8 @@ function Start-RdcOwnerGui {
         'Remote отключён'
        }else{'Remote: '+[string]$remoteSnapshot.state}
        Set-State $name ([string]$remoteSnapshot.status) $color
-       Set-RuntimeDisplay ('Remote PID '+[string]$remoteSnapshot.processPid) 'Управление: Host-owned Job' $true
+       $script:ownerLastUptimeText=''  # Timer owns the original runtime footer.
+       if($script:ownerRemoteBornTicks -le 0){Set-RuntimeDisplay 'Remote PID —' 'Remote отключён' $true}
       }else{
        Set-State 'Remote отключён (RC1)' ('Host: '+[string]$remoteSnapshot.state+'; только синтетические данные.') ([Drawing.Color]::Khaki)
        Set-RuntimeDisplay ('Host PID '+[string]$snapshot.hostPid) 'Remote НЕ подключён | RC1' $true
@@ -233,13 +241,21 @@ function Start-RdcOwnerGui {
         'Remote connection marker received by Host'
        }else{'Connected state not currently confirmed'}
        $safePid=[int]$remoteSnapshot.processPid
+       $safeArt=''
+       if($script:ownerManagedMode -and $snapshot.remoteStartupArt){
+        $candidateArt=[string]$snapshot.remoteStartupArt
+        if($candidateArt.Length -le 1600 -and
+           $candidateArt -cmatch '\A[\s\u2500-\u259F\u00A0/\\_|.]+\z'){
+         $safeArt=$candidateArt.TrimEnd()
+        }
+       }
        $script:startupBlock=[string]::Join($nl,@(
-        'Remote Connection','',
+        $safeArt,'','Remote Connection','',
         'RDC Relay 1.6.0 RC1 / Desktop Commander 0.2.52','',
-        ('Status: '+$safeState),
-        ('User: '+$(if($safeUser){$safeUser}else{'not reported'})),
-        ('Device Name: '+$(if($safeDeviceName){$safeDeviceName}else{'not reported'})),
-        ('Device ID: '+$(if($safeDeviceId){$safeDeviceId}else{'not reported'})),
+        ('Status: '+$(if($safeState -eq 'Connected'){'Online'}else{$safeState})),
+        ('- User: '+$(if($safeUser){$safeUser}else{'not reported'})),
+        ('- Device Name: '+$(if($safeDeviceName){$safeDeviceName}else{'not reported'})),
+        ('- Device ID: '+$(if($safeDeviceId){$safeDeviceId}else{'not reported'})),
         ('Process: '+$(if($safePid -gt 0){'PID '+$safePid}else{'not started'})),
         ('Ownership: '+$modeLabel),
         $statusProof,'',
@@ -294,6 +310,16 @@ function Start-RdcOwnerGui {
      Set-State 'Связь с Host' 'IPC временно недоступен; состояние Remote неизвестно, остановка запрещена.' ([Drawing.Color]::Khaki)
     }
    }finally{$script:ownerPending=$null;$script:ownerRequestedNavigation='';$script:ownerRequestedAction=''}
+  }
+  if($script:ownerManagedMode -and $script:ownerRemoteBornTicks -gt 0 -and
+     $script:ownerRemotePid -gt 0 -and $script:ownerLastSnapshotUtcTicks -gt 0 -and
+     ([DateTime]::UtcNow.Ticks-$script:ownerLastSnapshotUtcTicks) -le 50000000){
+   $seconds=[Math]::Max(0,[Math]::Floor(([DateTime]::UtcNow.Ticks-$script:ownerRemoteBornTicks)/10000000.0))
+   $uptime='Время работы {0:00}:{1:00}:{2:00}' -f [Math]::Floor($seconds/3600),[Math]::Floor(($seconds%3600)/60),($seconds%60)
+   if($uptime -cne $script:ownerLastUptimeText){
+    $script:ownerLastUptimeText=$uptime
+    Set-RuntimeDisplay ('Remote PID '+[string]$script:ownerRemotePid) $uptime $true
+   }
   }
   if(-not $script:ownerPending -and -not $form.IsDisposed){
    # One shared sequence and one in-flight IPC call: a user menu action can

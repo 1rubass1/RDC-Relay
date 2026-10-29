@@ -30,7 +30,7 @@ Check ($runtime.Contains('AcceptManagedIdentityLine(cleanLine)')) 'Host consumes
 Check ($runtime.Contains('remoteSupervisor.NoteHostEvent("Owned Remote identity metadata received: "+field)')) 'Metadata mutation increments independent Remote revision'
 Check ($runtime.Contains('"remoteIdentity"') -and $runtime.Contains('managedMode?managedAccount:""')) 'Identity IPC data provided only by managed Host'
 Check ($gui.Contains('Set-AccountDisplay $safeUser')) 'Authenticated GUI updates existing original footer account'
-Check ($gui.Contains("('Device Name: '") -and $gui.Contains("('Device ID: '") -and $gui.Contains("('User: '")) 'Original upper pane renders structured account and device header'
+Check ($gui.Contains("('- Device Name: '") -and $gui.Contains("('- Device ID: '") -and $gui.Contains("('- User: '")) 'Original upper pane renders structured account and device header'
 Check (-not $setup.Contains('MessageBoxIcon.Information')) 'Setup has no redundant informational completion popup'
 Check ($hostScript.Contains('RC1_OTHER_RELEASE_HOST_STILL_RUNNING')) 'New Full Host prevents cross-release duplicate Hosts'
 Write-Output ('RC1_OWNER_IDENTITY_PASS='+$passes+' FAIL='+$fails)
