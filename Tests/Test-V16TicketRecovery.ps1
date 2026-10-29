@@ -36,6 +36,16 @@ try{
  $observed=$store.CreateThen($observedJson,[Func[object]]{return (New-Object Object)})
  Assert ($null -ne $observed -and [IO.File]::Exists($store.PathName)) 'observed read-only GUI mode gets private ticket'
  Assert ($store.RevokeOnlyOwned() -and -not [IO.File]::Exists($store.PathName)) 'observed ticket revokes verified own bytes'
+ $managedJson=[RdcOwnerWire]::Json.Serialize(@{
+  hostGeneration=$gen;nonce=[Guid]::NewGuid().ToString('N');remoteMode='MANAGED_OWNER_RC1'})
+ $managed=$store.CreateThen($managedJson,[Func[object]]{return (New-Object Object)})
+ Assert ($null -ne $managed -and [IO.File]::Exists($store.PathName)) 'managed owned GUI mode gets private ticket'
+ Assert ($store.RevokeOnlyOwned() -and -not [IO.File]::Exists($store.PathName)) 'managed ticket revokes verified own bytes'
+ $wrongGeneration=[RdcOwnerWire]::Json.Serialize(@{
+  hostGeneration=[Guid]::NewGuid().ToString('N');nonce=[Guid]::NewGuid().ToString('N');remoteMode='MANAGED_OWNER_RC1'})
+ $wrongRefused=$false
+ try{$store.Create($wrongGeneration)}catch{$wrongRefused=$true}
+ Assert ($wrongRefused -and -not [IO.File]::Exists($store.PathName)) 'managed ticket wrong host generation refused'
  $unsafeModeJson=[RdcOwnerWire]::Json.Serialize(@{
   hostGeneration=$gen;nonce=[Guid]::NewGuid().ToString('N');remoteMode='REMOTE_OWNED_STOP'})
  $unsafeRefused=$false

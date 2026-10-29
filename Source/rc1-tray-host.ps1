@@ -36,8 +36,9 @@ try{
    try{$observer=Initialize-Rc1RemoteObserver $owner}catch{
     $reason=[string]$_.Exception.Message
     if($reason -match 'RC1_OBSERVER_AMBIGUOUS_OR_ABSENT_0|RC1_OBSERVER_LEGACY_LOG_NOT_FOUND'){
+     # Do not start real Remote until the first GUI has authenticated to Host.
+     # Managed auto-start is armed by EnableManagedRemote and gated by GUI HELLO.
      $owner.EnableManagedRemote()
-     [void]$owner.TryAutoStartManagedRemote()
     }else{throw}
    }
   }else{$observer=Initialize-Rc1RemoteObserver $owner}
@@ -53,7 +54,8 @@ try{
    }
    if($observer.HandoffComplete){
     $observerTimer.Stop()
-    [void]$owner.TryAutoStartManagedRemote()
+    # Managed autostart is gated by the replacement GUI's authenticated
+    # HELLO in the Host pulse; never spawn Remote during GUI transition.
     return
    }
    if($ObserveAutoExitSeconds -gt 0 -and $observerClock.Elapsed.TotalSeconds -ge $ObserveAutoExitSeconds){

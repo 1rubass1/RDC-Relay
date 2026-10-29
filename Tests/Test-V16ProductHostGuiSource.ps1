@@ -30,10 +30,11 @@ try{
         $owner.Contains('$reconnectItem.Enabled=$false')) 'X exits GUI; Adopted read-only and Managed capabilities separated'
  Check ($runtime.Contains('NotifyIcon') -and $runtime.Contains('StartGui') -eq $false -and
         $runtime.Contains('public void OpenGui()')) 'persistent tray owns separate GUI process creation'
- Check ($hostScript.Contains('[void]$owner.TryAutoStartManagedRemote()') -and
+ Check (-not $hostScript.Contains('[void]$owner.TryAutoStartManagedRemote()') -and
         $runtime.Contains('public bool TryAutoStartManagedRemote()') -and
+        $runtime.Contains('!guiAuthenticated||guiState!="CONNECTED"') -and
         $runtime.Contains('AnotherDesktopCommanderRemote()') -and
-        $runtime.Contains('AnotherLegacyShell()')) 'full Host autostart requires absence of legacy GUI and external Remote'
+        $runtime.Contains('AnotherLegacyShell()')) 'full Host autostart waits for authenticated GUI, then excludes legacy GUI and external Remote'
  Check ($observer.Contains('MissingSinceTicks') -and
         $observer.Contains('FromSeconds(5)') -and
         $observer.Contains('CanPromoteObservedRemote') -and

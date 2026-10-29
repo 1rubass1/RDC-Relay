@@ -173,7 +173,9 @@ public sealed class RdcOwnerRuntime : IDisposable {
      }
      if(managedMode){
       RefreshManagedRemote();
-      if(autoStartPending && DateTime.UtcNow>=nextAutoStartUtc)TryAutoStartManagedRemote();
+      if(autoStartPending && guiAuthenticated && guiState=="CONNECTED" &&
+       !reopenAfterModeChange && DateTime.UtcNow>=nextAutoStartUtc)
+       TryAutoStartManagedRemote();
      }
      if(reopenSignal!=null && reopenSignal.WaitOne(0) && !exitRequested){
       Append("host","verified local GUI activation requested");
@@ -378,7 +380,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
  // transition away from an EXTERNAL Remote; failure preserves the GUI.
  public bool TryAutoStartManagedRemote(){
   lock(gate){
-   if(disposed||exitRequested||observedMode||!managedMode)return false;
+   if(disposed||exitRequested||observedMode||!managedMode||
+      !guiAuthenticated||guiState!="CONNECTED"||reopenAfterModeChange)return false;
    if(managedProcess!=null&&managedProcess.Running){autoStartPending=false;return true;}
    try{StartManagedRemote();autoStartPending=false;return true;}
    catch(Exception problem){

@@ -45,7 +45,7 @@ public sealed class RdcOwnerTicketStore {
   var map=RdcOwnerWire.Decode(json);
   string mode=RdcOwnerWire.String(map,"remoteMode");
   if(RdcOwnerWire.String(map,"hostGeneration")!=runGeneration ||
-     (mode!="FAKE_ONLY_RC1" && mode!="OBSERVED_READ_ONLY_RC1") ||
+     (mode!="FAKE_ONLY_RC1" && mode!="OBSERVED_READ_ONLY_RC1" && mode!="MANAGED_OWNER_RC1") ||
      RdcOwnerWire.String(map,"nonce").Length!=32)
     throw new InvalidOperationException("RC1_TICKET_PAYLOAD_IDENTITY");
   var data=new UTF8Encoding(false,true).GetBytes(json);
