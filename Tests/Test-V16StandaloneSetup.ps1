@@ -57,6 +57,14 @@ try{
   Check ([string]$safeFailure.Invoke($null,[object[]]@($otherError)) -ceq
    'InvalidOperationException') 'EXE launcher redacts arbitrary exception detail'
  }
+ $safeHost=$launcherType.GetMethod('SafeHostExitCode',$flags)
+ Check ($null -ne $safeHost) 'EXE launcher exposes categorized host-startup failure'
+ if($safeHost){
+  Check ([string]$safeHost.Invoke($null,[object[]]@("Sensitive path C:\\secret; RC1_INITIAL_GUI_NONE",1)) -ceq
+   'RC1_INITIAL_GUI_NONE') 'EXE host GUI spawn refusal is categorized without path'
+  Check ([string]$safeHost.Invoke($null,[object[]]@("C:\\secret\\arbitrary content",7)) -ceq
+   'RC1_HOST_EARLY_EXIT_7') 'EXE unknown host failure does not reveal raw output'
+ }
  if($activate -and $eventNameMethod){
   $sourceForName=[string](Join-Path $extracted 'Source')
   $derived=[string]$eventNameMethod.Invoke($null,[object[]]@($sourceForName))

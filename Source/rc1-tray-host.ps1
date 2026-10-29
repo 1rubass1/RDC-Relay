@@ -92,6 +92,14 @@ try{
  # Full Host may have started its OWN Remote; an existing external Remote
  # is still observed passively without importing any process-stop authority.
  $owner.OpenGui()
+ # Retry one immediately rejected GUI spawn only after the ticket store has
+ # proved cleanup (NONE). Never retry an unverified child or a live GUI.
+ if(-not $TrialRoot -and $owner.Status -ceq 'NONE'){$owner.OpenGui()}
+ # A new product Host with no GUI must not leave a misleading tray icon.
+ # Propagate only a fixed failure category; never log private ticket data.
+ if(-not $TrialRoot -and $owner.Status -in @('NONE','UNVERIFIED')){
+  throw ('RC1_INITIAL_GUI_'+$owner.Status)
+ }
  if($TrialFailGuiStartOnce){
   if($owner.Status -cne 'NONE'){throw 'RC1_TRIAL_F2_TICKET_NOT_RETRYABLE'}
   Write-Output 'RC1_TRIAL_F2_FIRST_START_REFUSED_AND_CLEAN'

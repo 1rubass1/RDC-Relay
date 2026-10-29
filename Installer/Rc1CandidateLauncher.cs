@@ -39,6 +39,15 @@ internal static class RdcRc1CandidateLauncher {
    return code;
   return error.GetType().Name;
  }
+ static string SafeHostExitCode(string raw,int exitCode){
+  // A failed PowerShell Host can print private paths. Extract only one fixed
+  // startup failure category from a bounded prefix and discard everything else.
+  if(raw==null)raw="";
+  if(raw.Length>4096)raw=raw.Substring(0,4096);
+  var found=System.Text.RegularExpressions.Regex.Match(raw,
+   @"\bRC1_INITIAL_GUI_(NONE|UNVERIFIED)\b");
+  return found.Success?found.Value:"RC1_HOST_EARLY_EXIT_"+exitCode;
+ }
  static int Main(string[] args) {
 #if RDC_RC1_BLOCKED
   Console.Error.WriteLine("RC1_OWNER_LAUNCHER_BLOCKED_PENDING_OWNER_GO");
@@ -82,16 +91,23 @@ internal static class RdcRc1CandidateLauncher {
      Path.Combine(source,"rc1-tray-host.ps1")+"\" -Full");
    psi.UseShellExecute=false;
    psi.CreateNoWindow=true;
+   psi.RedirectStandardError=true;
    psi.WorkingDirectory=source;
    using(var child=Process.Start(psi)){
     if(child==null)throw new InvalidOperationException("RC1_HOST_START_FAILED");
+    // Observe bounded host diagnostics without exposing a raw PowerShell
+    // exception, path, ticket, credential, or log to the installer UI.
+    var hostErrors=child.StandardError.ReadToEndAsync();
     // Never report success merely because PowerShell accepted a new process.
     // A dying Host (singleton conflict / compile error) must fail visibly.
     var clock=Stopwatch.StartNew();
     // A first cold PowerShell/WinForms compilation may take longer than a
     // subsequent tray reopen. Keep the check bounded and monitor Host death.
     while(clock.ElapsedMilliseconds<45000){
-     if(child.HasExited)throw new InvalidOperationException("RC1_HOST_EARLY_EXIT_"+child.ExitCode);
+     if(child.HasExited){
+      string raw=hostErrors.IsCompleted?hostErrors.GetAwaiter().GetResult():"";
+      throw new InvalidOperationException(SafeHostExitCode(raw,child.ExitCode));
+     }
      if(SignalExistingGui(guiEvent) && WaitForGuiReady(readyEvent,250)){
       Console.WriteLine("RC1_HOST_STARTED_AUTHENTICATED_GUI_READY");
       return 0;
