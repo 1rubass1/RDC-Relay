@@ -325,6 +325,16 @@ function Start-RdcOwnerGui {
     }elseif($script:ownerRequestedAction){
      Set-State 'Операция отклонена' ('Host не подтвердил '+$script:ownerRequestedAction+'. Перепроверьте состояние Remote.') ([Drawing.Color]::LightCoral)
     }else{
+     # A failed poll invalidates the display revision cache. A subsequent
+     # successful snapshot must repaint even when Host state did not change.
+     $script:ownerLastShownRevision=-1
+     $script:ownerLastShownRemoteRevision=-1
+     $script:ownerLastSnapshotUtcTicks=0L
+     $script:ownerCanStart=$false
+     $script:ownerCanStop=$false
+     $script:ownerCanReconnect=$false
+     $finish.Enabled=$false
+     $reconnectItem.Enabled=$false
      Set-State 'Связь с Host' 'IPC временно недоступен; состояние Remote неизвестно, остановка запрещена.' ([Drawing.Color]::Khaki)
     }
    }finally{$script:ownerPending=$null;$script:ownerRequestedNavigation='';$script:ownerRequestedAction=''}

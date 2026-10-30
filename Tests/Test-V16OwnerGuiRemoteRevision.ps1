@@ -17,6 +17,9 @@ Check ($gui.Contains('$script:ownerLastShownRemoteRevision=-1')) 'initial GUI Re
 Check ($gui.Contains('$remoteRevision=[long]$remoteSnapshot.revision')) 'GUI uses authoritative Remote snapshot revision'
 Check ($gui.Contains('$remoteRevision -ne $script:ownerLastShownRemoteRevision')) 'Remote-only revision triggers status repaint'
 Check ($gui.Contains('$script:ownerLastShownRemoteRevision=$remoteRevision')) 'Remote revision checkpoint advances'
+Check ($gui.Contains('$script:ownerLastSnapshotUtcTicks=0L') -and
+ ($gui.Split([string[]]@('$script:ownerLastShownRemoteRevision=-1'),[StringSplitOptions]::None).Length -ge 3)) 'Failed IPC poll invalidates revision and uptime caches for recovery'
+Check ($gui.Contains('$script:ownerCanStop=$false') -and $gui.Contains('$finish.Enabled=$false')) 'IPC uncertainty disables Remote actions until next verified snapshot'
 Check ($gui.Contains('if($script:ownerRealMode)') -and $gui.Contains('$script:startupBlock=[string]::Join($nl,@(') -and
  $gui.Contains('Remote Connection')) 'original upper pane receives a sanitized connection summary'
 Check ($gui.Contains('switch([string]$remoteSnapshot.state)') -and
