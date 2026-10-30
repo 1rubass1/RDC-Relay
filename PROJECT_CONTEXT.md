@@ -1,5 +1,7 @@
 # RDC Relay — current development context
 
+> **LATEST 2026-10-30 G8I:** Entire original v1.5.18 Remote terminal startup/header now travels through a tight allowlist from Host-owned pinned Remote 0.2.52 log to authenticated GUI. Unicode art, progress stages, validated account/device, Next and Commands with original help/logout text retain 1.5.18 RichTextBox colorizer; private tool calls and raw path/endpoint/credentials excluded. Confirmed **41/41** visible startup lines from the running Remote in isolated read-only parser probe; focused **35/35**, regressions **28/28**, embedded Setup **18/18** PASS exit0; new Full `OriginalHeader` Setup/Portable on Desktop only. Existing installed RC1 and Remote untouched to preserve STARMER access, rollback v1.5.18 EXE preserved. Owner GUI visual after new install NOT CHECKED. G8I report in `docs/dev/planning/V1-6-0-RC1-G8I-FULL-ORIGINAL-STARTUP-HEADER-2026-10-30.md`, Draft PR #23.
+
 > **G8H (2026-10-29):** Реализованы цветная шапка с проверенной графикой оригинала 1.5.18, реальный uptime Remote по OS birth и кооперативная замена idle Host через точный event/mutex с автоматическим запуском нового Host. До-G8H оболочка без event потребует один раз закрыть трей вручную. Проверено: 27/27 регрессий, 18/18 Setup, 6/6 событийных тестов, GUI/IPC OS PASS. Живая установка и визуальный результат ещё не проверены. Работающий Remote не остановлен. См. `docs/dev/planning/V1-6-0-RC1-G8H-CLASSIC-UI-IDLE-HANDOFF-2026-10-29.md`, PR #23 Draft.
 
 

@@ -249,18 +249,36 @@ function Start-RdcOwnerGui {
          $safeArt=$candidateArt.TrimEnd()
         }
        }
-       $script:startupBlock=[string]::Join($nl,@(
-        $safeArt,'','Remote Connection','',
-        'RDC Relay 1.6.0 RC1 / Desktop Commander 0.2.52','',
-        ('Status: '+$(if($safeState -eq 'Connected'){'Online'}else{$safeState})),
-        ('- User: '+$(if($safeUser){$safeUser}else{'not reported'})),
-        ('- Device Name: '+$(if($safeDeviceName){$safeDeviceName}else{'not reported'})),
-        ('- Device ID: '+$(if($safeDeviceId){$safeDeviceId}else{'not reported'})),
-        ('Process: '+$(if($safePid -gt 0){'PID '+$safePid}else{'not started'})),
-        ('Ownership: '+$modeLabel),
-        $statusProof,'',
-        'Private Remote logs and credentials remain in Host.'
-       ))
+       # The original 1.5.18 RdcLogBox already contains the exact Unicode,
+       # glyph and semantic colorizing pipeline. Feed the whole finite pinned
+       # Remote startup banner from Host, not a synthetic shortened summary.
+       # Host only emits allowlisted startup lines, never subsequent tool calls.
+       $safeOriginalHeader=''
+       if($script:ownerManagedMode -and $snapshot.remoteStartupHeader){
+        $candidateHeader=[string]$snapshot.remoteStartupHeader
+        if($candidateHeader.Length -le 8192 -and
+           $candidateHeader -cnotmatch '[\x00-\x08\x0B\x0C\x0E-\x1F]' -and
+           $candidateHeader -cnotmatch '(?i)Received tool call|Tool call '){
+         $safeOriginalHeader=$candidateHeader.TrimEnd()
+        }
+       }
+       if($safeOriginalHeader){
+        $script:startupBlock=$safeOriginalHeader
+       }else{
+        # Before the first real Host log line, retain a minimal truthful
+        # fallback, including Adopted/read-only cases with no owned log.
+        $script:startupBlock=[string]::Join($nl,@(
+         $safeArt,'','Remote Connection','',
+         'RDC Relay 1.6.0 RC1 / Desktop Commander 0.2.52','',
+         ('Status: '+$(if($safeState -eq 'Connected'){'Online'}else{$safeState})),
+         ('- User: '+$(if($safeUser){$safeUser}else{'not reported'})),
+         ('- Device Name: '+$(if($safeDeviceName){$safeDeviceName}else{'not reported'})),
+         ('- Device ID: '+$(if($safeDeviceId){$safeDeviceId}else{'not reported'})),
+         ('Process: '+$(if($safePid -gt 0){'PID '+$safePid}else{'not started'})),
+         ('Ownership: '+$modeLabel),
+         $statusProof
+        ))
+       }
        Render-CompactLog
       }
      }

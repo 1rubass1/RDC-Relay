@@ -22,7 +22,8 @@ Check ($gui.Contains('if($script:ownerRealMode)') -and $gui.Contains('$script:st
 Check ($gui.Contains('switch([string]$remoteSnapshot.state)') -and
  $gui.Contains("'Ready' {'Connected'}") -and $gui.Contains("'Fault' {'Connection fault'}")) 'header renders allowlisted state descriptions'
 Check ($gui.Contains("'Ownership: '+$modeLabel") -and
- $gui.Contains('Private Remote logs and credentials remain in Host.')) 'summary indicates ownership without raw details'
+ $gui.Contains('$safeOriginalHeader=$candidateHeader.TrimEnd()') -and
+ $gui.Contains('$candidateHeader -cnotmatch')) 'summary fallback and validated full original header exclude raw tool calls'
 Add-Type -Path @((Join-Path $source 'RdcOwnerProcess.cs'),(Join-Path $source 'RdcOwnerRemoteState.cs')) -ReferencedAssemblies @('System.Core.dll','System.dll')
 $state=New-Object RdcOwnerRemoteState
 $state.EnableManaged()

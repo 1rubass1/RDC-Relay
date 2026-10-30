@@ -32,6 +32,9 @@ public sealed class RdcOwnerRuntime : IDisposable {
  string managedAccount="",managedDeviceName="",managedDeviceId="";
  long managedBornUtcTicks=0;
  readonly List<string> managedBannerArt=new List<string>();
+ readonly List<string> managedStartupHeader=new List<string>();
+ bool managedStartupComplete=false;
+ int managedStartupScanned=0;
  int managedBannerScanned=0;
  long managedLogOffset=0;
  ToolStripMenuItem trayStatusItem,trayExitItem;
@@ -510,6 +513,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    managedProcess=child;managedLogPath=file;managedLogs.Add(file);managedLogOffset=0;
    managedLogFragment="";managedAccount="";managedDeviceName="";managedDeviceId="";
    managedBornUtcTicks=child.BornUtcTicks;managedBannerArt.Clear();managedBannerScanned=0;
+   managedStartupHeader.Clear();managedStartupComplete=false;managedStartupScanned=0;
    managedState="Connecting";managedDetail="Starting pinned Desktop Commander Remote";
    remoteSupervisor.ManagedStatus(child.Pid,true,managedState,managedDetail);
    autoStartPending=false;
@@ -524,9 +528,95 @@ public sealed class RdcOwnerRuntime : IDisposable {
   autoStartPending=false;
   managedAccount="";managedDeviceName="";managedDeviceId="";managedBornUtcTicks=0;
   managedBannerArt.Clear();managedBannerScanned=0;
+   managedStartupHeader.Clear();managedStartupComplete=false;managedStartupScanned=0;
   managedState="Disconnected";managedDetail="Host-owned Remote stopped";
   remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
   Append("remote","all members of the private owned Job exited");
+ }
+ // Permit only the pinned Remote's visible introductory output. No tool calls,
+ // arbitrary stdout, filesystem paths, endpoints, credentials or diagnostics.
+ // Preserve the real Unicode line prefixes/box art so the unchanged 1.5.18
+ // RdcLogBox colorizer can style the original header in exactly the same way.
+ static bool TrySafeStartupLine(string raw,out string visible) {
+  visible="";
+  if(raw==null||raw.Length>260)return false;
+  string line=System.Text.RegularExpressions.Regex.Replace(raw,
+   @"\x1B\[[0-?]*[ -/]*[@-~]","").TrimEnd('\r');
+  // UTF-16 surrogate pairs are valid emoji; only refuse stray surrogates.
+  if(line.Length>220 || System.Text.RegularExpressions.Regex.IsMatch(line,
+   @"[\p{Cc}]|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])"))
+   return false;
+  if(line.Length==0){visible="";return true;}
+  if(line.Length>=8 && System.Text.RegularExpressions.Regex.IsMatch(line,
+    @"\A[ \t\u2500-\u259F\u00A0/\\_|.]+\z")){
+   visible=line;return true;
+  }
+  string field,value;
+  if(TrySafeIdentityLine(line,out field,out value)){visible=line;return true;}
+  // Fixed instructions, lifecycle markers and command syntax; never accept
+  // arbitrary suffixes or commands returned by untrusted Remote output.
+  const string staticLabels=@"Remote Connection|Starting MCP Device\.\.\.|Connected to Desktop Commander MCP|Connected to Remote MCP|Session restored|Channel subscribed|Device marked as online|Device ready:|Desktop Commander Remote is connected|Next|Commands|Return to ChatGPT or Claude and continue your conversation\.|Keep this Terminal running\. You can minimize it\.|Press Ctrl\+C to disconnect\.|Run these in a new Terminal, or after disconnecting\.|Help:\s+npx @wonderwhy-er/desktop-commander@latest remote --help|Log out:\s+npx @wonderwhy-er/desktop-commander@latest remote --logout";
+  var match=System.Text.RegularExpressions.Regex.Match(line,
+   @"\A(?<dec>(?:[ \t\p{S}\p{P}\u200D\uFE0F]|[\uD800-\uDBFF][\uDC00-\uDFFF]){0,18})(?<label>"+
+   staticLabels+@")\z",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+  if(match.Success){visible=line;return true;}
+  if(System.Text.RegularExpressions.Regex.IsMatch(line,
+   @"\A\[DEBUG\] Verbose mode:\s+(true|false)\z",
+   System.Text.RegularExpressions.RegexOptions.IgnoreCase)){visible=line;return true;}
+  // Original banner prints a local executable path and Remote endpoint.
+  // Keep exact visible lifecycle wording, but not those private path values.
+  string[] dynamicSteps={
+   "Connecting to Local Desktop Commander MCP using:",
+   "Connecting to Remote MCP",
+   "Found persisted session for device",
+   "Presence tracked (device "
+  };
+  foreach(string label in dynamicSteps){
+   int pos=line.IndexOf(label,StringComparison.OrdinalIgnoreCase);
+   if(pos<0 || pos>18)continue;
+   string prefix=line.Substring(0,pos);
+   if(!System.Text.RegularExpressions.Regex.IsMatch(prefix,
+    @"\A(?:[ \t\p{S}\p{P}\u200D\uFE0F]|[\uD800-\uDBFF][\uDC00-\uDFFF]){0,18}\z"))continue;
+   if(label=="Found persisted session for device"||label=="Presence tracked (device "){
+    var uuid=System.Text.RegularExpressions.Regex.Match(line.Substring(pos+label.Length),
+     @"\A\s*[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}(?:\)|\s+visible as online\))?\s*\z");
+    if(!uuid.Success)continue;
+    if(label=="Found persisted session for device")
+     visible=prefix+"Found persisted session for device "+uuid.Value.Trim();
+    else visible=prefix+"Presence tracked (device "+uuid.Value.Trim();
+   } else visible=prefix+label.TrimEnd(':');
+   return true;
+  }
+  // This is a display-only device/status line, not a Remote control input.
+  match=System.Text.RegularExpressions.Regex.Match(line,
+   @"\A[ \t]{1,10}(Device:\s*|Status:\s*)([^\r\n]{1,80})\z");
+  if(match.Success){
+   string data=match.Groups[2].Value.Trim();
+   if(match.Groups[1].Value.StartsWith("Status:",StringComparison.Ordinal) &&
+      (data=="Online"||data=="Offline")){visible=line;return true;}
+   if(match.Groups[1].Value.StartsWith("Device:",StringComparison.Ordinal) &&
+     System.Text.RegularExpressions.Regex.IsMatch(data,@"\A[\p{L}\p{Nd} _().\-]{1,80}\z")){
+    visible=line;return true;
+   }
+  }
+  return false;
+ }
+ void AcceptManagedStartupLine(string raw){
+  if(managedStartupComplete || managedStartupScanned++>=90 ||
+     managedStartupHeader.Count>=54)return;
+  if(raw.IndexOf("Received tool call",StringComparison.OrdinalIgnoreCase)>=0 ||
+     raw.IndexOf("Tool call ",StringComparison.OrdinalIgnoreCase)>=0){
+   managedStartupComplete=true;return;
+  }
+  string line;
+  if(!TrySafeStartupLine(raw,out line))return;
+  if(String.Join("\n",managedStartupHeader.ToArray()).Length+line.Length>8192){
+   managedStartupComplete=true;return;
+  }
+  // Keep original blank lines and graphic rows; terminal instruction text is
+  // captured verbatim only if it matches the finite pinned-Remote allowlist.
+  managedStartupHeader.Add(line);
+  remoteSupervisor.NoteHostEvent("Safe pinned Remote startup header updated");
  }
  void AcceptManagedBannerArt(string raw){
   if(managedBannerScanned++>=12 || managedBannerArt.Count>=7)return;
@@ -604,6 +694,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    if(managedState!="Disconnected"){
     managedAccount="";managedDeviceName="";managedDeviceId="";managedBornUtcTicks=0;
     managedBannerArt.Clear();managedBannerScanned=0;
+   managedStartupHeader.Clear();managedStartupComplete=false;managedStartupScanned=0;
     managedState="Disconnected";managedDetail="Host-owned Remote process exited";
     remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
     Append("remote","owned Job no longer running");
@@ -632,6 +723,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
      string cleanLine=lines[i].TrimEnd('\r');
      AcceptManagedBannerArt(cleanLine);
      AcceptManagedIdentityLine(cleanLine);
+     AcceptManagedStartupLine(cleanLine);
      if(i<start)continue; // Only journal markers are bounded to the tail.
      string next;
      string marker=SafeRemoteMarker(cleanLine,out next);
@@ -699,6 +791,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    {"account",observedMode?"Existing Remote / read-only":managedMode?"RC1 Host-owned Remote":"DEMO: disabled"},
    {"remoteBornUtcTicks",managedMode?managedBornUtcTicks:0L},
    {"remoteStartupArt",managedMode?String.Join("\n",managedBannerArt.ToArray()):""},
+   {"remoteStartupHeader",managedMode?String.Join("\n",managedStartupHeader.ToArray()):""},
    {"remoteIdentity",new Dictionary<string,object>{
     {"user",managedMode?managedAccount:""},{"deviceName",managedMode?managedDeviceName:""},
     {"deviceId",managedMode?managedDeviceId:""}
