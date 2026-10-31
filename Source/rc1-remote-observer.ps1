@@ -219,6 +219,13 @@ function Invoke-Rc1RemoteObserverPoll([object]$owner,[hashtable]$ob){
    $marker=Get-Rc1ObservedMarker ([string]$raw).TrimEnd([char]13)
    if($null -eq $marker){continue}
    if($marker.State){$ob.State=$marker.State;$ob.Detail=$marker.Detail}
+   elseif($marker.Marker -ceq 'Remote tool completed' -and
+      $ob.State -in @('Connecting','AuthPending','Reconnecting','Fault')){
+    # A completed remote call proves recovery even when Presence is not replayed.
+    # Existing external Remote remains read-only; no stop/reconnect authority.
+    $ob.State='Ready'
+    $ob.Detail='Successful Remote tool call confirmed connectivity'
+   }
    if($emitted -lt 24){$owner.ObservedMarker([string]$marker.Marker);$emitted++}
   }
   $owner.UpdateObservedRemote($true,$ob.State,$ob.Detail)

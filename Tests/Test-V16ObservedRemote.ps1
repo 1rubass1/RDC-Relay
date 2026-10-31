@@ -34,6 +34,9 @@ try{
    $src.Contains('Test-Rc1ObservedRemoteIdentity') -and
    $src.Contains('Born') -and
    $src.Contains('@wonderwhy-er/desktop-commander@0.2.52')) 'PID birth and pinned commandline inspected'
+ Check ($src.Contains("$" + "marker.Marker -ceq 'Remote tool completed'") -and
+   $src.Contains("$" + "ob.State -in @('Connecting','AuthPending','Reconnecting','Fault')") -and
+   $src.Contains("$" + "ob.State='Ready'")) 'observer restores Ready only on completed tool call after transient state'
  Check (-not [regex]::IsMatch($src,'(?im)^[^#\r\n]*(?:Stop-Process|taskkill|\.Kill\(|remote --logout|Process\.Start)')) 'observer has no Remote control or spawn code'
  $e=$null;$t=$null
  [void][Management.Automation.Language.Parser]::ParseFile($scriptPath,[ref]$t,[ref]$e)

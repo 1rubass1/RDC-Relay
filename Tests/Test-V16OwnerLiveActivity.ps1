@@ -66,6 +66,13 @@ Check ($gui.Contains('Set-DividerWorkState ($toolActivity -ne ' + "'idle')") -an
 Check ($gui.Contains("$" + "script:ownerLastRemoteLinkState -in @('Fault','Reconnecting','AuthPending','Connecting')") -and
  $gui.Contains("$" + "remoteLinkState -ceq 'Ready'")) 'GUI flashes on channel reconnection without tool call'
 Check ($gui.Contains('Set-DividerWorkState $false')) 'GUI fail-close IPC loses animation'
+$recovery=([RdcOwnerRuntime]).GetMethod('ToolCompletionConfirmsReady',[Reflection.BindingFlags]'Static,NonPublic')
+Check ($null -ne $recovery) 'Host recovery proof helper exists'
+if($recovery){
+ Check ([bool]$recovery.Invoke($null,[object[]]@('Remote tool completed','Reconnecting'))) 'completed remote call restores reconnecting state'
+ Check (-not [bool]$recovery.Invoke($null,[object[]]@('Remote tool started','Reconnecting'))) 'started call alone cannot restore state'
+ Check (-not [bool]$recovery.Invoke($null,[object[]]@('Remote tool completed','Disconnected'))) 'disconnected state not revived by stale log'
+}
 Write-Output ('RC1_LIVE_ACTIVITY_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}
 exit 0

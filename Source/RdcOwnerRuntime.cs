@@ -725,6 +725,15 @@ public sealed class RdcOwnerRuntime : IDisposable {
    return "Remote tool failed";
   return "";
  }
+ // A successful Remote MCP tool call proves current end-to-end reachability.
+ // A local stdio restart marker alone must not keep the UI in Reconnecting
+ // indefinitely when the Remote continues processing authenticated calls.
+ // Never infer Ready merely from a running process or an incomplete call.
+ static bool ToolCompletionConfirmsReady(string marker,string currentState){
+  if(marker!="Remote tool completed")return false;
+  return currentState=="Reconnecting"||currentState=="Fault"||
+   currentState=="Connecting"||currentState=="AuthPending";
+ }
  void RefreshManagedRemote(){
   if(!managedMode||managedProcess==null||!managedProcess.HasStarted)return;
   if(!managedProcess.Running){
@@ -765,10 +774,16 @@ public sealed class RdcOwnerRuntime : IDisposable {
      string next;
      string marker=SafeRemoteMarker(cleanLine,out next);
      if(marker=="")continue;
+     // Preserve the sanitized tool completion journal entry, while using
+     // that same confirmed success to recover stale connection state.
+     if(next=="" && ToolCompletionConfirmsReady(marker,managedState))
+      next="Ready";
      if(emitted++<24)remoteSupervisor.AddSyntheticLogLine(marker);
      if(next!=""){
-      managedState=next;managedDetail=marker;
-      remoteSupervisor.ManagedStatus(managedProcess.Pid,true,next,marker);
+      managedState=next;
+      managedDetail=(marker=="Remote tool completed" && next=="Ready")
+       ?"Successful Remote tool call confirmed connectivity":marker;
+      remoteSupervisor.ManagedStatus(managedProcess.Pid,true,next,managedDetail);
      }
     }
    }
