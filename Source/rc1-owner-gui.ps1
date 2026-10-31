@@ -108,6 +108,7 @@ function Start-RdcOwnerGui {
  $script:ownerLastLogCursor=0
  $script:ownerLastLogEpoch=-1
  $script:ownerLastToolFault=$false
+ $script:ownerLastRemoteLinkState=''
  if($script:ownerObservedMode){
   Set-State 'Подключение к Host' 'Старый Remote обнаружен. После штатного завершения прежней оболочки RC1 запустит новый.' ([Drawing.Color]::Khaki)
   Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Remote: существующая сессия / Adopted' $true
@@ -171,9 +172,16 @@ function Start-RdcOwnerGui {
      if($toolActivity -cnotin @('working','hold','idle')){throw 'RC1_TOOL_ACTIVITY_INVALID'}
      Set-DividerWorkState ($toolActivity -ne 'idle')
      $toolFault=[bool]$remoteSnapshot.toolFault
-     if($script:ownerLastToolFault -and -not $toolFault){Start-DividerRecoveryFlash}
-     Set-DividerFaultState $toolFault
+     $remoteLinkState=[string]$remoteSnapshot.state
+     $remoteFault=($remoteLinkState -ceq 'Fault')
+     $recoveredLink=($remoteLinkState -ceq 'Ready' -and
+      $script:ownerLastRemoteLinkState -in @('Fault','Reconnecting','AuthPending','Connecting'))
+     if(($script:ownerLastToolFault -and -not $toolFault) -or $recoveredLink){
+      Start-DividerRecoveryFlash
+     }
+     Set-DividerFaultState ($toolFault -or $remoteFault)
      $script:ownerLastToolFault=$toolFault
+     $script:ownerLastRemoteLinkState=$remoteLinkState
      $epoch=[long]$remoteSnapshot.logStreamEpoch
      if($epoch -ne $script:ownerLastLogEpoch){
       $script:ownerLastLogEpoch=$epoch

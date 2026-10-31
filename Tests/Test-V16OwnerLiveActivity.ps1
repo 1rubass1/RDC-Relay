@@ -61,8 +61,10 @@ $o.RetargetObservedReadOnly(24681)
 Check (($o.Snapshot()).toolActivity -ceq 'idle' -and -not ($o.Snapshot()).canStop) 'adopted PID transition resets activity and preserves denied stop'
 $gui=[IO.File]::ReadAllText((Join-Path $src 'rc1-owner-gui.ps1'),[Text.Encoding]::UTF8)
 Check ($gui.Contains('Set-DividerWorkState ($toolActivity -ne ' + "'idle')") -and
- $gui.Contains('Set-DividerFaultState $toolFault') -and
+ $gui.Contains('Set-DividerFaultState ($toolFault -or $remoteFault)') -and
  $gui.Contains('Start-DividerRecoveryFlash')) 'GUI consumes authenticated activity, fault and recovery'
+Check ($gui.Contains("$" + "script:ownerLastRemoteLinkState -in @('Fault','Reconnecting','AuthPending','Connecting')") -and
+ $gui.Contains("$" + "remoteLinkState -ceq 'Ready'")) 'GUI flashes on channel reconnection without tool call'
 Check ($gui.Contains('Set-DividerWorkState $false')) 'GUI fail-close IPC loses animation'
 Write-Output ('RC1_LIVE_ACTIVITY_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}
