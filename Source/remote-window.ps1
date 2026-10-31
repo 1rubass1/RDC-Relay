@@ -4782,7 +4782,8 @@ function Render-CompactLog {
         $log.ApplyCompactLineSpacing()
         if($script:ownerCompactJournal){
             # Consistent monospaced six-digit gutter and a connected Unicode │.
-            Color-LogRegex $log '^(\d{6,18})\s+│' $headerValue -1 1
+            # Event sequence is neutral body text, not highlighted metadata.
+            Color-LogRegex $log '^(\d{6,18})\s+│' $log.ForeColor -1 1
             Color-LogRegex $log '^\d{6,18}\s+(│)' ([Drawing.Color]::Gainsboro) -1 1
         }
         Color-LogToken $log '🔧' $accentOrange

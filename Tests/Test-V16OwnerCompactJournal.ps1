@@ -45,6 +45,8 @@ Check ((Format-Rc1JournalLine 201 'Remote tool started|7|read_file|RAW:PRIVATE')
 Check ((Format-Rc1JournalLine 105 'Remote tool failed|9|write_file|notes.txt') -ceq
  '000009 │ ❌ Ошибка: Запись файла — notes.txt') 'failure retains matching operation and filename'
 Check ($renderer.Contains("Color-LogRegex "+'$log'+" '^\d{6,18}\s+(│)' ([Drawing.Color]::Gainsboro)")) 'vertical gutter is neutral light gray, not purple'
+Check ($renderer.Contains("Color-LogRegex "+'$log'+" '^(\d{6,18})\s+│' "+'$log.ForeColor'+" -1 1") -and
+ -not $renderer.Contains("Color-LogRegex "+'$log'+" '^(\d{6,18})\s+│' "+'$headerValue'+" -1 1")) 'event sequence digits use same normal foreground as ordinary journal text'
 Check ($source.Contains('Format-Rc1JournalLine $lineCursor') -and
  $source.Contains('Format-Rc1JournalLine ([long]$ev.sequence)')) 'snapshot and Host events use the same renderer'
 Check ($source.Contains('$script:ownerCompactJournal=$true') -and
