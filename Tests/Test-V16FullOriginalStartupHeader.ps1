@@ -61,7 +61,7 @@ if($keepBlank){
  for($i=0;$i -lt 120;$i++){
   $v=if(($i%2) -eq 0){''}else{'          '}
   $invokeArgs=New-Object object[] 2
-  $invokeArgs[0]=$rows
+  $invokeArgs[0]=$rows.psobject.BaseObject
   $invokeArgs[1]=$v
   if([bool]$keepBlank.Invoke($null,$invokeArgs)){
    [void]$rows.Add($(if([string]::IsNullOrWhiteSpace($v)){''}else{$v}))
@@ -69,7 +69,7 @@ if($keepBlank){
  }
  foreach($v in @('Channel subscribed','Device ready:','Next','Commands')){
   $invokeArgs=New-Object object[] 2
-  $invokeArgs[0]=$rows
+  $invokeArgs[0]=$rows.psobject.BaseObject
   $invokeArgs[1]=$v
   if([bool]$keepBlank.Invoke($null,$invokeArgs)){[void]$rows.Add($v)}
  }
