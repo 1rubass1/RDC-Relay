@@ -18,6 +18,32 @@ public sealed class RdcOwnerRemoteState {
  long epoch=1,revision=1,cursor=0,missed=0;
  bool sourceIsReal=false,stopApproved=false,observedAlive=false,managedMode=false;
  int observedPid=0;
+ int activeToolCalls=0;
+ DateTime lastToolMarkerUtc=DateTime.MinValue,activityHoldUntilUtc=DateTime.MinValue;
+ bool toolFault=false;
+ void ResetToolActivity(){activeToolCalls=0;lastToolMarkerUtc=DateTime.MinValue;activityHoldUntilUtc=DateTime.MinValue;toolFault=false;}
+ // Fixed safe categories only; no tool arguments or results cross Host IPC.
+ void NoteToolActivity(string marker){
+  DateTime now=DateTime.UtcNow;
+  if(marker.StartsWith("Remote tool started",StringComparison.Ordinal)){
+   activeToolCalls=Math.Min(32,activeToolCalls+1);lastToolMarkerUtc=now;
+   activityHoldUntilUtc=DateTime.MinValue;
+  }else if(marker=="Remote tool completed"){
+   activeToolCalls=Math.Max(0,activeToolCalls-1);lastToolMarkerUtc=now;
+   if(activeToolCalls==0)activityHoldUntilUtc=now.AddSeconds(10);
+   toolFault=false;
+  }else if(marker=="Remote tool failed"){
+   activeToolCalls=Math.Max(0,activeToolCalls-1);lastToolMarkerUtc=now;
+   activityHoldUntilUtc=DateTime.MinValue;toolFault=true;
+  }
+ }
+ string CurrentToolActivity(){
+  DateTime now=DateTime.UtcNow;
+  if(activeToolCalls>0 && (now-lastToolMarkerUtc).TotalSeconds>60)ResetToolActivity();
+  if(activeToolCalls>0)return "working";
+  if(now<activityHoldUntilUtc)return "hold";
+  return "idle";
+ }
  public string SessionId {get{return session;}}
  // A Managed Host starts disconnected. Only its private kernel Job adapter
  // may supply PID/state; the GUI and discovered processes never grant ownership.
@@ -27,7 +53,7 @@ public sealed class RdcOwnerRemoteState {
    sourceIsReal=true;managedMode=true;ownership=Ownership.Owned;
    observedPid=0;observedAlive=false;stopApproved=false;
    state="Disconnected";status="RC1 Host ready to start pinned Remote";
-   epoch++;tail.Clear();cursor=0;revision++;AddDiagnostic("Managed mode initialized");
+   ResetToolActivity();epoch++;tail.Clear();cursor=0;revision++;AddDiagnostic("Managed mode initialized");
   }
  }
  // Promote only after the Host independently proves the old external process
@@ -40,7 +66,7 @@ public sealed class RdcOwnerRemoteState {
    managedMode=true;ownership=Ownership.Owned;identity=null;
    observedPid=0;observedAlive=false;stopApproved=false;
    state="Disconnected";status="Previous Remote exited; RC1 Host preparing a new managed session";
-   epoch++;tail.Clear();cursor=0;revision++;
+   ResetToolActivity();epoch++;tail.Clear();cursor=0;revision++;
    AddDiagnostic("Legacy session left; managed Host enabled");
   }
  }
@@ -53,7 +79,8 @@ public sealed class RdcOwnerRemoteState {
    detail=(detail??"").Replace("\r"," ").Replace("\n"," ");
    if(detail.Length>160)detail=detail.Substring(0,160);
    if(observedPid==pid&&observedAlive==alive&&state==next&&status==detail)return;
-   if(pid!=observedPid){epoch++;tail.Clear();cursor=0;}
+   if(pid!=observedPid){ResetToolActivity();epoch++;tail.Clear();cursor=0;}
+   if(!alive)ResetToolActivity();
    observedPid=pid;observedAlive=alive;stopApproved=alive;
    state=next;status=detail;revision++;
    AddDiagnostic("Managed state: "+next);
@@ -68,7 +95,7 @@ public sealed class RdcOwnerRemoteState {
    sourceIsReal=true;stopApproved=false;observedPid=pid;observedAlive=true;
    ownership=Ownership.Adopted;identity=null;
    // Drop the constructor's fake-only banner before the first observed GUI log.
-   epoch++;cursor=0;tail.Clear();
+   ResetToolActivity();epoch++;cursor=0;tail.Clear();
    state="Connecting";status="Existing Remote observed; awaiting channel evidence";
    revision++;AddDiagnostic("Existing Remote attached read-only");
   }
@@ -80,7 +107,7 @@ public sealed class RdcOwnerRemoteState {
    // Caller reverified exact pinned OS identity including PID and birth.
    // No ownership/stop authority is acquired when a launcher is replaced.
    observedPid=pid;observedAlive=true;stopApproved=false;identity=null;
-   epoch++;cursor=0;tail.Clear();
+   ResetToolActivity();epoch++;cursor=0;tail.Clear();
    state="Connecting";status="Existing Remote launcher changed; observing read-only";
    revision++;AddDiagnostic("Observed launcher identity replaced");
   }
@@ -94,6 +121,7 @@ public sealed class RdcOwnerRemoteState {
    detail=(detail??"").Replace("\r"," ").Replace("\n"," ");
    if(detail.Length>160)detail=detail.Substring(0,160);
    if(state==next && status==detail && observedAlive==alive)return;
+   if(!alive)ResetToolActivity();
    state=next;status=detail;observedAlive=alive;revision++;
    AddDiagnostic("Observed: "+next+" / alive="+alive.ToString());
   }
@@ -110,6 +138,7 @@ public sealed class RdcOwnerRemoteState {
    cursor++;revision++;
    if(tail.Count==maxTail)tail.Dequeue();
    tail.Enqueue(cursor.ToString("D6")+" | "+marker);
+   NoteToolActivity(marker);
   }
  }
  public void AcceptFakeObservation(string next,string detail){
@@ -153,6 +182,7 @@ public sealed class RdcOwnerRemoteState {
    cursor++;revision++;
    if(tail.Count==maxTail)tail.Dequeue();
    tail.Enqueue(cursor.ToString("D6")+" | "+text);
+   NoteToolActivity(text);
   }
  }
  public int PumpReader(TextReader fakeReader,int maxLines){
@@ -170,7 +200,7 @@ public sealed class RdcOwnerRemoteState {
  }
  public void ResetFakeLogStream(){
   lock(sync){
-   epoch++;cursor=0;revision++;tail.Clear();
+   ResetToolActivity();epoch++;cursor=0;revision++;tail.Clear();
    AddDiagnostic("Synthetic log stream rotated");
   }
  }
@@ -189,7 +219,7 @@ public sealed class RdcOwnerRemoteState {
     {"processPid",sourceIsReal?observedPid:0},
     {"transportReady",state=="Ready"?(managedMode?"MANAGED_READY":sourceIsReal?"OBSERVED_READY":"FAKE_READY"):"not_connected"},
     {"authState",state=="AuthPending"?(managedMode?"MANAGED_AUTH":sourceIsReal?"OBSERVED_AUTH":"FAKE_AUTH"):"unavailable"},
-    {"toolActivity","idle"},{"state",state},{"status",status},
+    {"toolActivity",CurrentToolActivity()},{"toolFault",toolFault},{"state",state},{"status",status},
     {"logStreamEpoch",epoch},{"logCursor",cursor},{"missed",missed},
     {"tail",tail.ToArray()},{"diagnostics",diagnostics.ToArray()},
     {"revision",revision},{"canStop",managedMode&&observedAlive},

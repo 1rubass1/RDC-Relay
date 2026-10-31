@@ -699,6 +699,30 @@ public sealed class RdcOwnerRuntime : IDisposable {
   if(line.IndexOf("Device startup failed:",StringComparison.OrdinalIgnoreCase)>=0){
    next="Fault";return "Remote start failed";
   }
+  // Exact top-level pinned Remote tool markers only. Never forward raw
+  // arguments, tool output, request IDs, private paths or user data.
+  if(line.StartsWith("🔧 Received tool call ",StringComparison.Ordinal) &&
+     line.Length>"🔧 Received tool call ".Length){
+   // Only a known public tool identifier may be displayed. In particular,
+   // request ids, JSON arguments, stdout and file paths stay in the private log.
+   var name=System.Text.RegularExpressions.Regex.Match(line,
+    @"\A🔧 Received tool call [A-Za-z0-9_-]{1,100}:\s*(?<tool>[a-z][a-z0-9_]{1,39})(?=\s|$)");
+   if(name.Success){
+    string tool=name.Groups["tool"].Value;
+    string[] known={"start_process","read_process_output","interact_with_process",
+     "read_file","read_multiple_files","list_directory","get_file_info",
+     "list_processes","start_search","get_more_search_results","stop_search",
+     "get_config","write_file","edit_block","create_directory","move_file"};
+    if(Array.IndexOf(known,tool)>=0)return "Remote tool started: "+tool;
+   }
+   return "Remote tool started";
+  }
+  if(line.StartsWith("✅ Tool call ",StringComparison.Ordinal) &&
+     line.IndexOf(" completed:",StringComparison.Ordinal)>0)
+   return "Remote tool completed";
+  if(line.StartsWith("❌ Tool call ",StringComparison.Ordinal) &&
+     line.IndexOf(" failed:",StringComparison.Ordinal)>0)
+   return "Remote tool failed";
   return "";
  }
  void RefreshManagedRemote(){

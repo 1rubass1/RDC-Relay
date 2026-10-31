@@ -107,6 +107,7 @@ function Start-RdcOwnerGui {
  $script:ownerLastUptimeText=''
  $script:ownerLastLogCursor=0
  $script:ownerLastLogEpoch=-1
+ $script:ownerLastToolFault=$false
  if($script:ownerObservedMode){
   Set-State 'Подключение к Host' 'Старый Remote обнаружен. После штатного завершения прежней оболочки RC1 запустит новый.' ([Drawing.Color]::Khaki)
   Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Remote: существующая сессия / Adopted' $true
@@ -162,6 +163,17 @@ function Start-RdcOwnerGui {
         [bool]$remoteSnapshot.isActualRemote -ne $script:ownerRealMode){
       throw 'RC1_REMOTE_MODE_MISMATCH'
      }
+     # Unlike old monolithic GUI, live Remote output is owned by Host.
+     # Authenticated snapshots carry only fixed tool activity categories.
+     # Apply on every snapshot, even when Host/Remote revisions are unchanged:
+     # activity hold expiry is clock-based and must return the shader to idle.
+     $toolActivity=[string]$remoteSnapshot.toolActivity
+     if($toolActivity -cnotin @('working','hold','idle')){throw 'RC1_TOOL_ACTIVITY_INVALID'}
+     Set-DividerWorkState ($toolActivity -ne 'idle')
+     $toolFault=[bool]$remoteSnapshot.toolFault
+     if($script:ownerLastToolFault -and -not $toolFault){Start-DividerRecoveryFlash}
+     Set-DividerFaultState $toolFault
+     $script:ownerLastToolFault=$toolFault
      $epoch=[long]$remoteSnapshot.logStreamEpoch
      if($epoch -ne $script:ownerLastLogEpoch){
       $script:ownerLastLogEpoch=$epoch
@@ -335,6 +347,7 @@ function Start-RdcOwnerGui {
      $script:ownerCanReconnect=$false
      $finish.Enabled=$false
      $reconnectItem.Enabled=$false
+     Set-DividerWorkState $false
      Set-State 'Связь с Host' 'IPC временно недоступен; состояние Remote неизвестно, остановка запрещена.' ([Drawing.Color]::Khaki)
     }
    }finally{$script:ownerPending=$null;$script:ownerRequestedNavigation='';$script:ownerRequestedAction=''}
