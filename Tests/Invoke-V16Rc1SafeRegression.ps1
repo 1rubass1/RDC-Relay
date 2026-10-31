@@ -12,7 +12,7 @@ $names=@(
  'Test-V16OwnerContract.ps1','Test-V16BuildIsolation.ps1',
  'Test-V16PackageManifestNegative.ps1','Test-V16Rc1DiagnosticCapture.ps1',
  'Test-V16ManagedGuiStartupContract.ps1','Test-V16OwnerGuiRemoteRevision.ps1',
- 'Test-V16OwnerLiveActivity.ps1',
+ 'Test-V16OwnerLiveActivity.ps1','Test-V16OwnerCompactJournal.ps1',
  'Test-V16OwnerIdentityHeader.ps1','Test-V16BannerUptimeContract.ps1',
  'Test-V16FullOriginalStartupHeader.ps1',
  'Test-V16IdleHostHandoff.ps1',

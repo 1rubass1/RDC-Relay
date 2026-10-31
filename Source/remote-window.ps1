@@ -4705,7 +4705,10 @@ function Render-CompactLog {
     foreach ($item in $visible) {
         if (-not [string]::IsNullOrWhiteSpace($item)) { [void]$parts.Add($item.TrimEnd()) }
     }
-    $display = [string]::Join(($nl+$nl),$parts)
+    # Owner RC1 journal uses a continuous aligned number/bar column.
+    # Keep original double-separated event layout in legacy 1.5.18 mode.
+    $eventSeparator = if($script:ownerCompactJournal){$nl}else{$nl+$nl}
+    $display = [string]::Join($eventSeparator,$parts)
     if ($script:lastRenderedText -ceq $display) {
         # RichEdit can defer repaint/reflow after a hidden/redraw-frozen update.
         # Keep the viewport visually honest even when the logical text did not
@@ -4745,6 +4748,11 @@ function Render-CompactLog {
         # Keep line-art glyphs visually joined in every RdcLogBox, not only the
         # startup banner.
         $log.ApplyCompactLineSpacing()
+        if($script:ownerCompactJournal){
+            # Consistent monospaced six-digit gutter and a connected Unicode │.
+            Color-LogRegex $log '^(\d{6,18})\s+│' $headerValue -1 1
+            Color-LogRegex $log '^\d{6,18}\s+(│)' $accentPurple -1 1
+        }
         Color-LogToken $log '🔧' $accentOrange
         Color-LogToken $log '🚀' $accentOrange
         Color-LogToken $log '✅' $accentPurple

@@ -3,6 +3,27 @@
 # Reuses the original complete WinForms window, controls, geometry and renderer.
 # Adopted/Unknown Remote is immutable. Managed-mode Remote actions are
 # executed exclusively by the authenticated persistent Host after explicit UI.
+# The RC1 Host streams monotonic, sanitized event IDs. Show only the
+# fixed-width sequence and a Unicode status, never the Host/Remote prefix.
+# This formatter never receives raw Remote stdout, credentials or tool args.
+function Format-Rc1JournalLine([long]$number,[string]$message) {
+ if($number -lt 0){throw 'RC1_JOURNAL_NEGATIVE_SEQUENCE'}
+ $text=([string]$message).Trim()
+ $description=switch -CaseSensitive -Regex ($text) {
+  '^Remote tool started: ([a-z][a-z0-9_]{1,39})$' { '🔧 Начато: '+$Matches[1];break }
+  '^Remote tool started$' { '🔧 Начато';break }
+  '^Remote tool completed$' { '✅ Выполнено';break }
+  '^Remote tool failed$' { '❌ Ошибка выполнения';break }
+  '^Remote connected$' { '🔌 Remote подключён';break }
+  '^Authentication pending$' { '⏳ Ожидание авторизации';break }
+  '^Remote channel unavailable$' { '❌ Канал Remote недоступен';break }
+  '^Remote start failed$' { '❌ Ошибка запуска Remote';break }
+  '^Local MCP recovering$' { '⏳ Восстановление MCP';break }
+  '^Remote launcher replaced$' { '🔌 Сессия Remote обновлена';break }
+  default { '• '+$text }
+ }
+ return $number.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '+$description
+}
 function Start-RdcOwnerGui {
  $ErrorActionPreference='Stop'
  if(-not $OwnerGui -or [string]::IsNullOrWhiteSpace($OwnerTicketPath)){
@@ -107,6 +128,8 @@ function Start-RdcOwnerGui {
  $script:ownerLastUptimeText=''
  $script:ownerLastLogCursor=0
  $script:ownerLastLogEpoch=-1
+ # Owner-only compact activity journal; legacy 1.5.18 renderer remains spaced.
+ $script:ownerCompactJournal=$true
  $script:ownerLastToolFault=$false
  $script:ownerLastRemoteLinkState=''
  if($script:ownerObservedMode){
@@ -202,8 +225,7 @@ function Start-RdcOwnerGui {
       $lineCursor=[long]$Matches[1]
       if($lineCursor -le $script:ownerLastLogCursor){continue}
       if($lineCursor -gt $lastCursor){throw 'RC1_LOG_CURSOR_MISMATCH'}
-      Add-CompletedEvent ('[Host '+$(if($script:ownerRealMode){'Remote'}else{'fake'})+' '+
-       [string]$lineCursor+'] '+$line.Substring($Matches[0].Length))
+      Add-CompletedEvent (Format-Rc1JournalLine $lineCursor $line.Substring($Matches[0].Length))
       $script:ownerLastLogCursor=$lineCursor
       $hasNewLog=$true
      }
@@ -313,7 +335,7 @@ function Start-RdcOwnerGui {
       foreach($ev in $eventData.events){
        if([long]$ev.sequence -le $script:ownerEventCursor){throw 'RC1_DUPLICATE_EVENT'}
        $script:ownerEventCursor=[long]$ev.sequence
-       Add-CompletedEvent ('[RC1 '+[string]$ev.sequence+'] '+[string]$ev.text)
+       Add-CompletedEvent (Format-Rc1JournalLine ([long]$ev.sequence) ([string]$ev.text))
       }
       $script:ownerNextVerb=if($eventData.moreAvailable){'GET_EVENTS'}else{'GET_SNAPSHOT'}
      }
