@@ -601,20 +601,33 @@ public sealed class RdcOwnerRuntime : IDisposable {
   }
   return false;
  }
+ // During device re-verification the upstream terminal can print long runs
+ // of empty progress rows. Keep the first separator but do not spend the
+ // finite header/scan budget on duplicate blank rows. Nonblank artwork and
+ // all allowlisted wording remain byte-for-byte unchanged.
+ static bool ShouldKeepStartupLine(IList<string> accepted,string line){
+  if(!String.IsNullOrWhiteSpace(line))return true;
+  return accepted.Count>0 && !String.IsNullOrWhiteSpace(accepted[accepted.Count-1]);
+ }
  void AcceptManagedStartupLine(string raw){
-  if(managedStartupComplete || managedStartupScanned++>=90 ||
-     managedStartupHeader.Count>=54)return;
+  if(managedStartupComplete || managedStartupHeader.Count>=54)return;
   if(raw.IndexOf("Received tool call",StringComparison.OrdinalIgnoreCase)>=0 ||
      raw.IndexOf("Tool call ",StringComparison.OrdinalIgnoreCase)>=0){
    managedStartupComplete=true;return;
   }
+  if(managedStartupScanned>=90)return;
   string line;
-  if(!TrySafeStartupLine(raw,out line))return;
+  if(!TrySafeStartupLine(raw,out line)){
+   managedStartupScanned++;return;
+  }
+  if(!ShouldKeepStartupLine(managedStartupHeader,line))return;
+  // A single visual separator counts; an arbitrary number of extra blank
+  // progress rows cannot prevent later Next/Commands lines from appearing.
+  managedStartupScanned++;
+  if(String.IsNullOrWhiteSpace(line))line="";
   if(String.Join("\n",managedStartupHeader.ToArray()).Length+line.Length>8192){
    managedStartupComplete=true;return;
   }
-  // Keep original blank lines and graphic rows; terminal instruction text is
-  // captured verbatim only if it matches the finite pinned-Remote allowlist.
   managedStartupHeader.Add(line);
   remoteSupervisor.NoteHostEvent("Safe pinned Remote startup header updated");
  }
