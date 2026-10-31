@@ -87,6 +87,15 @@ Check ($runtime.Contains('"remoteStartupHeader",managedMode?')) 'Only managed Ho
 Check ($gui.Contains('$safeOriginalHeader=$candidateHeader.TrimEnd()')) 'GUI consumes original filtered intro'
 Check ($gui.Contains('$script:startupBlock=$safeOriginalHeader')) 'GUI puts original header in existing renderer'
 Check ($new.Contains('StyleStartupBanner(') -and $new.Contains('Color-HeaderSemantics $headerLog')) 'Original rich-color renderer remains enabled'
+Check ($new.Contains('public void ApplyCompactHeaderLineArtSpacing()') -and
+ $new.Contains('if($OwnerGui){$headerLog.ApplyCompactHeaderLineArtSpacing()}') -and
+ $new.Contains('else{$headerLog.ApplyCompactLineSpacing()}')) 'RC1 uses selective ASCII/Unicode art spacing while legacy retains original full-header spacing'
+Check ($new.Contains('StyleStartupBanner(') -and
+ $new.Contains('ApplyExactLineSpacing(bannerStart,bannerEnd-bannerStart,1.0f)')) 'Seamless six-row Desktop Commander artwork still uses its dedicated compact spacing'
+Check ($new.Contains("if (c >= '\u2500' && c <= '\u259F')") -and
+ $new.Contains('ApplyExactLineSpacing(start,eol-start,1.0f);')) 'Only box-drawing paragraphs receive additional RC1 compaction'
+Check ($new.Contains("Color-LogToken "+'$headerLog '+"'🔌' "+'$statusGreen') -and
+ $new.Contains('Color-HeaderSemantics $headerLog $headerLog.TextLength')) 'Connection green semantic color unchanged; only spacing changed'
 # Ensure the specific original classic style pipeline has not been replaced.
 Check ($old.Contains('function Color-HeaderSemantics') -and $new.Contains('function Color-HeaderSemantics')) 'Full 1.5.18 header coloring function available'
 $pattern='(?s)(function Color-HeaderSemantics.*?)(?=function Render-CompactLog)'

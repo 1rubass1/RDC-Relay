@@ -1618,6 +1618,33 @@ public class RdcLogBox : RichTextBox {
         ApplyExactLineSpacing(0,TextLength,1.0f);
     }
 
+    // RC1 header only: tighten adjacent Unicode box-drawing paragraphs.
+    // Regular text, status colors and emoji must keep natural font metrics:
+    // the old global 1px reduction clips taller fallback glyphs (notably
+    // the green connection icons) and can paint stray colored fragments.
+    // The six-line Desktop Commander banner is tightened separately by
+    // StyleStartupBanner(), preserving its seamless full-block artwork.
+    public void ApplyCompactHeaderLineArtSpacing() {
+        if (!IsHandleCreated || TextLength == 0) return;
+        string all = Text;
+        int start = 0;
+        while (start < all.Length) {
+            int eol = all.IndexOf('\n',start);
+            if (eol < 0) eol = all.Length;
+            int contentStart = start;
+            while (contentStart < eol && (all[contentStart] == ' ' ||
+                   all[contentStart] == '\t' || all[contentStart] == '\r'))
+                contentStart++;
+            if (contentStart < eol) {
+                char c = all[contentStart];
+                if (c >= '\u2500' && c <= '\u259F')
+                    ApplyExactLineSpacing(start,eol-start,1.0f);
+            }
+            if (eol == all.Length) break;
+            start = eol + 1;
+        }
+    }
+
     public static string ReadChunk(TextReader reader, int maxChars) {
         if (reader == null || maxChars <= 0) return String.Empty;
         char[] buffer = new char[maxChars];
@@ -4660,10 +4687,11 @@ function Render-CompactLog {
                     $accentOrange
                 )
             }
-            # Apply the same 1 px RichEdit paragraph tightening that removed the
-            # horizontal seams in the startup banner to the entire header text,
-            # including Unicode box-drawing blocks such as Next / Commands.
-            $headerLog.ApplyCompactLineSpacing()
+            # RC1: preserve compact banner and box borders but never compress
+            # ordinary paragraphs or green Unicode connection/status glyphs.
+            # The legacy 1.5.18 view keeps its original whole-header layout.
+            if($OwnerGui){$headerLog.ApplyCompactHeaderLineArtSpacing()}
+            else{$headerLog.ApplyCompactLineSpacing()}
             Color-HeaderSemantics $headerLog $headerLog.TextLength
             Color-LogToken $headerLog '🔧' $accentOrange
             Color-LogToken $headerLog '🚀' $accentOrange
@@ -6088,9 +6116,10 @@ if ($SelfTest) {
             throw 'Divider drag mask center geometry regressed'
         }
         if ($runtimeSourceText.IndexOf('ApplyCompactLineSpacing()',[StringComparison]::Ordinal) -lt 0 -or
-            $runtimeSourceText.IndexOf('$headerLog.ApplyCompactLineSpacing()',[StringComparison]::Ordinal) -lt 0 -or
+            $runtimeSourceText.IndexOf('if($OwnerGui){$headerLog.ApplyCompactHeaderLineArtSpacing()}',[StringComparison]::Ordinal) -lt 0 -or
+            $runtimeSourceText.IndexOf('else{$headerLog.ApplyCompactLineSpacing()}',[StringComparison]::Ordinal) -lt 0 -or
             $runtimeSourceText.IndexOf('$log.ApplyCompactLineSpacing()',[StringComparison]::Ordinal) -lt 0) {
-            throw 'Global RichEdit compact line spacing regressed'
+            throw 'RC1 selective / legacy RichEdit spacing contract regressed'
         }
         if ($runtimeSourceText.IndexOf('250.0 * i / fadeDenominator',[StringComparison]::Ordinal) -lt 0 -or
             $runtimeSourceText.IndexOf('250.0 * (crossingFade-1-i) / fadeDenominator',[StringComparison]::Ordinal) -lt 0) {
