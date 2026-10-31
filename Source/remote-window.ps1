@@ -4709,6 +4709,10 @@ function Render-CompactLog {
     # Keep original double-separated event layout in legacy 1.5.18 mode.
     $eventSeparator = if($script:ownerCompactJournal){$nl}else{$nl+$nl}
     $display = [string]::Join($eventSeparator,$parts)
+    # Owner RC1 only: keep one blank line above the activity text.
+    # No geometry changes to RichEdit, overlay scrollbars or splitter.
+    # Reconstructed from event blocks on every render, so it cannot accumulate.
+    if($script:ownerCompactJournal -and $display.Length -gt 0){$display=$nl+$display}
     if ($script:lastRenderedText -ceq $display) {
         # RichEdit can defer repaint/reflow after a hidden/redraw-frozen update.
         # Keep the viewport visually honest even when the logical text did not

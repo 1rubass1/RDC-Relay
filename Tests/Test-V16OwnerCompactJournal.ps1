@@ -49,6 +49,12 @@ Check ($source.Contains('Format-Rc1JournalLine $lineCursor') -and
  $source.Contains('Format-Rc1JournalLine ([long]$ev.sequence)')) 'snapshot and Host events use the same renderer'
 Check ($source.Contains('$script:ownerCompactJournal=$true') -and
  $renderer.Contains('if($script:ownerCompactJournal){$nl}else{$nl+$nl}')) 'RC1 uses single lines, stable retains two-line spacing'
+Check ($renderer.Contains('if($script:ownerCompactJournal -and $display.Length -gt 0){$display=$nl+$display}')) 'owner journal inserts exactly one initial blank line per render'
+Check ($renderer.Contains('$log.SetBounds(0,0,$contentW,$contentH)') -and
+ $renderer.Contains('$vScroll.SetBounds($contentW,0,17,$contentH)') -and
+ $renderer.Contains('$hScroll.SetBounds(0,$contentH,$contentW,17)')) 'log and both overlay scrollbars retain original geometry'
+Check (-not $renderer.Contains('$journalTopInset') -and
+ -not $renderer.Contains('$journalViewportH')) 'no control offsets or viewport resizing introduced'
 Check ($renderer.Contains('$log.ApplyCompactLineSpacing()') -and
  $renderer.Contains("Color-LogRegex "+'$log')) 'RichEdit tight paragraph and colored gutter preserved'
 $errors=$null;$tokens=$null
