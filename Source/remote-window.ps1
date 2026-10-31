@@ -4751,7 +4751,7 @@ function Render-CompactLog {
         if($script:ownerCompactJournal){
             # Consistent monospaced six-digit gutter and a connected Unicode │.
             Color-LogRegex $log '^(\d{6,18})\s+│' $headerValue -1 1
-            Color-LogRegex $log '^\d{6,18}\s+(│)' $accentPurple -1 1
+            Color-LogRegex $log '^\d{6,18}\s+(│)' ([Drawing.Color]::Gainsboro) -1 1
         }
         Color-LogToken $log '🔧' $accentOrange
         Color-LogToken $log '🚀' $accentOrange

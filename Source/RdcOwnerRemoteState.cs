@@ -26,20 +26,21 @@ public sealed class RdcOwnerRemoteState {
  void NoteToolActivity(string marker){
   DateTime now=DateTime.UtcNow;
   if(marker.StartsWith("Remote tool started",StringComparison.Ordinal)){
-   activeToolCalls=Math.Min(32,activeToolCalls+1);lastToolMarkerUtc=now;
+   activeToolCalls=Math.Min(64,activeToolCalls+1);lastToolMarkerUtc=now;
    activityHoldUntilUtc=DateTime.MinValue;
-  }else if(marker=="Remote tool completed"){
+  }else if(marker.StartsWith("Remote tool completed",StringComparison.Ordinal)){
    activeToolCalls=Math.Max(0,activeToolCalls-1);lastToolMarkerUtc=now;
    if(activeToolCalls==0)activityHoldUntilUtc=now.AddSeconds(10);
    toolFault=false;
-  }else if(marker=="Remote tool failed"){
+  }else if(marker.StartsWith("Remote tool failed",StringComparison.Ordinal)){
    activeToolCalls=Math.Max(0,activeToolCalls-1);lastToolMarkerUtc=now;
    activityHoldUntilUtc=DateTime.MinValue;toolFault=true;
   }
  }
  string CurrentToolActivity(){
   DateTime now=DateTime.UtcNow;
-  if(activeToolCalls>0 && (now-lastToolMarkerUtc).TotalSeconds>60)ResetToolActivity();
+  // A long genuine tool call may exceed 60 seconds. A running call stays
+  // active until its completion/failure or a verified Remote session reset.
   if(activeToolCalls>0)return "working";
   if(now<activityHoldUntilUtc)return "hold";
   return "idle";
@@ -127,10 +128,15 @@ public sealed class RdcOwnerRemoteState {
   }
  }
  public void AddObservedMarker(string marker){
+  bool knownTool=(marker=="Remote tool started" || marker=="Remote tool completed" ||
+   marker=="Remote tool failed" ||
+   System.Text.RegularExpressions.Regex.IsMatch(marker,
+    @"\ARemote tool (started|completed|failed)\|[1-9][0-9]{0,11}\|[a-z][a-z0-9_]{1,39}\|[\p{L}\p{Nd}_ .()\-]{0,64}\z") ||
+   System.Text.RegularExpressions.Regex.IsMatch(marker,
+    @"\ARemote tool (completed|failed): [a-z][a-z0-9_]{1,39}\z"));
   if(marker!="Remote connected" && marker!="Authentication pending" &&
      marker!="Remote channel unavailable" && marker!="Remote start failed" &&
-     marker!="Remote tool started" && marker!="Remote tool completed" &&
-     marker!="Remote tool failed" && marker!="Local MCP recovering" &&
+     !knownTool && marker!="Local MCP recovering" &&
      marker!="Remote launcher replaced")
    throw new InvalidOperationException("RC1_OBSERVER_MARKER_DENIED");
   lock(sync){

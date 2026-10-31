@@ -30,6 +30,21 @@ Check ((Format-Rc1JournalLine 999999 'Remote tool completed').StartsWith('999999
 Check ((Format-Rc1JournalLine 1 'Remote tool started: read_file').IndexOf('Host Remote') -lt 0) 'Host Remote tag omitted'
 $source=[IO.File]::ReadAllText($owner,[Text.Encoding]::UTF8)
 $renderer=[IO.File]::ReadAllText($window,[Text.Encoding]::UTF8)
+$pairedStart=Format-Rc1JournalLine 101 'Remote tool started|7|read_file|report.txt'
+$pairedDone=Format-Rc1JournalLine 102 'Remote tool completed|7|read_file|report.txt'
+Check ($pairedStart -ceq '000007 │ 🔧 Чтение файла — report.txt' -and
+ $pairedDone -ceq '000007 │ ✅ Файл прочитан — report.txt') 'started and completed file events share a visible operation number'
+Check ((Format-Rc1JournalLine 103 'Remote tool started|8|start_process|PowerShell') -ceq
+ '000008 │ 🔧 Запуск программы — PowerShell') 'program shown without raw command arguments'
+Check ((Format-Rc1JournalLine 104 'Remote tool completed|8|start_process|PowerShell') -ceq
+ '000008 │ ✅ Запрос запуска обработан — PowerShell') 'tool completion does not falsely claim OS process exit'
+Check ((Format-Rc1JournalLine 200 'Remote tool completed: read_file') -ceq
+ '000200 │ ✅ Завершено: чтение файла') 'ambiguous parallel completion has readable type without false correlation'
+Check ((Format-Rc1JournalLine 201 'Remote tool started|7|read_file|RAW:PRIVATE') -ceq
+ '000201 │ • Событие инструмента') 'malformed rich marker does not leak raw payload'
+Check ((Format-Rc1JournalLine 105 'Remote tool failed|9|write_file|notes.txt') -ceq
+ '000009 │ ❌ Ошибка: Запись файла — notes.txt') 'failure retains matching operation and filename'
+Check ($renderer.Contains("Color-LogRegex "+'$log'+" '^\d{6,18}\s+(│)' ([Drawing.Color]::Gainsboro)")) 'vertical gutter is neutral light gray, not purple'
 Check ($source.Contains('Format-Rc1JournalLine $lineCursor') -and
  $source.Contains('Format-Rc1JournalLine ([long]$ev.sequence)')) 'snapshot and Host events use the same renderer'
 Check ($source.Contains('$script:ownerCompactJournal=$true') -and

@@ -213,8 +213,8 @@ function Invoke-Rc1RemoteObserverPoll([object]$owner,[hashtable]$ob){
    if($lines.Count -gt 0){$lines=@($lines | Select-Object -Skip 1)}
    $ob.DiscardFirst=$false
   }
-  if($lines.Count -gt 160){$lines=@($lines | Select-Object -Last 160)}
-  $emitted=0
+  # 32 KiB file-read cap already bounds work; do not discard tool starts
+  # or their matching completions under concurrent Remote traffic.
   foreach($raw in $lines){
    $marker=Get-Rc1ObservedMarker ([string]$raw).TrimEnd([char]13)
    if($null -eq $marker){continue}
@@ -226,7 +226,9 @@ function Invoke-Rc1RemoteObserverPoll([object]$owner,[hashtable]$ob){
     $ob.State='Ready'
     $ob.Detail='Successful Remote tool call confirmed connectivity'
    }
-   if($emitted -lt 24){$owner.ObservedMarker([string]$marker.Marker);$emitted++}
+   if($marker.Marker -in @('Remote tool started','Remote tool completed','Remote tool failed')){
+    $owner.ObservedToolLine(([string]$raw).TrimEnd([char]13))
+   }else{$owner.ObservedMarker([string]$marker.Marker)}
   }
   $owner.UpdateObservedRemote($true,$ob.State,$ob.Detail)
  }catch{

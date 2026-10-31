@@ -14,6 +14,108 @@ using System.Text;
 using System.Threading;
 using System.Management;
 
+// Host-local, bounded correlation of pinned Remote call IDs. Only the
+// generated ordinal, allowlisted tool and safe basename reach GUI IPC.
+public sealed class RdcOwnerToolJournal {
+ sealed class Entry {public long Number;public string Tool,Target;public bool Ambiguous;}
+ readonly Dictionary<string,Entry> pending=new Dictionary<string,Entry>(StringComparer.Ordinal);
+ readonly List<string> order=new List<string>();
+ long nextNumber=0;
+ static readonly string[] known={"start_process","read_process_output","interact_with_process",
+  "read_file","read_multiple_files","list_directory","get_file_info",
+  "list_processes","start_search","get_more_search_results","stop_search",
+  "get_config","write_file","edit_block","create_directory","move_file"};
+ static readonly System.Text.RegularExpressions.Regex start=
+  new System.Text.RegularExpressions.Regex(
+   @"\A🔧 Received tool call (?<id>[A-Za-z0-9_-]{1,100}):\s*(?<tool>[a-z][a-z0-9_]{1,39})(?:\s+(?<args>.*))?\z");
+ static readonly System.Text.RegularExpressions.Regex end=
+  new System.Text.RegularExpressions.Regex(
+   @"\A[✅❌] Tool call (?<id>[A-Za-z0-9_-]{1,100}) (?:completed|failed):");
+ static readonly System.Text.RegularExpressions.Regex param=
+  new System.Text.RegularExpressions.Regex(
+   @"(?<!\\)""(?<key>file_path|path|directory|command)""\s*:\s*""(?<value>(?:\\.|[^""\\]){1,260})""");
+ public void Reset(){pending.Clear();order.Clear();nextNumber=0;}
+ static string SafeTarget(string tool,string args){
+  if(args==null||args.Length>8192)return "";
+  foreach(System.Text.RegularExpressions.Match m in param.Matches(args)){
+   string key=m.Groups["key"].Value;
+   string value=m.Groups["value"].Value.Replace("\\\\","\\").Replace("\\/","/");
+   if(tool=="start_process" && key=="command"){
+    var command=System.Text.RegularExpressions.Regex.Match(value,
+     @"\A\s*(?:&\s*)?['""]?(?<exe>powershell(?:\.exe)?|pwsh(?:\.exe)?|cmd(?:\.exe)?|git(?:\.exe)?|python(?:\.exe)?|py(?:\.exe)?|node(?:\.exe)?|npm(?:\.cmd)?|npx(?:\.cmd)?|dotnet(?:\.exe)?|java(?:\.exe)?|cmake(?:\.exe)?)(?=\s|['""]|$)",
+     System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    if(command.Success){
+     string exe=command.Groups["exe"].Value.ToLowerInvariant();
+     if(exe.StartsWith("powershell")||exe.StartsWith("pwsh"))return "PowerShell";
+     if(exe.StartsWith("cmd"))return "CMD";
+     if(exe.StartsWith("git"))return "Git";
+     if(exe.StartsWith("python")||exe.StartsWith("py."))return "Python";
+     if(exe.StartsWith("node"))return "Node.js";
+     if(exe.StartsWith("npm"))return "npm";
+     if(exe.StartsWith("npx"))return "npx";
+     if(exe.StartsWith("dotnet"))return ".NET";
+     if(exe.StartsWith("java"))return "Java";
+     if(exe.StartsWith("cmake"))return "CMake";
+    }
+    return "";
+   }
+   if(key=="command")continue;
+   int slash=value.LastIndexOfAny(new char[]{'\\','/'});
+   string name=value.Substring(slash+1);
+   if(name.Length<1||name.Length>64||name[0]=='.'||name.IndexOf('@')>=0)continue;
+   if(System.Text.RegularExpressions.Regex.IsMatch(name,@"(?i)(secret|password|token|credential|private.key)"))continue;
+   if(System.Text.RegularExpressions.Regex.IsMatch(name,@"\A[\p{L}\p{Nd}_ .()\-]{1,64}\z") &&
+      !System.Text.RegularExpressions.Regex.IsMatch(name,@"\A[. ]+\z"))
+    return name;
+  }
+  return "";
+ }
+ public string Format(string raw,string marker){
+  if(marker.StartsWith("Remote tool started",StringComparison.Ordinal)){
+   if(raw==null||raw.Length>8192)return marker;
+   var m=start.Match(raw);
+   if(!m.Success)return marker;
+   string id=m.Groups["id"].Value,tool=m.Groups["tool"].Value;
+   if(Array.IndexOf(known,tool)<0)return marker;
+   if(pending.ContainsKey(id))return ""; // duplicate start, not new work
+   while(pending.Count>=64 && order.Count>0){pending.Remove(order[0]);order.RemoveAt(0);}
+   bool ambiguous=false;
+   foreach(var item in pending.Values){if(item.Tool==tool){item.Ambiguous=true;ambiguous=true;}}
+   var entry=new Entry{Number=++nextNumber,Tool=tool,Target=SafeTarget(tool,m.Groups["args"].Value),Ambiguous=ambiguous};
+   pending[id]=entry;order.Add(id);
+   return "Remote tool started|"+entry.Number+"|"+entry.Tool+"|"+entry.Target;
+  }
+  if(marker.StartsWith("Remote tool completed",StringComparison.Ordinal)||
+     marker.StartsWith("Remote tool failed",StringComparison.Ordinal)){
+   if(raw==null||raw.Length>8192)return marker;
+   var m=end.Match(raw);
+   if(!m.Success)return marker;
+   string token=m.Groups["id"].Value;
+   Entry entry;
+   bool exactId=pending.TryGetValue(token,out entry);
+   // The pinned Remote 0.2.52 completion marker normally names the tool,
+   // not the request UUID from Received tool call. Pair by tool only when
+   // there is exactly one unambiguous outstanding call of that type.
+   if(!exactId && Array.IndexOf(known,token)>=0){
+    int count=0;string oldest=null;
+    foreach(string id in order){Entry candidate;
+     if(pending.TryGetValue(id,out candidate) && candidate.Tool==token){
+      count++;if(oldest==null){oldest=id;entry=candidate;}
+     }
+    }
+    if(oldest!=null){
+     pending.Remove(oldest);order.Remove(oldest);
+     if(count!=1 || entry.Ambiguous)
+      return marker+": "+token;
+    }else return marker+": "+token;
+   }else if(!exactId)return marker;
+   else{pending.Remove(token);order.Remove(token);}
+   return (marker.StartsWith("Remote tool completed",StringComparison.Ordinal)?
+    "Remote tool completed|":"Remote tool failed|")+entry.Number+"|"+entry.Tool+"|"+entry.Target;
+  }
+  return marker;
+ }
+}
 public sealed class RdcOwnerRuntime : IDisposable {
  readonly object gate=new object();
  readonly string sourceRoot, guiScript, stateRoot, ticketFile, instance, generation, trialRoot;
@@ -24,6 +126,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
  bool trialFailGuiStartOnce=false;
  int trialReopensRemaining=0;
  readonly RdcOwnerRemoteState remoteSupervisor=new RdcOwnerRemoteState();
+ readonly RdcOwnerToolJournal toolJournal=new RdcOwnerToolJournal();
  bool observedMode=false,managedMode=false,reopenAfterModeChange=false,autoStartPending=false;
  DateTime nextAutoStartUtc=DateTime.MinValue;
  RdcOwnerManagedProcess managedProcess=null;
@@ -511,6 +614,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    child.Start(npx,"--yes @wonderwhy-er/desktop-commander@0.2.52 remote",sourceRoot,file);
    if(managedProcess!=null)managedProcess.Dispose();
    managedProcess=child;managedLogPath=file;managedLogs.Add(file);managedLogOffset=0;
+   toolJournal.Reset();
    managedLogFragment="";managedAccount="";managedDeviceName="";managedDeviceId="";
    managedBornUtcTicks=child.BornUtcTicks;managedBannerArt.Clear();managedBannerScanned=0;
    managedStartupHeader.Clear();managedStartupComplete=false;managedStartupScanned=0;
@@ -730,7 +834,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
  // indefinitely when the Remote continues processing authenticated calls.
  // Never infer Ready merely from a running process or an incomplete call.
  static bool ToolCompletionConfirmsReady(string marker,string currentState){
-  if(marker!="Remote tool completed")return false;
+  if(!marker.StartsWith("Remote tool completed",StringComparison.Ordinal))return false;
   return currentState=="Reconnecting"||currentState=="Fault"||
    currentState=="Connecting"||currentState=="AuthPending";
  }
@@ -752,7 +856,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    CheckPath(managedLogPath);
    using(var stream=new FileStream(managedLogPath,FileMode.Open,FileAccess.Read,
      FileShare.ReadWrite|FileShare.Delete)){
-    if(stream.Length<managedLogOffset){managedLogOffset=0;managedLogFragment="";}
+    if(stream.Length<managedLogOffset){managedLogOffset=0;managedLogFragment="";toolJournal.Reset();}
     long count=Math.Min(32768,stream.Length-managedLogOffset);
     if(count<=0)return;
     stream.Seek(managedLogOffset,SeekOrigin.Begin);
@@ -764,24 +868,27 @@ public sealed class RdcOwnerRuntime : IDisposable {
     if(end<0){managedLogFragment=joined.Length<=2048?joined:"";return;}
     managedLogFragment=joined.Substring(end+1);
     string[] lines=joined.Substring(0,end).Split('\n');
-    int start=Math.Max(0,lines.Length-100),emitted=0;
+    // Process every bounded log-chunk marker, including concurrent calls.
+    // The store keeps only the last 64 sanitized entries for the GUI.
     for(int i=0;i<lines.Length;i++){
      string cleanLine=lines[i].TrimEnd('\r');
      AcceptManagedBannerArt(cleanLine);
      AcceptManagedIdentityLine(cleanLine);
      AcceptManagedStartupLine(cleanLine);
-     if(i<start)continue; // Only journal markers are bounded to the tail.
      string next;
      string marker=SafeRemoteMarker(cleanLine,out next);
+     if(marker=="")continue;
+     if(marker.StartsWith("Remote tool ",StringComparison.Ordinal))
+      marker=toolJournal.Format(cleanLine,marker);
      if(marker=="")continue;
      // Preserve the sanitized tool completion journal entry, while using
      // that same confirmed success to recover stale connection state.
      if(next=="" && ToolCompletionConfirmsReady(marker,managedState))
       next="Ready";
-     if(emitted++<24)remoteSupervisor.AddSyntheticLogLine(marker);
+     remoteSupervisor.AddSyntheticLogLine(marker);
      if(next!=""){
       managedState=next;
-      managedDetail=(marker=="Remote tool completed" && next=="Ready")
+      managedDetail=(marker.StartsWith("Remote tool completed",StringComparison.Ordinal) && next=="Ready")
        ?"Successful Remote tool call confirmed connectivity":marker;
       remoteSupervisor.ManagedStatus(managedProcess.Pid,true,next,managedDetail);
      }
@@ -797,7 +904,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    if(disposed||gui!=null||observedMode||trialRoot!=null || pid<=0)
     throw new InvalidOperationException("RC1_OBSERVER_MODE_BOUNDARY");
    remoteSupervisor.AttachObservedReadOnly(pid);
-   observedMode=true;
+   toolJournal.Reset();observedMode=true;
    tray.Text="RDC Relay 1.6 RC1 | наблюдение";
    trayStatusItem.Text="Remote: существующая сессия (Adopted)";
    trayExitItem.Text="Закрыть RC1 (Remote останется)";
@@ -808,6 +915,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
   lock(gate){
    if(disposed||!observedMode||pid<=0)throw new InvalidOperationException("RC1_NOT_OBSERVING");
    remoteSupervisor.RetargetObservedReadOnly(pid);
+   toolJournal.Reset();
    Append("remote","observed launcher replaced (read-only)");
   }
  }
@@ -817,6 +925,21 @@ public sealed class RdcOwnerRuntime : IDisposable {
    string before=(string)remoteSupervisor.Snapshot()["state"];
    remoteSupervisor.UpdateObservedReadOnly(alive,state,detail);
    if(before!=state)Append("remote","observed state: "+state);
+  }
+ }
+ // Only invoked by the verified read-only observer, within Host process.
+ // Raw lines are immediately reduced to fixed categories, safe basename and
+ // a local ordinal. The remote call ID and original args never enter IPC.
+ public void ObservedToolLine(string raw){
+  lock(gate){
+   if(disposed||!observedMode)return;
+   string next;
+   string category=SafeRemoteMarker(raw??"",out next);
+   if(!category.StartsWith("Remote tool ",StringComparison.Ordinal))return;
+   string safe=toolJournal.Format(raw,category);
+   if(safe=="")return;
+   remoteSupervisor.AddObservedMarker(safe);
+   Append("remote","sanitized observed tool event");
   }
  }
  public void ObservedMarker(string marker){

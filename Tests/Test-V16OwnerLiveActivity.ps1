@@ -48,7 +48,7 @@ $s.AddSyntheticLogLine('Remote tool completed')
 Check (-not ($s.Snapshot()).toolFault) 'successful tool clears previous failure'
 $s.AddSyntheticLogLine('Remote tool started')
 ([RdcOwnerRemoteState]).GetField('lastToolMarkerUtc',$flags).SetValue($s,[DateTime]::UtcNow.AddSeconds(-61))
-Check (($s.Snapshot()).toolActivity -ceq 'idle') 'interrupted 60s activity retires safely'
+Check (($s.Snapshot()).toolActivity -ceq 'working') 'long confirmed tool call stays animated beyond 60s without a completion marker'
 $s.ManagedStatus(0,$false,'Disconnected','fixture disconnected')
 Check (($s.Snapshot()).toolActivity -ceq 'idle') 'owned disconnect clears activity'
 $o=New-Object RdcOwnerRemoteState
