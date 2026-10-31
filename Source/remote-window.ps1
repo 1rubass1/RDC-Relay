@@ -1,10 +1,24 @@
-﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
+﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview,[switch]$OwnerGui,[string]$OwnerTicketPath='',[string]$OwnerTrialRoot='')
 $ErrorActionPreference = 'Stop'
+if($OwnerGui){
+ if($SelfTest -or $Preview -or [string]::IsNullOrWhiteSpace($OwnerTicketPath)){
+  throw 'RC1_OWNER_GUI_REQUIRES_PRIVATE_TICKET'
+ }
+ # Suppresses legacy process/startup/update/user registry side effects.
+ # A separate Host owns all lifecycle operations in this branch.
+ $Preview=$true
+}
 $root = $PSScriptRoot
-$appVersion = '1.5.18'
+# Branch-only RC1 source marker blocks accidental legacy GUI execution against
+# a real Remote from the candidate checkout or a staged owner payload.
+if(-not $SelfTest -and -not $Preview -and -not $OwnerGui -and
+   [IO.File]::Exists((Join-Path $root 'rc1-candidate.json'))){
+ throw 'RC1_DEFAULT_LEGACY_REMOTE_LAUNCH_BLOCKED'
+}
+$appVersion = if($OwnerGui){'1.6.0 RC1'}else{'1.5.18'}
 # Flip to $false to remove the optional update notice and restore the original
 # startup auto-updater/footer with no other runtime or UI modifications.
-$script:enableUpdateNotice = $true
+$script:enableUpdateNotice = -not $OwnerGui
 $script:updateInstallRequested = $false
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
@@ -36,7 +50,8 @@ public static class RdcShellIdentity {
 }
 
 try {
-    [void][RdcShellIdentity]::SetCurrentProcessExplicitAppUserModelID('RDCRelay.App')
+    $ownerAppId=if($OwnerGui){'RDCRelay.OwnerPilot.1_6_RC1'}else{'RDCRelay.App'}
+    [void][RdcShellIdentity]::SetCurrentProcessExplicitAppUserModelID($ownerAppId)
 } catch {}
 
 
@@ -306,7 +321,7 @@ function Resolve-NpxPath {
 }
 
 $windowMutex = $null
-if (-not $SelfTest) {
+if (-not $SelfTest -and -not $OwnerGui) {
     $sha = [Security.Cryptography.SHA256]::Create()
     $key = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($PSScriptRoot.ToLowerInvariant()))).Replace('-','')
     $sha.Dispose()
@@ -3600,7 +3615,7 @@ $hintHost.Padding = New-Object Windows.Forms.Padding(0)
 
 $hint = New-Object Windows.Forms.Label
 $hint.AutoSize = $true
-$hint.Text = 'Крестик закрывает окно вместе с remote-процессом.'
+$hint.Text = if($OwnerGui){'Крестик закрывает только окно; Host и Remote работают.'}else{'Крестик закрывает окно вместе с remote-процессом.'}
 $hint.ForeColor = [Drawing.Color]::Gray
 $hint.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
 
@@ -3608,14 +3623,15 @@ $hintSep = New-Object Windows.Forms.Label
 $hintSep.AutoSize = $true
 $hintSep.Text = '•'
 $hintSep.ForeColor = $accentOrange
-$hintSep.Margin = New-Object Windows.Forms.Padding(6,2,6,0)
+$hintSep.Margin = New-Object Windows.Forms.Padding(0,2,6,0)
 
 $hintVersion = New-Object Windows.Forms.Label
 $hintVersion.AutoSize = $true
 $hintVersion.Text = 'v' + $appVersion
 $hintVersion.Font = $hint.Font
 $hintVersion.ForeColor = [Drawing.Color]::Gray
-$hintVersion.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
+# Align the shorter version glyph line with the adjacent footer hint baseline.
+$hintVersion.Margin = New-Object Windows.Forms.Padding(0,6,0,0)
 
 $hintHost.Controls.Add($hint)
 $hintHost.Controls.Add($hintSep)
@@ -4689,7 +4705,10 @@ function Render-CompactLog {
     foreach ($item in $visible) {
         if (-not [string]::IsNullOrWhiteSpace($item)) { [void]$parts.Add($item.TrimEnd()) }
     }
-    $display = [string]::Join(($nl+$nl),$parts)
+    # Owner RC1 journal uses a continuous aligned number/bar column.
+    # Keep original double-separated event layout in legacy 1.5.18 mode.
+    $eventSeparator = if($script:ownerCompactJournal){$nl}else{$nl+$nl}
+    $display = [string]::Join($eventSeparator,$parts)
     if ($script:lastRenderedText -ceq $display) {
         # RichEdit can defer repaint/reflow after a hidden/redraw-frozen update.
         # Keep the viewport visually honest even when the logical text did not
@@ -4729,6 +4748,11 @@ function Render-CompactLog {
         # Keep line-art glyphs visually joined in every RdcLogBox, not only the
         # startup banner.
         $log.ApplyCompactLineSpacing()
+        if($script:ownerCompactJournal){
+            # Consistent monospaced six-digit gutter and a connected Unicode │.
+            Color-LogRegex $log '^(\d{6,18})\s+│' $headerValue -1 1
+            Color-LogRegex $log '^\d{6,18}\s+(│)' $accentPurple -1 1
+        }
         Color-LogToken $log '🔧' $accentOrange
         Color-LogToken $log '🚀' $accentOrange
         Color-LogToken $log '✅' $accentPurple
@@ -4942,6 +4966,7 @@ function Add-RemoteChunk([string]$text) {
     Render-CompactLog
 }
 function Open-Reader {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     if ($script:reader -or -not (Test-Path $logPath)) { return }
     try {
         $stream = New-Object IO.FileStream(
@@ -5046,6 +5071,7 @@ function Move-ReaderToRecentTailIfBehind {
     } catch {}
 }
 function Read-LiveLog {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     Open-Reader
     if ($script:reader) {
         Move-ReaderToRecentTailIfBehind
@@ -5054,6 +5080,7 @@ function Read-LiveLog {
     }
 }
 function Find-ExistingRemote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     try {
         # Only attach to a launcher that writes to this installation's own log.
         # Do not adopt an arbitrary desktop-commander process started manually
@@ -5161,6 +5188,7 @@ function Start-NoWindowCmd([string]$commandLine) {
     return [Diagnostics.Process]::Start($psi)
 }
 function Start-Remote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     try {
         if ($script:proc -and -not $script:proc.HasExited) { return }
         $script:manualStopRequested = $false
@@ -5225,6 +5253,7 @@ function Start-Remote {
     }
 }
 function Stop-Remote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     if (-not $script:proc -or $script:proc.HasExited) { return }
     try {
         $freezePoint = $log.GetViewPosition()
@@ -5283,6 +5312,7 @@ function Set-RemoteActionsEnabled([bool]$enabled) {
 }
 
 function Begin-RemoteOperation([string]$action) {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     if ($script:remoteOperation -or $script:initializing) { return }
     $script:manualStopRequested = ($action -eq 'stop')
     $script:remoteOperation = [pscustomobject]@{
@@ -5337,6 +5367,7 @@ function Complete-RemoteOperation([string]$errorText = '') {
 }
 
 function Update-RemoteOperation {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $op = $script:remoteOperation
     if (-not $op) { return }
     try {
@@ -5398,6 +5429,7 @@ function Invoke-AutoReconnect {
 }
 
 function Restart-Remote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $answer = [Windows.Forms.MessageBox]::Show(
         'RDC Relay будет кратковременно отключён и запущен снова под текущим аккаунтом.',
         'Переподключить RDC Relay', [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)
@@ -5410,6 +5442,7 @@ function Restart-Remote {
 }
 
 function Switch-RemoteAccount {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $message = 'Смена аккаунта разорвёт текущее удалённое соединение.' + $nl + $nl +
         'После выхода RDC Relay запустится снова и предложит авторизоваться в браузере.' + $nl + $nl +
         'Войдите в тот же аккаунт Desktop Commander, который подключён в ChatGPT.' + $nl + $nl + 'Продолжить?'
@@ -5420,6 +5453,7 @@ function Switch-RemoteAccount {
 }
 
 function Start-RuntimeInitialization {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $script:initializing = $true
     Set-RemoteActionsEnabled $false
     $updaterPath = Join-Path $root 'update.ps1'
@@ -5477,6 +5511,19 @@ function Complete-RuntimeInitialization {
 }
 
 $finish.Add_Click({
+    if ($OwnerGui) {
+        if (-not $script:ownerManagedMode) { return }
+        if ($script:ownerCanStop) {
+            $answer=[Windows.Forms.MessageBox]::Show(
+                'Остановить только Remote, созданный этим RC1 Host?',
+                'RDC Relay 1.6.0 RC1',
+                [Windows.Forms.MessageBoxButtons]::YesNo,
+                [Windows.Forms.MessageBoxIcon]::Question)
+            if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
+            $script:ownerQueuedAction='STOP'
+        } elseif ($script:ownerCanStart) { $script:ownerQueuedAction='START' }
+        return
+    }
     if ($script:remoteOperation -or $script:initializing) { return }
     if ($script:proc -and -not $script:proc.HasExited) {
         Begin-RemoteOperation 'stop'
@@ -5495,12 +5542,34 @@ $finish.Add_Click({
 $accountButton.Add_Click({
     $accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))
 })
-$switchAccountItem.Add_Click({ Switch-RemoteAccount })
-$reconnectItem.Add_Click({ Restart-Remote })
+$switchAccountItem.Add_Click({
+    if ($OwnerGui) { return } # Credentials are not managed by this release.
+    Switch-RemoteAccount
+})
+$reconnectItem.Add_Click({
+    if ($OwnerGui) {
+        if (-not $script:ownerManagedMode -or -not $script:ownerCanReconnect) { return }
+        $answer=[Windows.Forms.MessageBox]::Show(
+            'Перезапустить Remote, принадлежащий текущему RC1 Host?',
+            'RDC Relay 1.6.0 RC1',[Windows.Forms.MessageBoxButtons]::YesNo,
+            [Windows.Forms.MessageBoxIcon]::Question)
+        if ($answer -eq [Windows.Forms.DialogResult]::Yes) { $script:ownerQueuedAction='RECONNECT' }
+        return
+    }
+    Restart-Remote
+})
 $devicesItem.Add_Click({
+    if ($OwnerGui) {
+        if ($script:ownerRealMode) { $script:ownerQueuedNavigation='DEVICE_MANAGEMENT' }
+        return
+    }
     try { Start-Process 'https://mcp.desktopcommander.app/' } catch {}
 })
 $verifyDeviceItem.Add_Click({
+    if ($OwnerGui) {
+        if ($script:ownerRealMode) { $script:ownerQueuedNavigation='DEVICE_VERIFICATION' }
+        return
+    }
     try { Start-Process 'https://mcp.desktopcommander.app/device/verify' } catch {}
 })
 $helpMenu = New-Object Windows.Forms.ContextMenuStrip
@@ -5541,6 +5610,36 @@ $aboutItem.Add_Click({
         'При первой авторизации подтвердите устройство в браузере, сверив код из журнала. ' +
         'Повторные запуски обычно используют сохранённую сессию. ' + $nl + $nl +
         'Пароли и токены эта оболочка не копирует и не хранит.'
+    if ($OwnerGui) {
+        if($script:ownerObservedMode){
+            $helpText = 'RDC Relay 1.6.0 RC1 — личный Pilot' + $nl +
+              'Подключён существующий Desktop Commander Remote только для наблюдения (Adopted).' + $nl +
+              'Статус определяется по проверенным маркерам реального журнала; это не проверка каждой MCP-команды.' + $nl + $nl +
+              'X закрывает только GUI. Host и текущий Remote продолжают работу.' + $nl +
+              'Открытие из трея загружает актуальную версию GUI с диска.' + $nl +
+              'Пункт «Закрыть RC1» завершает только Pilot GUI/Host, оставляя Remote подключённым.' + $nl +
+              'Запуск, остановка, переподключение и смена аккаунта заблокированы: Remote не принадлежит RC1.' + $nl +
+              'Аккаунт ▾ открывает безопасные ссылки управления устройствами и подтверждения в браузере.' + $nl +
+              'Справка → Показать журнал RC1 переводит к обезличенному журналу Host в нижней панели.' + $nl +
+              'Автообновления RC1 и полный выход реального Remote отключены до проверки владения.'
+        }elseif($script:ownerManagedMode){
+            $helpText = 'RDC Relay 1.6.0 RC1 — управляемая оболочка' + $nl + $nl +
+              'Host запускает Desktop Commander Remote 0.2.52 в отдельной проверяемой Windows Job.' + $nl +
+              'Кнопки «Запустить», «Остановить» и «Переподключить» управляют только процессами этого Host.' + $nl +
+              'Остановка завершает только созданную Host группу процессов после явного подтверждения.' + $nl +
+              'X закрывает только окно GUI; Host и Remote продолжают работать.' + $nl +
+              'Повторное открытие через трей восстанавливает состояние и журнал Host.' + $nl +
+              'Смена аккаунта и автоматическая публикация обновлений пока заблокированы.' + $nl +
+              'Если найден прежний Remote, он не будет принудительно завершён: используйте режим Adopted.'
+        }else{
+            $helpText = 'RDC Relay 1.6.0 RC1' + $nl +
+              'Режим проверки: настоящий Remote не подключён.' + $nl + $nl +
+              'X закрывает только текущий GUI-процесс. Tray Host сохраняет состояние.' + $nl +
+              'Открытие из трея загружает новую версию GUI с диска.' + $nl +
+              'Управление аккаунтом, Remote и обновлениями здесь отключено.' + $nl +
+              'Полный выход реального Remote заблокирован до проверки владения.'
+        }
+    }
     [Windows.Forms.MessageBox]::Show(
         $helpText,
         'RDC Relay — справка',
@@ -5550,6 +5649,23 @@ $aboutItem.Add_Click({
 })
 
 $openLogItem.Add_Click({
+    if ($OwnerGui) {
+        # The Host sends a fixed-category, credential-free bounded journal.
+        # Show that actual GUI pane; never open a private legacy Remote log.
+        try {
+            Render-CompactLog
+            $log.Focus()
+            $log.SelectionStart = $log.TextLength
+            $log.ScrollToCaret()
+        } catch {
+            [Windows.Forms.MessageBox]::Show(
+                'Не удалось открыть журнал RC1 в окне.',
+                'RDC Relay 1.6 RC1', [Windows.Forms.MessageBoxButtons]::OK,
+                [Windows.Forms.MessageBoxIcon]::Warning
+            ) | Out-Null
+        }
+        return
+    }
     try {
         if (-not (Test-Path $logPath)) {
             [Windows.Forms.MessageBox]::Show(
@@ -5572,6 +5688,7 @@ $openLogItem.Add_Click({
     }
 })
 function Refresh-Window {
+    if ($OwnerGui) { return }
     if ($script:initializing) { Complete-RuntimeInitialization; return }
     if ($script:remoteOperation) { Update-RemoteOperation; return }
     Apply-SystemFrameTheme
@@ -5764,6 +5881,8 @@ $form.Add_ResizeEnd({
 
 $form.Add_FormClosing({
     param($sender,$e)
+    # OwnerGui X always closes this replacement GUI, never legacy Remote.
+    if ($OwnerGui) { return }
     if ($script:allowClose -or $SelfTest -or $Preview) { return }
     if ($script:initializing -or $script:remoteOperation) {
         $e.Cancel = $true
@@ -6647,6 +6766,13 @@ if ($SelfTest) {
     Write-Output 'GUI LOGIC SELF TEST PASSED'
     $form.Dispose()
     if ($windowMutex) { $windowMutex.ReleaseMutex(); $windowMutex.Dispose() }
+    exit 0
+}
+if ($OwnerGui) {
+    # The exact ORIGINAL product WinForms controls are already constructed.
+    # Only the OwnerGui attach path runs the candidate remote-free IPC viewer.
+    . (Join-Path $root 'rc1-owner-gui.ps1')
+    Start-RdcOwnerGui
     exit 0
 }
 if ($Preview) {

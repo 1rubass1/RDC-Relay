@@ -43,6 +43,12 @@ internal static class SetupProgram
     [STAThread]
     private static int Main(string[] args)
     {
+#if RDC_RC1_BLOCKED
+        // Fail-safe RC1 compiler path. No payload extraction, process stop,
+        // user registration, shortcuts, settings or installer transaction.
+        // Removed only after independent real Remote/installer owner GO.
+        return 42;
+#endif
         bool silent = HasArgument(args, "--silent");
         bool noShortcuts = HasArgument(args, "--no-shortcuts");
         bool noRegister = HasArgument(args, "--no-register");
