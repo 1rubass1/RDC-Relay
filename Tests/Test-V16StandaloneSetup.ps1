@@ -27,6 +27,9 @@ try{
   if($found -cnotcontains $resource){$allPresent=$false;break}
  }
  Check $allPresent 'EXE all expected named payloads'
+ Check ($list -ccontains 'Source/rc1-quota-client.ps1' -and
+  $list -cnotcontains 'Source/remote-usage-cache.json' -and
+  $list -cnotcontains 'Source/quota-oauth-user.dpapi') 'EXE embeds OAuth polling code but no credentials or usage snapshot'
  $extract=$type.GetMethod('ExtractEmbeddedCandidate',$flags)
  $validate=$type.GetMethod('ValidateSource',$flags)
  $cleanup=$type.GetMethod('CleanExactExtraction',$flags)

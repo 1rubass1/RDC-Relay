@@ -15,7 +15,7 @@ using System.Web.Script.Serialization;
 internal static class RdcRc1CandidateSetup {
  static readonly string[] Required=new string[]{
   "Source/remote-window.ps1","Source/rc1-tray-host.ps1","Source/rc1-owner-gui.ps1",
-  "Source/rc1-remote-observer.ps1",
+  "Source/rc1-remote-observer.ps1","Source/rc1-quota-client.ps1",
   "Source/RdcOwnerWire.cs","Source/RdcOwnerRuntime.cs","Source/RdcOwnerProcess.cs",
   "Source/RdcOwnerTicketStore.cs","Source/RdcOwnerRemoteState.cs",
   "Source/RdcOwnerManagedProcess.cs",

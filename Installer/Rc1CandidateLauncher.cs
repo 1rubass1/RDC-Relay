@@ -70,7 +70,7 @@ internal static class RdcRc1CandidateLauncher {
       (string)values["ownerMode"]!="FULL_HOST_GUI_RC1")
      throw new InvalidOperationException("RC1_NOT_VERIFIED_FULL_CANDIDATE");
    foreach(string name in new []{"rc1-tray-host.ps1","rc1-owner-gui.ps1",
-       "rc1-remote-observer.ps1","remote-window.ps1",
+       "rc1-remote-observer.ps1","rc1-quota-client.ps1","remote-window.ps1",
        "RdcOwnerRuntime.cs","RdcOwnerWire.cs","RdcOwnerTicketStore.cs",
        "RdcOwnerRemoteState.cs","RdcOwnerProcess.cs","RdcOwnerManagedProcess.cs"}) {
     string file=Path.Combine(source,name);

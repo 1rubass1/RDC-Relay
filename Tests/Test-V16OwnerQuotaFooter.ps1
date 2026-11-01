@@ -31,8 +31,8 @@ try {
  Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'reject nonnumber'
  Put 94 'tester@example.org' $iso 'untrusted-local-guess'
  Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'reject wrong provenance'
- Put 94 'tester@example.org' $now.AddMinutes(-31).ToString('yyyy-MM-ddTHH:mm:ssZ') 'official-remote-who-am-i'
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'stale data expires at 30 minutes'
+ Put 94 'tester@example.org' $now.AddMinutes(-91).ToString('yyyy-MM-ddTHH:mm:ssZ') 'official-remote-who-am-i'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'stale data expires after a 90-minute hourly-poll allowance'
  Put 94 'tester@example.org' $now.AddMinutes(3).ToString('yyyy-MM-ddTHH:mm:ssZ') 'official-remote-who-am-i'
  Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'reject excessive future date'
  [IO.File]::WriteAllText($file,('A'*1000),[Text.Encoding]::UTF8)
@@ -53,6 +53,10 @@ Check ($layout.Contains('$script:ownerVersionIntroTimer.Interval=25') -and
  Check ($layout.Contains('if($OwnerGui){'+'$runtimeLeft.Margin=') -and
  $layout.Contains('Остаток вызовов —')) 'owner has neutral spacing and unavailable label'
  Check (-not $owner.Contains("('Remote PID '") -and -not $owner.Contains("Set-RuntimeDisplay 'Remote PID")) 'PID label omits word Remote'
+ Check ($layout.Contains("$"+'quotaAuthItem.Add_Click({') -and
+ $layout.Contains("$"+'quotaAuthItem.Visible=[bool]$OwnerGui') -and
+ $owner.Contains('quotaAuthItem.Enabled=$script:ownerRealMode')) 'OAuth authorization requires explicit owner Account click'
+ Check ($owner.Contains('Остаток вызовов 0%') -and $owner.Contains('[Drawing.Color]::LightCoral')) 'genuine zero remaining appears in red'
  Check ($owner.Contains('Get-Rc1QuotaStatus $script:ownerQuotaPath') -and
  $owner.Contains('AddSeconds(15)')) 'quota file polled without remote OAuth or UI thread network calls'
  $errors=$null;$tokens=$null

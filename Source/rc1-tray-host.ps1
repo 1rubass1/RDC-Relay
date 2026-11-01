@@ -20,7 +20,7 @@ if($ObserveAutoExitSeconds -ne 0 -and (-not $ObserveExisting -or
  throw 'RC1_OBSERVER_AUTOEXIT_BOUNDS'
 }
 $root=[IO.Path]::GetFullPath($PSScriptRoot)
-foreach($name in @('remote-window.ps1','rc1-owner-gui.ps1','RdcOwnerWire.cs','RdcOwnerRuntime.cs','RdcOwnerTicketStore.cs','RdcOwnerRemoteState.cs','RdcOwnerProcess.cs','RdcOwnerManagedProcess.cs')){
+foreach($name in @('remote-window.ps1','rc1-owner-gui.ps1','rc1-quota-client.ps1','RdcOwnerWire.cs','RdcOwnerRuntime.cs','RdcOwnerTicketStore.cs','RdcOwnerRemoteState.cs','RdcOwnerProcess.cs','RdcOwnerManagedProcess.cs')){
  if(-not [IO.File]::Exists((Join-Path $root $name))){throw ('RC1_REQUIRED_RUNTIME_MISSING: '+$name)}
 }
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
@@ -38,6 +38,8 @@ if($Full){
 }
 $owner=$null
 $observerTimer=$null
+$quotaTimer=$null
+$quotaPollProcess=$null
 try{
  if($ObserveExisting -or $Full){
   . (Join-Path $root 'rc1-remote-observer.ps1')
@@ -119,8 +121,37 @@ try{
   $owner.OpenGui()
  }
  if($TrialRoot){Write-Output ('RC1_TRIAL_GUI_STATUS='+$owner.Status+' LAST_ERROR='+$owner.LastGuiError)}
+ # A separate strictly read-only OAuth MCP client polls only who_am_i.
+ # The device-agent session is never reused, logged out or inspected.
+ if($Full -and -not $TrialRoot){
+  $quotaScript=Join-Path $root 'rc1-quota-client.ps1'
+  $quotaNextPollUtc=[DateTime]::MinValue
+  $quotaTimer=New-Object Windows.Forms.Timer
+  $quotaTimer.Interval=60000
+  $quotaTimer.Add_Tick({
+   if([DateTime]::UtcNow -lt $quotaNextPollUtc){return}
+   if($quotaPollProcess -and -not $quotaPollProcess.HasExited){return}
+   if($quotaPollProcess){$quotaPollProcess.Dispose();$quotaPollProcess=$null}
+   $quotaNextPollUtc=[DateTime]::UtcNow.AddHours(1)
+   try{
+    $quotaPollProcess=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
+     '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Poll'
+    ) -WindowStyle Hidden -PassThru -ErrorAction Stop
+   }catch{} # UI and Remote remain usable if quota polling fails.
+  })
+  # Startup fetch and hourly subsequent checks; never block WinForms.
+  $quotaTimer.Start()
+  $quotaNextPollUtc=[DateTime]::UtcNow.AddHours(1)
+  try{
+   $quotaPollProcess=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
+    '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Poll'
+   ) -WindowStyle Hidden -PassThru -ErrorAction Stop
+  }catch{}
+ }
  $owner.Run()
 }finally{
+ if($quotaTimer){$quotaTimer.Stop();$quotaTimer.Dispose()}
+ if($quotaPollProcess){$quotaPollProcess.Dispose()}
  if($observerTimer){$observerTimer.Stop();$observerTimer.Dispose()}
  if($owner){$owner.Dispose()}
 }

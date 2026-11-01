@@ -107,7 +107,7 @@ function Get-Rc1QuotaStatus([string]$path,[string]$expectedEmail,[DateTime]$nowU
       ([Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal),
       [ref]$observed)){return $missing}
   $age=($nowUtc.ToUniversalTime()-$observed).TotalMinutes
-  if($age -lt -2 -or $age -gt 30){return $missing}
+  if($age -lt -2 -or $age -gt 90){return $missing}
   return ('Остаток вызовов '+$n+'%')
  }catch{return $missing}
 }
@@ -188,6 +188,7 @@ function Start-RdcOwnerGui {
  }
  $tip.SetToolTip($finish,$tipText)
  $accountButton.Enabled=$true
+ $quotaAuthItem.Enabled=$script:ownerRealMode
  $accountButton.AccessibleDescription='Аккаунт: переход к управлению устройствами без изменения Remote.'
  $switchAccountItem.Enabled=$false
  $reconnectItem.Enabled=$false
@@ -480,6 +481,9 @@ function Start-RdcOwnerGui {
    if($quotaText -cne $script:ownerLastQuotaText){
     $script:ownerLastQuotaText=$quotaText
     $quotaLabel.Text=$quotaText
+    $quotaLabel.ForeColor=if($quotaText -ceq 'Остаток вызовов 0%'){
+     [Drawing.Color]::LightCoral
+    }else{[Drawing.Color]::Silver}
    }
   }
   if($script:ownerManagedMode -and $script:ownerRemoteBornTicks -gt 0 -and

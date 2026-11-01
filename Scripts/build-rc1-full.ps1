@@ -15,7 +15,7 @@ if($marker.candidate -cne '1.6.0 RC1' -or $marker.installable -ne $false -or
 }
 $names=@(
  'remote-window.ps1','rc1-tray-host.ps1','rc1-owner-gui.ps1',
- 'rc1-remote-observer.ps1','RdcOwnerWire.cs','RdcOwnerRuntime.cs',
+ 'rc1-remote-observer.ps1','rc1-quota-client.ps1','RdcOwnerWire.cs','RdcOwnerRuntime.cs',
  'RdcOwnerProcess.cs','RdcOwnerTicketStore.cs','RdcOwnerRemoteState.cs',
  'RdcOwnerManagedProcess.cs',
  'rc1-candidate.json','RDCRelay.ico','divider-caustic.ps',

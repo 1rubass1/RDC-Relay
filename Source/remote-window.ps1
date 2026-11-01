@@ -3563,6 +3563,11 @@ $verifyDeviceItem.Text = 'Подтвердить новое устройство
 [void]$accountMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
 [void]$accountMenu.Items.Add($devicesItem)
 [void]$accountMenu.Items.Add($verifyDeviceItem)
+$quotaAuthItem=New-Object Windows.Forms.ToolStripMenuItem
+$quotaAuthItem.Text='Подключить статистику вызовов…'
+$quotaAuthItem.Visible=[bool]$OwnerGui
+$quotaAuthItem.Enabled=$false
+if($OwnerGui){[void]$accountMenu.Items.Add($quotaAuthItem)}
 
 $top.Controls.Add($statusDot,0,0)
 $top.SetRowSpan($statusDot,2)
@@ -5609,6 +5614,18 @@ $finish.Add_Click({
     } catch {
         Set-FinishButtonMode $false
     }
+})
+$quotaAuthItem.Add_Click({
+    # Only an explicit user click may start independent OAuth+PKCE consent.
+    # No device.json/token sharing or Remote process action.
+    if(-not $OwnerGui -or -not $script:ownerRealMode){return}
+    $quotaScript=Join-Path $root 'rc1-quota-client.ps1'
+    if(-not [IO.File]::Exists($quotaScript)){return}
+    try{
+        Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
+          '-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Authorize'
+        ) -WindowStyle Hidden | Out-Null
+    }catch{}
 })
 $accountButton.Add_Click({
     $accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))
