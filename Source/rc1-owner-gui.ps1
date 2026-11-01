@@ -107,7 +107,7 @@ function Get-Rc1QuotaStatus([string]$path,[string]$expectedEmail,[DateTime]$nowU
       ([Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal),
       [ref]$observed)){return $missing}
   $age=($nowUtc.ToUniversalTime()-$observed).TotalMinutes
-  if($age -lt -2 -or $age -gt 90){return $missing}
+  if($age -lt -2 -or $age -ge 60){return $missing}
   return ('Остаток вызовов '+$n+'%')
  }catch{return $missing}
 }

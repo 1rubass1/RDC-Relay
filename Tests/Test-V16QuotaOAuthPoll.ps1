@@ -88,7 +88,10 @@ Check ($code.Contains("scope='mcp:tools'") -and $code.Contains("code_challenge_m
 Check ($code.Contains('[Security.Cryptography.ProtectedData]::Protect') -and $code.Contains('[Security.Cryptography.DataProtectionScope]::CurrentUser')) 'tokens encrypted with user-scoped DPAPI'
 Check ($code.Contains("method='tools/call'") -and $code.Contains("name='who_am_i'") -and -not $code.Contains('Get-Content -LiteralPath $env:USERPROFILE')) 'only who_am_i and no device credentials'
 Check ($code.Contains('Validate-OfficialEndpoint') -and $code.Contains('mcp.desktopcommander.app')) 'fixed official endpoints enforced'
-Check ($hostCode.Contains('$quotaNextPollUtc=[DateTime]::UtcNow.AddHours(1)') -and $hostCode.Contains('quotaPollProcess=Start-Process') -and $hostCode.Contains('if($Full -and -not $TrialRoot)')) 'Host polls on startup then every hour, full mode only'
+Check (([regex]::Matches($hostCode,'\$quotaNextPollUtc=\[DateTime\]::UtcNow\.AddMinutes\(30\)')).Count -eq 2 -and
+ -not $hostCode.Contains('AddHours(1)') -and
+ $hostCode.Contains('quotaPollProcess=Start-Process') -and
+ $hostCode.Contains('if($Full -and -not $TrialRoot)')) 'Host polls on startup then every 30 minutes, full mode only'
 Check ($window.Contains('rc1-quota-client.ps1') -and $window.Contains("'-Authorize'") -and $gui.Contains('$quotaAuthItem.Enabled=$script:ownerRealMode')) 'browser OAuth requires explicit Account menu action'
 Check ($gui.Contains('Остаток вызовов 0%') -and $gui.Contains('[Drawing.Color]::LightCoral')) '0% rendered red'
 Write-Output ('RC1_QUOTA_OAUTH_PASS='+$pass+' FAIL='+$fail)

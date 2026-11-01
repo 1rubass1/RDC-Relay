@@ -31,8 +31,13 @@ try {
  Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'reject nonnumber'
  Put 94 'tester@example.org' $iso 'untrusted-local-guess'
  Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'reject wrong provenance'
- Put 94 'tester@example.org' $now.AddMinutes(-91).ToString('yyyy-MM-ddTHH:mm:ssZ') 'official-remote-who-am-i'
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'stale data expires after a 90-minute hourly-poll allowance'
+ Put 94 'tester@example.org' $now.AddMinutes(-59).ToString('yyyy-MM-ddTHH:mm:ssZ') 'official-remote-who-am-i'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов 94%') 'last confirmed value remains visible just before one hour'
+ $nowExact=$now.AddTicks(-($now.Ticks % [TimeSpan]::TicksPerSecond))
+ Put 94 'tester@example.org' $nowExact.AddMinutes(-60).ToString('yyyy-MM-ddTHH:mm:ssZ') 'official-remote-who-am-i'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $nowExact) -ceq 'Остаток вызовов —') 'value becomes unavailable exactly at one hour'
+ Put 94 'tester@example.org' $now.AddMinutes(-61).ToString('yyyy-MM-ddTHH:mm:ssZ') 'official-remote-who-am-i'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'stale value stays hidden after one hour'
  Put 94 'tester@example.org' $now.AddMinutes(3).ToString('yyyy-MM-ddTHH:mm:ssZ') 'official-remote-who-am-i'
  Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'reject excessive future date'
  [IO.File]::WriteAllText($file,('A'*1000),[Text.Encoding]::UTF8)

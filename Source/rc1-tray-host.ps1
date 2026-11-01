@@ -132,16 +132,16 @@ try{
    if([DateTime]::UtcNow -lt $quotaNextPollUtc){return}
    if($quotaPollProcess -and -not $quotaPollProcess.HasExited){return}
    if($quotaPollProcess){$quotaPollProcess.Dispose();$quotaPollProcess=$null}
-   $quotaNextPollUtc=[DateTime]::UtcNow.AddHours(1)
+   $quotaNextPollUtc=[DateTime]::UtcNow.AddMinutes(30)
    try{
     $quotaPollProcess=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
      '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Poll'
     ) -WindowStyle Hidden -PassThru -ErrorAction Stop
    }catch{} # UI and Remote remain usable if quota polling fails.
   })
-  # Startup fetch and hourly subsequent checks; never block WinForms.
+  # Startup fetch, then poll every 30 minutes; never block WinForms.
   $quotaTimer.Start()
-  $quotaNextPollUtc=[DateTime]::UtcNow.AddHours(1)
+  $quotaNextPollUtc=[DateTime]::UtcNow.AddMinutes(30)
   try{
    $quotaPollProcess=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
     '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Poll'
