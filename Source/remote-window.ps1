@@ -3578,7 +3578,7 @@ $bottom.Padding = New-Object Windows.Forms.Padding(12,7,12,6)
 $bottom.ColumnCount = 2
 $bottom.RowCount = 1
 [void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent,100)))
-[void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,440)))
+[void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,$(if($OwnerGui){110}else{440}))))
 $accentOrange = [Drawing.Color]::FromArgb(191,118,67)
 $accentPurple = [Drawing.Color]::FromArgb(74,55,103)
 $statusGreen = [Drawing.Color]::LightGreen
@@ -3625,13 +3625,23 @@ $runtimeSep.Margin = New-Object Windows.Forms.Padding(6,2,6,0)
 $runtimeRight = New-Object Windows.Forms.Label
 $runtimeRight.AutoSize = $true
 $runtimeRight.ForeColor = [Drawing.Color]::Silver
-$runtimeRight.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
+$runtimeRight.Margin = New-Object Windows.Forms.Padding($(if($OwnerGui){12}else{0}),2,0,0)
+
+# Owner-only account quota label: no change to the stable 1.5.18 footer.
+$quotaLabel = New-Object Windows.Forms.Label
+$quotaLabel.AutoSize = $true
+$quotaLabel.Text = 'Остаток вызовов —'
+$quotaLabel.ForeColor = [Drawing.Color]::Silver
+$quotaLabel.Margin = New-Object Windows.Forms.Padding(12,2,0,0)
+$quotaLabel.Visible = $OwnerGui
 
 $infoHost.Controls.Add($accountInfo)
-$infoHost.Controls.Add($accountSep)
+if(-not $OwnerGui){$infoHost.Controls.Add($accountSep)}
 $infoHost.Controls.Add($runtimeLeft)
-$infoHost.Controls.Add($runtimeSep)
+if(-not $OwnerGui){$infoHost.Controls.Add($runtimeSep)}
+if($OwnerGui){$infoHost.Controls.Add($quotaLabel)}
 $infoHost.Controls.Add($runtimeRight)
+if($OwnerGui){$runtimeLeft.Margin=New-Object Windows.Forms.Padding(12,2,0,0)}
 
 $hintHost = New-Object Windows.Forms.FlowLayoutPanel
 $hintHost.Dock = 'Fill'
@@ -3642,7 +3652,7 @@ $hintHost.Padding = New-Object Windows.Forms.Padding(0)
 
 $hint = New-Object Windows.Forms.Label
 $hint.AutoSize = $true
-$hint.Text = if($OwnerGui){'Крестик закрывает только окно; Host и Remote работают.'}else{'Крестик закрывает окно вместе с remote-процессом.'}
+$hint.Text = if($OwnerGui){''}else{'Крестик закрывает окно вместе с remote-процессом.'}
 $hint.ForeColor = [Drawing.Color]::Gray
 $hint.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
 
@@ -3658,14 +3668,42 @@ $hintVersion.Text = 'v' + $appVersion
 $hintVersion.Font = $hint.Font
 $hintVersion.ForeColor = [Drawing.Color]::Gray
 # Align the shorter version glyph line with the adjacent footer hint baseline.
-$hintVersion.Margin = New-Object Windows.Forms.Padding(0,6,0,0)
+$hintVersion.Margin = New-Object Windows.Forms.Padding(0,$(if($OwnerGui){2}else{6}),0,0)
 
-$hintHost.Controls.Add($hint)
-$hintHost.Controls.Add($hintSep)
+if(-not $OwnerGui){
+    $hintHost.Controls.Add($hint)
+    $hintHost.Controls.Add($hintSep)
+}
 $hintHost.Controls.Add($hintVersion)
+if($OwnerGui){$tip.SetToolTip($quotaLabel,'Последний подтверждённый остаток вызовов Remote Desktop Commander. Без нового ответа сервиса значение устаревает.')}
 
 $bottom.Controls.Add($infoHost,0,0)
 $bottom.Controls.Add($hintHost,1,0)
+# Owner-only subtle, non-layout animation of the version in the far corner.
+# No motion in high-contrast mode. The stable updater footer is unaffected.
+if($OwnerGui){
+    $script:ownerVersionIntroTimer=New-Object Windows.Forms.Timer
+    $script:ownerVersionIntroTimer.Interval=25
+    $script:ownerVersionIntroFrame=0
+    $hintVersion.ForeColor=$form.BackColor
+    $script:ownerVersionIntroTimer.Add_Tick({
+        $script:ownerVersionIntroFrame++
+        $t=[Math]::Min(1.0,([double]$script:ownerVersionIntroFrame/7.0))
+        $smooth=$t*$t*(3.0-2.0*$t)
+        $from=$form.BackColor
+        $to=[Drawing.Color]::Gray
+        $r=[int][Math]::Round($from.R+($to.R-$from.R)*$smooth)
+        $g=[int][Math]::Round($from.G+($to.G-$from.G)*$smooth)
+        $b=[int][Math]::Round($from.B+($to.B-$from.B)*$smooth)
+        $hintVersion.ForeColor=[Drawing.Color]::FromArgb($r,$g,$b)
+        if($t -ge 1.0){$script:ownerVersionIntroTimer.Stop()}
+    })
+    $form.Add_Shown({
+        if([Windows.Forms.SystemInformation]::HighContrast){
+            $hintVersion.ForeColor=[Drawing.Color]::Gray
+        }else{$script:ownerVersionIntroTimer.Start()}
+    })
+}
 $tip.SetToolTip($accountInfo,'Аккаунт Desktop Commander, к которому привязан этот компьютер')
 
 $contentHost = New-Object Windows.Forms.TableLayoutPanel
@@ -4215,7 +4253,7 @@ function Set-FinishButtonMode([bool]$running) {
 function Set-RuntimeDisplay([string]$left,[string]$right = '',[bool]$showSeparator = $false) {
     $runtimeLeft.Text = $left
     $runtimeRight.Text = $right
-    $runtimeSep.Visible = $showSeparator
+    $runtimeSep.Visible = ($showSeparator -and -not $OwnerGui)
     $runtimeRight.Visible = -not [string]::IsNullOrWhiteSpace($right)
 }
 function Set-AccountDisplay([string]$email) {
@@ -5930,6 +5968,11 @@ $form.Add_FormClosing({
 })
 $form.Add_FormClosed({
     $timer.Stop()
+    if($script:ownerVersionIntroTimer){
+        $script:ownerVersionIntroTimer.Stop()
+        $script:ownerVersionIntroTimer.Dispose()
+        $script:ownerVersionIntroTimer=$null
+    }
     if ($script:enableUpdateNotice) { Dispose-RdcUpdateNotice }
     if ($script:shortcutSyncTimer) {
         try { $script:shortcutSyncTimer.Stop() } catch {}

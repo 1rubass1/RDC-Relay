@@ -82,6 +82,35 @@ function Format-Rc1JournalLine([long]$number,[string]$message) {
  }
  return $number.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '+$description
 }
+# A read-only, expiring private snapshot from an authorized official
+# Remote Desktop Commander who_am_i call. The Windows device-agent's OAuth
+# credentials are NOT reused: they are not the ChatGPT/hosted MCP client grant.
+# If no fresh service-provided snapshot is present, show an honest dash.
+function Get-Rc1QuotaStatus([string]$path,[string]$expectedEmail,[DateTime]$nowUtc) {
+ $missing='Остаток вызовов —'
+ if(-not $path -or -not $expectedEmail -or -not [IO.File]::Exists($path)){return $missing}
+ try {
+  $file=Get-Item -LiteralPath $path -ErrorAction Stop
+  if($file.Length -lt 40 -or $file.Length -gt 512){return $missing}
+  $raw=[IO.File]::ReadAllText($path,[Text.Encoding]::UTF8)
+  $data=ConvertFrom-Json -InputObject $raw -ErrorAction Stop
+  if([string]$data.source -cne 'official-remote-who-am-i'){return $missing}
+  if(-not [string]::Equals([string]$data.accountEmail,$expectedEmail.Trim(),
+      [StringComparison]::OrdinalIgnoreCase)){return $missing}
+  $n=0
+  if(-not [int]::TryParse([string]$data.remainingPercent,[ref]$n) -or $n -lt 0 -or $n -gt 100){
+   return $missing
+  }
+  $observed=[DateTime]::MinValue
+  if(-not [DateTime]::TryParseExact([string]$data.observedAtUtc,'yyyy-MM-ddTHH:mm:ssZ',
+      [Globalization.CultureInfo]::InvariantCulture,
+      ([Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal),
+      [ref]$observed)){return $missing}
+  $age=($nowUtc.ToUniversalTime()-$observed).TotalMinutes
+  if($age -lt -2 -or $age -gt 30){return $missing}
+  return ('Остаток вызовов '+$n+'%')
+ }catch{return $missing}
+}
 function Start-RdcOwnerGui {
  $ErrorActionPreference='Stop'
  if(-not $OwnerGui -or [string]::IsNullOrWhiteSpace($OwnerTicketPath)){
@@ -184,6 +213,9 @@ function Start-RdcOwnerGui {
  $script:ownerLastSnapshotUtcTicks=0
  $script:ownerRemotePid=0
  $script:ownerLastUptimeText=''
+ $script:ownerQuotaPath=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'remote-usage-cache.json'
+ $script:ownerQuotaNextCheckUtc=[DateTime]::MinValue
+ $script:ownerLastQuotaText=''
  $script:ownerLastLogCursor=0
  $script:ownerLastLogEpoch=-1
  # Owner-only compact activity journal; legacy 1.5.18 renderer remains spaced.
@@ -192,7 +224,7 @@ function Start-RdcOwnerGui {
  $script:ownerLastRemoteLinkState=''
  if($script:ownerObservedMode){
   Set-State 'Подключение к Host' 'Старый Remote обнаружен. После штатного завершения прежней оболочки RC1 запустит новый.' ([Drawing.Color]::Khaki)
-  Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Remote: существующая сессия / Adopted' $true
+  Set-RuntimeDisplay ('PID '+[string]$ticket.hostPid) 'Remote: существующая сессия / Adopted' $true
   Add-CompletedEvent 'RC1 подключён к работающему Desktop Commander Remote только для наблюдения. X закрывает GUI; Remote не затрагивается.'
  }elseif($script:ownerManagedMode){
   Set-FinishButtonMode $false
@@ -201,11 +233,11 @@ function Start-RdcOwnerGui {
   $script:ownerCanStop=$false
   $script:ownerCanReconnect=$false
   Set-State 'Remote отключён' 'Host готов запустить новую управляемую сессию Desktop Commander.' ([Drawing.Color]::Khaki)
-  Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Remote: Host-owned / ожидание запуска' $true
+  Set-RuntimeDisplay ('PID '+[string]$ticket.hostPid) 'Remote: Host-owned / ожидание запуска' $true
   Add-CompletedEvent 'RDC Relay RC1: управление Remote выполняет постоянный Host. X закрывает только это окно.'
  }else{
   Set-State 'Демонстрация RC1' 'Настоящий Desktop Commander Remote не подключён; действия недоступны.' ([Drawing.Color]::Khaki)
-  Set-RuntimeDisplay ('Host PID '+[string]$ticket.hostPid) 'Тестовый Host / Remote не подключён' $true
+  Set-RuntimeDisplay ('PID '+[string]$ticket.hostPid) 'Тестовый Host / Remote не подключён' $true
   Add-CompletedEvent 'RDC Relay 1.6.0 RC1. Host использует синтетическое состояние; настоящий Remote не запущен.'
  }
  Render-CompactLog
@@ -302,7 +334,7 @@ function Start-RdcOwnerGui {
        }else{[Drawing.Color]::Khaki}
        $statusText=if($online){'Remote подключён (наблюдение)'}else{'Remote: '+[string]$remoteSnapshot.state}
        Set-State $statusText ([string]$remoteSnapshot.status+'; управление старой сессией отключено. RC1 ждёт её штатного завершения.') $color
-       Set-RuntimeDisplay ('Remote PID '+[string]$remoteSnapshot.processPid) 'Существующая сессия / Adopted' $true
+       Set-RuntimeDisplay ('PID '+[string]$remoteSnapshot.processPid) 'Существующая сессия / Adopted' $true
       }elseif($script:ownerManagedMode){
        $connected=([string]$remoteSnapshot.state -ceq 'Ready')
        $color=if($connected){[Drawing.Color]::PaleGreen}elseif([string]$remoteSnapshot.state -ceq 'Fault'){
@@ -313,10 +345,10 @@ function Start-RdcOwnerGui {
        }else{'Remote: '+[string]$remoteSnapshot.state}
        Set-State $name ([string]$remoteSnapshot.status) $color
        $script:ownerLastUptimeText=''  # Timer owns the original runtime footer.
-       if($script:ownerRemoteBornTicks -le 0){Set-RuntimeDisplay 'Remote PID —' 'Remote отключён' $true}
+       if($script:ownerRemoteBornTicks -le 0){Set-RuntimeDisplay 'PID —' 'Remote отключён' $true}
       }else{
        Set-State 'Remote отключён (RC1)' ('Host: '+[string]$remoteSnapshot.state+'; только синтетические данные.') ([Drawing.Color]::Khaki)
-       Set-RuntimeDisplay ('Host PID '+[string]$snapshot.hostPid) 'Remote НЕ подключён | RC1' $true
+       Set-RuntimeDisplay ('PID '+[string]$snapshot.hostPid) 'Remote НЕ подключён | RC1' $true
       }
       # Authenticated Host supplies only strictly validated startup fields,
       # not raw Remote stdout, tokens or unrecognized device metadata.
@@ -440,6 +472,16 @@ function Start-RdcOwnerGui {
     }
    }finally{$script:ownerPending=$null;$script:ownerRequestedNavigation='';$script:ownerRequestedAction=''}
   }
+  # Poll only the private, short-lived official snapshot (no credential IO,
+  # no network requests on the WinForms UI thread). Expired means unknown.
+  if([DateTime]::UtcNow -ge $script:ownerQuotaNextCheckUtc){
+   $script:ownerQuotaNextCheckUtc=[DateTime]::UtcNow.AddSeconds(15)
+   $quotaText=Get-Rc1QuotaStatus $script:ownerQuotaPath ([string]$script:accountEmail) ([DateTime]::UtcNow)
+   if($quotaText -cne $script:ownerLastQuotaText){
+    $script:ownerLastQuotaText=$quotaText
+    $quotaLabel.Text=$quotaText
+   }
+  }
   if($script:ownerManagedMode -and $script:ownerRemoteBornTicks -gt 0 -and
      $script:ownerRemotePid -gt 0 -and $script:ownerLastSnapshotUtcTicks -gt 0 -and
      ([DateTime]::UtcNow.Ticks-$script:ownerLastSnapshotUtcTicks) -le 50000000){
@@ -447,7 +489,7 @@ function Start-RdcOwnerGui {
    $uptime='Время работы {0:00}:{1:00}:{2:00}' -f [Math]::Floor($seconds/3600),[Math]::Floor(($seconds%3600)/60),($seconds%60)
    if($uptime -cne $script:ownerLastUptimeText){
     $script:ownerLastUptimeText=$uptime
-    Set-RuntimeDisplay ('Remote PID '+[string]$script:ownerRemotePid) $uptime $true
+    Set-RuntimeDisplay ('PID '+[string]$script:ownerRemotePid) $uptime $true
    }
   }
   if(-not $script:ownerPending -and -not $form.IsDisposed){
