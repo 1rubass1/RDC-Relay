@@ -10,7 +10,23 @@ $endpoint=$service+'/mcp'
 $state=Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot'
 $vault=Join-Path $state 'quota-oauth-user.dpapi'
 $cache=Join-Path $state 'remote-usage-cache.json'
+$statusFile=Join-Path $state 'remote-usage-status.json'
+$script:quotaStage='startup'
+function Save-QuotaStatus([string]$result,[int]$httpStatus=0){
+ # Diagnostic fields are fixed categories only; never record OAuth code,
+ # client ID, secret, access/refresh token, URL or server response body.
+ $stage=[string]$script:quotaStage
+ if($stage -cnotin @('startup','registration','browser','callback','token',
+     'vault','mcp','tool','cache','finished')){$stage='unknown'}
+ $public=[ordered]@{
+  result=$result;stage=$stage
+  httpStatus=$httpStatus
+  observedAtUtc=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+ }|ConvertTo-Json -Compress
+ try{Write-PrivateFile $statusFile ([Text.Encoding]::UTF8.GetBytes($public))}catch{}
+}
 function Stop-Quota([string]$reason) {
+ Save-QuotaStatus $reason
  # Never write arbitrary server replies, OAuth credentials, or exception text.
  Write-Output ('RC1_QUOTA_'+$reason)
  exit 0
@@ -70,7 +86,10 @@ function Read-Credentials {
  try{
   $item=[Text.Encoding]::UTF8.GetString($bytes)|ConvertFrom-Json
   if([string]$item.clientId -notmatch '^[A-Za-z0-9._-]{1,220}$' -or
-     [string]$item.refreshToken -notmatch '^[A-Za-z0-9._~+/-]{16,3000}$'){
+     [string]$item.refreshToken -notmatch '^[\x21-\x7E]{16,3000}$' -or
+     [string]$item.tokenAuthMethod -cnotin @('none','client_secret_post') -or
+     ([string]$item.tokenAuthMethod -ceq 'client_secret_post' -and
+      [string]$item.clientSecret -notmatch '^[\x21-\x7E]{16,3000}$')){
     throw 'RC1_QUOTA_VAULT_INVALID'
   }
   return $item
@@ -80,11 +99,36 @@ function Post-Token([string]$uri,[hashtable]$body){
  [void](Validate-OfficialEndpoint $uri)
  return Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/x-www-form-urlencoded' -TimeoutSec 15 -MaximumRedirection 0
 }
-function Store-Session([string]$clientId,$token){
+function Get-ClientAuth($registration){
+ # Honor actual DCR result. The hosted service may turn requested 'none'
+ # into a confidential client (client_secret_post) with a generated secret.
+ $method=[string]$registration.token_endpoint_auth_method
+ if($method -cnotin @('none','client_secret_post')){throw 'RC1_QUOTA_DCR_AUTH_UNSUPPORTED'}
+ $secret=[string]$registration.client_secret
+ if($method -ceq 'client_secret_post' -and
+    $secret -notmatch '^[\x21-\x7E]{16,3000}$'){
+  throw 'RC1_QUOTA_DCR_CLIENT_SECRET_MISSING'
+ }
+ if($method -ceq 'none'){$secret=''}
+ return @{Method=$method;Secret=$secret}
+}
+function Add-ClientAuth([hashtable]$body,[string]$method,[string]$secret){
+ $body.client_id=[string]$body.client_id
+ if($method -ceq 'client_secret_post'){
+  if($secret -notmatch '^[\x21-\x7E]{16,3000}$'){
+   throw 'RC1_QUOTA_OAUTH_CLIENT_SECRET_INVALID'
+  }
+  $body.client_secret=$secret
+ }elseif($method -cne 'none'){throw 'RC1_QUOTA_OAUTH_CLIENT_AUTH_UNSUPPORTED'}
+ return $body
+}
+function Store-Session([string]$clientId,$token,[string]$authMethod,[string]$clientSecret){
  if(-not $token.access_token -or -not $token.refresh_token){throw 'RC1_QUOTA_TOKEN_MISSING'}
  $until=[DateTime]::UtcNow.AddSeconds([Math]::Max(60,[int]$token.expires_in))
  $item=@{
   clientId=$clientId
+  tokenAuthMethod=$authMethod
+  clientSecret=$clientSecret
   accessToken=[string]$token.access_token
   refreshToken=[string]$token.refresh_token
   expiresUtc=$until.ToString('o',[Globalization.CultureInfo]::InvariantCulture)
@@ -107,8 +151,10 @@ function Invoke-QuotaAuthorize {
   response_types=@('code')
   token_endpoint_auth_method='none'
  }|ConvertTo-Json -Compress
+ $script:quotaStage='registration'
  $client=Invoke-RestMethod -Method Post -Uri (Validate-OfficialEndpoint $metadata.registration_endpoint) -Body $registration -ContentType 'application/json' -TimeoutSec 15 -MaximumRedirection 0
  if([string]$client.client_id -notmatch '^[A-Za-z0-9._-]{1,220}$'){throw 'RC1_QUOTA_DCR_INVALID'}
+ $clientAuth=Get-ClientAuth $client
  $verifier=New-RandomToken 48
  $sha=[Security.Cryptography.SHA256]::Create()
  try{$challenge=To-B64Url ($sha.ComputeHash([Text.Encoding]::ASCII.GetBytes($verifier)))}finally{$sha.Dispose()}
@@ -128,15 +174,17 @@ function Invoke-QuotaAuthorize {
   $listener.Start()
   # Browser is opened only on the explicit Account menu click.
   $authUrl=(Validate-OfficialEndpoint ([string]$metadata.authorization_endpoint))+'?'+$query
+  $script:quotaStage='browser'
   Start-Process -FilePath $authUrl
   $pending=$listener.GetContextAsync()
   if(-not $pending.Wait(180000)){throw 'RC1_QUOTA_AUTH_TIMEOUT'}
   $context=$pending.GetAwaiter().GetResult()
+  $script:quotaStage='callback'
   Add-Type -AssemblyName System.Web
   $q=[System.Web.HttpUtility]::ParseQueryString($context.Request.Url.Query)
   $valid=($context.Request.Url.AbsolutePath -ceq '/callback/' -and
     [string]$q['state'] -ceq $nonce -and
-    [string]$q['code'] -match '^[A-Za-z0-9._~-]{8,4096}$')
+    [string]$q['code'] -match '^[\x21-\x7E]{8,4096}$')
   $message=if($valid){'Код подтверждения получен. RDC Relay проверяет доступ к статистике.'}else{'Авторизация статистики не выполнена.'}
   $bytes=[Text.Encoding]::UTF8.GetBytes($message)
   $context.Response.ContentType='text/plain; charset=utf-8'
@@ -144,13 +192,17 @@ function Invoke-QuotaAuthorize {
   $context.Response.OutputStream.Write($bytes,0,$bytes.Length)
   $context.Response.Close()
   if(-not $valid){throw 'RC1_QUOTA_OAUTH_STATE_OR_CODE'}
-  $token=Post-Token ([string]$metadata.token_endpoint) @{
+  $exchange=@{
    grant_type='authorization_code';code=[string]$q['code']
    client_id=[string]$client.client_id;code_verifier=$verifier
    redirect_uri=$redirect;resource=$service
   }
-  [void](Store-Session ([string]$client.client_id) $token)
-  Invoke-QuotaPoll
+  $script:quotaStage='token'
+  $exchange=Add-ClientAuth $exchange $clientAuth.Method $clientAuth.Secret
+  $token=Post-Token ([string]$metadata.token_endpoint) $exchange
+  [void](Store-Session ([string]$client.client_id) $token $clientAuth.Method $clientAuth.Secret)
+  $script:quotaStage='vault'
+  [void](Invoke-QuotaPoll)
  }finally{if($listener.IsListening){$listener.Stop()};$listener.Close()}
 }
 function Parse-McpResponse([string]$body){
@@ -193,16 +245,19 @@ function Parse-Quota($result){
 }
 function Invoke-QuotaPoll {
  $item=Read-Credentials
- if(-not $item){return}
+ if(-not $item){return $false}
  $metadata=Read-OAuthMetadata
  $expires=[DateTime]::Parse([string]$item.expiresUtc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind)
  if($expires.ToUniversalTime() -le [DateTime]::UtcNow.AddMinutes(3)){
-  $token=Post-Token ([string]$metadata.token_endpoint) @{
+  $refresh=@{
    grant_type='refresh_token';refresh_token=[string]$item.refreshToken
    client_id=[string]$item.clientId;resource=$service
   }
-  $item=Store-Session ([string]$item.clientId) $token
+  $refresh=Add-ClientAuth $refresh ([string]$item.tokenAuthMethod) ([string]$item.clientSecret)
+  $token=Post-Token ([string]$metadata.token_endpoint) $refresh
+  $item=Store-Session ([string]$item.clientId) $token ([string]$item.tokenAuthMethod) ([string]$item.clientSecret)
  }
+ $script:quotaStage='mcp'
  $init=@{jsonrpc='2.0';id=1;method='initialize';params=@{protocolVersion='2025-06-18';capabilities=@{};clientInfo=@{name='rdc-relay-usage';version='1.6.0'}}}|ConvertTo-Json -Depth 8 -Compress
  $first=Send-Mcp ([string]$item.accessToken) $init
  if($first.Reply.error -or -not $first.Reply.result){throw 'RC1_QUOTA_MCP_INIT_FAILED'}
@@ -210,6 +265,7 @@ function Invoke-QuotaPoll {
  $notification=@{jsonrpc='2.0';method='notifications/initialized'}|ConvertTo-Json -Compress
  try{[void](Send-Mcp ([string]$item.accessToken) $notification $session)}catch{}
  $call=@{jsonrpc='2.0';id=2;method='tools/call';params=@{name='who_am_i';arguments=@{}}}|ConvertTo-Json -Depth 6 -Compress
+ $script:quotaStage='tool'
  $reply=Send-Mcp ([string]$item.accessToken) $call $session
  $quota=Parse-Quota $reply.Reply
  $payload=@{
@@ -217,13 +273,18 @@ function Invoke-QuotaPoll {
   remainingPercent=$quota.Percent
   observedAtUtc=([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture))
  }|ConvertTo-Json -Compress
+ $script:quotaStage='cache'
  Write-PrivateFile $cache ([Text.Encoding]::UTF8.GetBytes($payload))
+ return $true
 }
 try{
- if($Authorize){Invoke-QuotaAuthorize}else{Invoke-QuotaPoll}
+ if($Authorize){Invoke-QuotaAuthorize}
+ elseif(-not (Invoke-QuotaPoll)){Stop-Quota 'NOT_AUTHORIZED'}
+ $script:quotaStage='finished'
+ Save-QuotaStatus 'ok'
  Write-Output 'RC1_QUOTA_OK'
 }catch{
- # Authentication failure, timeout or exhausted grant may be retried on the
- # next hourly pulse. Never turn an unrelated network error into red 0%.
+ # No private exception text; diagnostic only distinguishes the stage.
+ # Never turn an unrelated network error into red 0%.
  Stop-Quota 'UNAVAILABLE'
 }

@@ -9,10 +9,48 @@ $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($client,[ref]$tokens,[ref]$errors)
 Check ($errors.Count -eq 0) 'OAuth script parses on PowerShell 5.1'
 if($errors.Count){exit 1}
-foreach($method in @('Parse-Quota','Parse-McpResponse')){
+foreach($method in @('Parse-Quota','Parse-McpResponse','Get-ClientAuth','Add-ClientAuth','Write-PrivateFile','Save-Credentials','Read-Credentials','Store-Session')){
  $n=$ast.Find({param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -ceq $method},$true)
  Check ($null -ne $n) ('pure parser '+$method)
  if($n){. ([scriptblock]::Create($n.Extent.Text))}
+}
+# The live hosted DCR service returns client_secret_post even when
+# token_endpoint_auth_method=none was requested. Verify both token paths.
+$registration=[pscustomobject]@{token_endpoint_auth_method='client_secret_post';client_secret=('Y'*40)}
+$auth=Get-ClientAuth $registration
+Check ($auth.Method -ceq 'client_secret_post' -and $auth.Secret.Length -eq 40) 'DCR response client_secret_post recognized'
+$exchange=Add-ClientAuth @{client_id='example';grant_type='authorization_code'} $auth.Method $auth.Secret
+Check ($exchange.ContainsKey('client_secret') -and $exchange.client_secret -ceq $auth.Secret) 'token code exchange includes confidential client_secret'
+$refresh=Add-ClientAuth @{client_id='example';grant_type='refresh_token'} $auth.Method $auth.Secret
+Check ($refresh.ContainsKey('client_secret') -and $refresh.client_secret -ceq $auth.Secret) 'token refresh includes confidential client_secret'
+$public=Get-ClientAuth ([pscustomobject]@{token_endpoint_auth_method='none';client_secret='ignore'})
+$publicBody=Add-ClientAuth @{client_id='public';grant_type='authorization_code'} $public.Method $public.Secret
+Check (-not $publicBody.ContainsKey('client_secret')) 'genuinely public registration does not send client_secret'
+$rejected=$false
+try{[void](Get-ClientAuth ([pscustomobject]@{token_endpoint_auth_method='client_secret_post';client_secret=''}))}catch{$rejected=$true}
+Check $rejected 'confidential DCR without a secret is refused'
+$unsupported=$false
+try{[void](Get-ClientAuth ([pscustomobject]@{token_endpoint_auth_method='client_secret_basic';client_secret=('Y'*40)}))}catch{$unsupported=$true}
+Check $unsupported 'unsupported client auth method refused'
+# Use a disposable synthetic vault; never touch real OAuth credentials.
+Add-Type -AssemblyName System.Security
+$state=Join-Path ([IO.Path]::GetTempPath()) ('RdcQuotaUnit-'+[Guid]::NewGuid().ToString('N'))
+$vault=Join-Path $state 'synthetic-secret.dpapi'
+try{
+ $testSecret='only-synthetic-demo-secret-eu-12345'
+ $tok=[pscustomobject]@{access_token='dummy-test-access';refresh_token='dummy-test-refresh';expires_in=3600}
+ $saved=Store-Session 'test-client' $tok 'client_secret_post' $testSecret
+ Check ((Test-Path -LiteralPath $vault -PathType Leaf) -and
+     $saved.tokenAuthMethod -ceq 'client_secret_post') 'credential vault written via current-user DPAPI'
+ $encrypted=[IO.File]::ReadAllBytes($vault)
+ Check (-not ([Text.Encoding]::UTF8.GetString($encrypted).Contains($testSecret))) 'client secret not present in plaintext vault bytes'
+ $loaded=Read-Credentials
+ Check ($loaded.clientSecret -ceq $testSecret -and
+     $loaded.tokenAuthMethod -ceq 'client_secret_post' -and
+     $loaded.refreshToken -ceq 'dummy-test-refresh') 'encrypted secret and refresh token roundtrip safely'
+}finally{
+ if([IO.File]::Exists($vault)){[IO.File]::Delete($vault)}
+ if([IO.Directory]::Exists($state)){[IO.Directory]::Delete($state,$false)}
 }
 $raw=@{jsonrpc='2.0';id=2;result=@{content=@(@{type='text';text='{"email":"test@example.org","remote_calls_left_pct":0}'})}}|ConvertTo-Json -Depth 8 -Compress
 $zero=Parse-Quota ($raw|ConvertFrom-Json)
