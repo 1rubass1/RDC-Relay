@@ -61,13 +61,18 @@ function Read-OAuthMetadata {
 function Write-PrivateFile([string]$target,[byte[]]$bytes){
  if(-not [IO.Directory]::Exists($state)){[IO.Directory]::CreateDirectory($state)|Out-Null}
  $staging=Join-Path $state ('quota-'+[Guid]::NewGuid().ToString('N')+'.tmp')
+ $backup=Join-Path $state ('quota-'+[Guid]::NewGuid().ToString('N')+'.bak')
  try {
   [IO.File]::WriteAllBytes($staging,$bytes)
   if([IO.File]::Exists($target)){
-   # Keep atomic replace where supported and do not expose a partial token.
-   [IO.File]::Replace($staging,$target,$null)
+   # .NET Framework on STARMER rejects a null replacement backup name.
+   # Use a unique same-directory backup, then remove it after atomic replace.
+   [IO.File]::Replace($staging,$target,$backup)
   }else{[IO.File]::Move($staging,$target)}
- }finally{if([IO.File]::Exists($staging)){[IO.File]::Delete($staging)}}
+ }finally{
+  if([IO.File]::Exists($staging)){[IO.File]::Delete($staging)}
+  if([IO.File]::Exists($backup)){[IO.File]::Delete($backup)}
+ }
 }
 function Save-Credentials($obj){
  $json=$obj|ConvertTo-Json -Compress -Depth 5

@@ -48,6 +48,22 @@ try{
  Check ($loaded.clientSecret -ceq $testSecret -and
      $loaded.tokenAuthMethod -ceq 'client_secret_post' -and
      $loaded.refreshToken -ceq 'dummy-test-refresh') 'encrypted secret and refresh token roundtrip safely'
+ # Repeat with an existing destination. This exercises .NET Framework File.Replace
+ # which rejects a null backup path on Windows and previously broke live quota.
+ $replacement=[pscustomobject]@{
+  access_token='dummy-test-access-new';refresh_token='dummy-test-refresh-new';expires_in=3300
+ }
+ [void](Store-Session 'test-client' $replacement 'client_secret_post' $testSecret)
+ $reloaded=Read-Credentials
+ Check ($reloaded.refreshToken -ceq 'dummy-test-refresh-new') 'existing encrypted credential vault replaces atomically on Windows'
+ Check (@([IO.Directory]::GetFiles($state,'quota-*.bak')).Count -eq 0 -and
+        @([IO.Directory]::GetFiles($state,'quota-*.tmp')).Count -eq 0) 'atomic credential replacement cleans temporary backup'
+ $statusPath=Join-Path $state 'synthetic-status.json'
+ [void](Write-PrivateFile $statusPath ([Text.Encoding]::UTF8.GetBytes('{"result":"starting"}')))
+ [void](Write-PrivateFile $statusPath ([Text.Encoding]::UTF8.GetBytes('{"result":"finished"}')))
+ Check ([IO.File]::ReadAllText($statusPath) -ceq '{"result":"finished"}') 'existing quota status can be replaced after authorization'
+ Check (@([IO.Directory]::GetFiles($state,'quota-*.bak')).Count -eq 0) 'status replacement also removes backup'
+ [IO.File]::Delete($statusPath)
 }finally{
  if([IO.File]::Exists($vault)){[IO.File]::Delete($vault)}
  if([IO.Directory]::Exists($state)){[IO.Directory]::Delete($state,$false)}
