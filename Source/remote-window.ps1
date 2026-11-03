@@ -3630,23 +3630,24 @@ $runtimeSep.Margin = New-Object Windows.Forms.Padding(6,2,6,0)
 $runtimeRight = New-Object Windows.Forms.Label
 $runtimeRight.AutoSize = $true
 $runtimeRight.ForeColor = [Drawing.Color]::Silver
-$runtimeRight.Margin = New-Object Windows.Forms.Padding($(if($OwnerGui){12}else{0}),2,0,0)
+$runtimeRight.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
 
 # Owner-only account quota label: no change to the stable 1.5.18 footer.
 $quotaLabel = New-Object Windows.Forms.Label
 $quotaLabel.AutoSize = $true
 $quotaLabel.Text = 'Остаток вызовов —'
 $quotaLabel.ForeColor = [Drawing.Color]::Silver
-$quotaLabel.Margin = New-Object Windows.Forms.Padding(12,2,0,0)
+$quotaLabel.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
 $quotaLabel.Visible = $OwnerGui
 
 $infoHost.Controls.Add($accountInfo)
-if(-not $OwnerGui){$infoHost.Controls.Add($accountSep)}
+# Keep the stable 1.5.18 orange pipe separators between footer values,
+# including Owner's account | quota | uptime layout (PID lives in About).
+$infoHost.Controls.Add($accountSep)
 if(-not $OwnerGui){$infoHost.Controls.Add($runtimeLeft)}
-if(-not $OwnerGui){$infoHost.Controls.Add($runtimeSep)}
 if($OwnerGui){$infoHost.Controls.Add($quotaLabel)}
+$infoHost.Controls.Add($runtimeSep)
 $infoHost.Controls.Add($runtimeRight)
-if($OwnerGui){$quotaLabel.Margin=New-Object Windows.Forms.Padding(12,2,0,0)}
 
 $hintHost = New-Object Windows.Forms.FlowLayoutPanel
 $hintHost.Dock = 'Fill'
@@ -3670,10 +3671,11 @@ $hintSep.Margin = New-Object Windows.Forms.Padding(0,2,6,0)
 $hintVersion = New-Object Windows.Forms.Label
 $hintVersion.AutoSize = $true
 $hintVersion.Text = 'v' + $appVersion
-$hintVersion.Font = $hint.Font
-$hintVersion.ForeColor = [Drawing.Color]::Gray
-# Align the shorter version glyph line with the adjacent footer hint baseline.
-$hintVersion.Margin = New-Object Windows.Forms.Padding(0,$(if($OwnerGui){2}else{6}),0,0)
+$hintVersion.Font = if($OwnerGui){$accountInfo.Font}else{$hint.Font}
+$hintVersion.ForeColor = if($OwnerGui){$accountInfo.ForeColor}else{[Drawing.Color]::Gray}
+# Owner aligns the version with the account/quota/uptime text; the right
+# column remains independently right-anchored across window widths.
+$hintVersion.Margin = New-Object Windows.Forms.Padding(0,$(if($OwnerGui){3}else{6}),0,0)
 
 if(-not $OwnerGui){
     $hintHost.Controls.Add($hint)
@@ -3696,7 +3698,7 @@ if($OwnerGui){
         $t=[Math]::Min(1.0,([double]$script:ownerVersionIntroFrame/7.0))
         $smooth=$t*$t*(3.0-2.0*$t)
         $from=$form.BackColor
-        $to=[Drawing.Color]::Gray
+        $to=$accountInfo.ForeColor
         $r=[int][Math]::Round($from.R+($to.R-$from.R)*$smooth)
         $g=[int][Math]::Round($from.G+($to.G-$from.G)*$smooth)
         $b=[int][Math]::Round($from.B+($to.B-$from.B)*$smooth)
@@ -3705,7 +3707,7 @@ if($OwnerGui){
     })
     $form.Add_Shown({
         if([Windows.Forms.SystemInformation]::HighContrast){
-            $hintVersion.ForeColor=[Drawing.Color]::Gray
+            $hintVersion.ForeColor=$accountInfo.ForeColor
         }else{$script:ownerVersionIntroTimer.Start()}
     })
 }

@@ -44,8 +44,12 @@ try {
  Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'bounded cache size'
  $layout=[IO.File]::ReadAllText((Join-Path $source 'remote-window.ps1'),[Text.Encoding]::UTF8)
  $owner=[IO.File]::ReadAllText((Join-Path $source 'rc1-owner-gui.ps1'),[Text.Encoding]::UTF8)
- Check ($layout.Contains('if(-not $OwnerGui){$infoHost.Controls.Add($runtimeSep)}') -and
- $layout.Contains('if(-not $OwnerGui){$infoHost.Controls.Add($accountSep)}')) 'owner hides both footer dividers while legacy keeps them'
+ Check ($layout.Contains('$infoHost.Controls.Add($accountSep)') -and
+ $layout.Contains('$infoHost.Controls.Add($runtimeSep)') -and
+ $layout.Contains('$accountSep.Margin = New-Object Windows.Forms.Padding(6,2,6,0)') -and
+ $layout.Contains('$runtimeSep.Margin = New-Object Windows.Forms.Padding(6,2,6,0)') -and
+ $layout.Contains('$accountSep.ForeColor = $accentOrange') -and
+ $layout.Contains('$runtimeSep.ForeColor = $accentOrange')) 'owner and legacy use original 1.5.18 orange pipe separators'
  Check ($layout.Contains('if(-not $OwnerGui){$infoHost.Controls.Add($runtimeLeft)}') -and
  $layout.Contains('if($OwnerGui){$infoHost.Controls.Add($quotaLabel)}') -and
  $layout.IndexOf('$infoHost.Controls.Add($quotaLabel)') -lt $layout.IndexOf('$infoHost.Controls.Add($runtimeRight)')) 'RC1 footer shows account, quota, uptime without PID; legacy retains PID'
@@ -55,8 +59,14 @@ try {
 Check ($layout.Contains('$script:ownerVersionIntroTimer.Interval=25') -and
  $layout.Contains('if([Windows.Forms.SystemInformation]::HighContrast)') -and
  $layout.Contains('$script:ownerVersionIntroTimer.Dispose()')) 'version fades into far corner with high-contrast and disposal safeguards'
- Check ($layout.Contains('if($OwnerGui){$quotaLabel.Margin=') -and
- $layout.Contains('Остаток вызовов —')) 'owner has neutral quota spacing and unavailable label'
+ Check ($layout.Contains('$quotaLabel.Margin = New-Object Windows.Forms.Padding(0,2,0,0)') -and
+ $layout.Contains('$runtimeRight.Margin = New-Object Windows.Forms.Padding(0,2,0,0)') -and
+ $layout.Contains('Остаток вызовов —')) 'owner quota and uptime align after stable separators'
+ Check ($layout.Contains('$hintVersion.Font = if($OwnerGui){$accountInfo.Font}else{$hint.Font}') -and
+ $layout.Contains('$hintVersion.ForeColor = if($OwnerGui){$accountInfo.ForeColor}else{[Drawing.Color]::Gray}') -and
+ $layout.Contains('$hintVersion.Margin = New-Object Windows.Forms.Padding(0,$(if($OwnerGui){3}else{6}),0,0)') -and
+ $layout.Contains('$to=$accountInfo.ForeColor') -and
+ $layout.Contains('$hintVersion.ForeColor=$accountInfo.ForeColor')) 'version matches owner footer typography, color and adjusted baseline, including fade completion'
  Check ($layout.Contains("'PID Remote: ' + "+'$helpPid') -and
  $layout.Contains('$script:ownerRemotePid') -and
  $layout.Contains('Закрытие окна закрывает только GUI') -and
