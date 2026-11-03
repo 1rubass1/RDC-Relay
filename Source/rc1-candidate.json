@@ -1,0 +1,12 @@
+{
+  "candidate": "1.6.0 RC1",
+  "stableTarget": "1.6.0",
+  "status": "BLOCKED_PREINSTALLATION",
+  "publishable": false,
+  "installable": false,
+  "liveRemoteEnabled": false,
+  "stableManifestEnabled": false,
+  "autoUpdateEnabled": false,
+  "separateOwnerApprovalRequired": true,
+  "reason": "PROG-006A real Host/GUI and safe owned Remote stop are not yet verified"
+}

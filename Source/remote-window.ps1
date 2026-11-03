@@ -1,10 +1,24 @@
-﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
+﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview,[switch]$OwnerGui,[string]$OwnerTicketPath='',[string]$OwnerTrialRoot='')
 $ErrorActionPreference = 'Stop'
+if($OwnerGui){
+ if($SelfTest -or $Preview -or [string]::IsNullOrWhiteSpace($OwnerTicketPath)){
+  throw 'RC1_OWNER_GUI_REQUIRES_PRIVATE_TICKET'
+ }
+ # Suppresses legacy process/startup/update/user registry side effects.
+ # A separate Host owns all lifecycle operations in this branch.
+ $Preview=$true
+}
 $root = $PSScriptRoot
-$appVersion = '1.5.18'
+# Branch-only RC1 source marker blocks accidental legacy GUI execution against
+# a real Remote from the candidate checkout or a staged owner payload.
+if(-not $SelfTest -and -not $Preview -and -not $OwnerGui -and
+   [IO.File]::Exists((Join-Path $root 'rc1-candidate.json'))){
+ throw 'RC1_DEFAULT_LEGACY_REMOTE_LAUNCH_BLOCKED'
+}
+$appVersion = if($OwnerGui){'1.6.0 RC1'}else{'1.5.18'}
 # Flip to $false to remove the optional update notice and restore the original
 # startup auto-updater/footer with no other runtime or UI modifications.
-$script:enableUpdateNotice = $true
+$script:enableUpdateNotice = -not $OwnerGui
 $script:updateInstallRequested = $false
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
@@ -36,7 +50,8 @@ public static class RdcShellIdentity {
 }
 
 try {
-    [void][RdcShellIdentity]::SetCurrentProcessExplicitAppUserModelID('RDCRelay.App')
+    $ownerAppId=if($OwnerGui){'RDCRelay.OwnerPilot.1_6_RC1'}else{'RDCRelay.App'}
+    [void][RdcShellIdentity]::SetCurrentProcessExplicitAppUserModelID($ownerAppId)
 } catch {}
 
 
@@ -306,7 +321,7 @@ function Resolve-NpxPath {
 }
 
 $windowMutex = $null
-if (-not $SelfTest) {
+if (-not $SelfTest -and -not $OwnerGui) {
     $sha = [Security.Cryptography.SHA256]::Create()
     $key = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($PSScriptRoot.ToLowerInvariant()))).Replace('-','')
     $sha.Dispose()
@@ -1601,6 +1616,33 @@ public class RdcLogBox : RichTextBox {
 
     public void ApplyCompactLineSpacing() {
         ApplyExactLineSpacing(0,TextLength,1.0f);
+    }
+
+    // RC1 header only: tighten adjacent Unicode box-drawing paragraphs.
+    // Regular text, status colors and emoji must keep natural font metrics:
+    // the old global 1px reduction clips taller fallback glyphs (notably
+    // the green connection icons) and can paint stray colored fragments.
+    // The six-line Desktop Commander banner is tightened separately by
+    // StyleStartupBanner(), preserving its seamless full-block artwork.
+    public void ApplyCompactHeaderLineArtSpacing() {
+        if (!IsHandleCreated || TextLength == 0) return;
+        string all = Text;
+        int start = 0;
+        while (start < all.Length) {
+            int eol = all.IndexOf('\n',start);
+            if (eol < 0) eol = all.Length;
+            int contentStart = start;
+            while (contentStart < eol && (all[contentStart] == ' ' ||
+                   all[contentStart] == '\t' || all[contentStart] == '\r'))
+                contentStart++;
+            if (contentStart < eol) {
+                char c = all[contentStart];
+                if (c >= '\u2500' && c <= '\u259F')
+                    ApplyExactLineSpacing(start,eol-start,1.0f);
+            }
+            if (eol == all.Length) break;
+            start = eol + 1;
+        }
     }
 
     public static string ReadChunk(TextReader reader, int maxChars) {
@@ -3520,7 +3562,12 @@ $verifyDeviceItem.Text = 'Подтвердить новое устройство
 [void]$accountMenu.Items.Add($reconnectItem)
 [void]$accountMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
 [void]$accountMenu.Items.Add($devicesItem)
-[void]$accountMenu.Items.Add($verifyDeviceItem)
+if(-not $OwnerGui){[void]$accountMenu.Items.Add($verifyDeviceItem)}
+$quotaAuthItem=New-Object Windows.Forms.ToolStripMenuItem
+$quotaAuthItem.Text='Подключить статистику вызовов…'
+$quotaAuthItem.Visible=[bool]$OwnerGui
+$quotaAuthItem.Enabled=$false
+if($OwnerGui){[void]$accountMenu.Items.Add($quotaAuthItem)}
 
 $top.Controls.Add($statusDot,0,0)
 $top.SetRowSpan($statusDot,2)
@@ -3536,7 +3583,7 @@ $bottom.Padding = New-Object Windows.Forms.Padding(12,7,12,6)
 $bottom.ColumnCount = 2
 $bottom.RowCount = 1
 [void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent,100)))
-[void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,440)))
+[void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,$(if($OwnerGui){110}else{440}))))
 $accentOrange = [Drawing.Color]::FromArgb(191,118,67)
 $accentPurple = [Drawing.Color]::FromArgb(74,55,103)
 $statusGreen = [Drawing.Color]::LightGreen
@@ -3585,9 +3632,20 @@ $runtimeRight.AutoSize = $true
 $runtimeRight.ForeColor = [Drawing.Color]::Silver
 $runtimeRight.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
 
+# Owner-only account quota label: no change to the stable 1.5.18 footer.
+$quotaLabel = New-Object Windows.Forms.Label
+$quotaLabel.AutoSize = $true
+$quotaLabel.Text = 'Остаток вызовов —'
+$quotaLabel.ForeColor = [Drawing.Color]::Silver
+$quotaLabel.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
+$quotaLabel.Visible = $OwnerGui
+
 $infoHost.Controls.Add($accountInfo)
+# Keep the stable 1.5.18 orange pipe separators between footer values,
+# including Owner's account | quota | uptime layout (PID lives in About).
 $infoHost.Controls.Add($accountSep)
-$infoHost.Controls.Add($runtimeLeft)
+if(-not $OwnerGui){$infoHost.Controls.Add($runtimeLeft)}
+if($OwnerGui){$infoHost.Controls.Add($quotaLabel)}
 $infoHost.Controls.Add($runtimeSep)
 $infoHost.Controls.Add($runtimeRight)
 
@@ -3600,7 +3658,7 @@ $hintHost.Padding = New-Object Windows.Forms.Padding(0)
 
 $hint = New-Object Windows.Forms.Label
 $hint.AutoSize = $true
-$hint.Text = 'Крестик закрывает окно вместе с remote-процессом.'
+$hint.Text = if($OwnerGui){''}else{'Крестик закрывает окно вместе с remote-процессом.'}
 $hint.ForeColor = [Drawing.Color]::Gray
 $hint.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
 
@@ -3608,21 +3666,51 @@ $hintSep = New-Object Windows.Forms.Label
 $hintSep.AutoSize = $true
 $hintSep.Text = '•'
 $hintSep.ForeColor = $accentOrange
-$hintSep.Margin = New-Object Windows.Forms.Padding(6,2,6,0)
+$hintSep.Margin = New-Object Windows.Forms.Padding(0,2,6,0)
 
 $hintVersion = New-Object Windows.Forms.Label
 $hintVersion.AutoSize = $true
 $hintVersion.Text = 'v' + $appVersion
-$hintVersion.Font = $hint.Font
-$hintVersion.ForeColor = [Drawing.Color]::Gray
-$hintVersion.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
+$hintVersion.Font = if($OwnerGui){$form.Font}else{$hint.Font}
+$hintVersion.ForeColor = if($OwnerGui){$accountInfo.ForeColor}else{[Drawing.Color]::Gray}
+# Owner aligns the version with the account/quota/uptime text; the right
+# column remains independently right-anchored across window widths.
+$hintVersion.Margin = New-Object Windows.Forms.Padding(0,$(if($OwnerGui){2}else{6}),0,0)
 
-$hintHost.Controls.Add($hint)
-$hintHost.Controls.Add($hintSep)
+if(-not $OwnerGui){
+    $hintHost.Controls.Add($hint)
+    $hintHost.Controls.Add($hintSep)
+}
 $hintHost.Controls.Add($hintVersion)
+if($OwnerGui){$tip.SetToolTip($quotaLabel,'Последний подтверждённый остаток вызовов Remote Desktop Commander. Без нового ответа сервиса значение устаревает.')}
 
 $bottom.Controls.Add($infoHost,0,0)
 $bottom.Controls.Add($hintHost,1,0)
+# Owner-only subtle, non-layout animation of the version in the far corner.
+# No motion in high-contrast mode. The stable updater footer is unaffected.
+if($OwnerGui){
+    $script:ownerVersionIntroTimer=New-Object Windows.Forms.Timer
+    $script:ownerVersionIntroTimer.Interval=25
+    $script:ownerVersionIntroFrame=0
+    $hintVersion.ForeColor=$form.BackColor
+    $script:ownerVersionIntroTimer.Add_Tick({
+        $script:ownerVersionIntroFrame++
+        $t=[Math]::Min(1.0,([double]$script:ownerVersionIntroFrame/7.0))
+        $smooth=$t*$t*(3.0-2.0*$t)
+        $from=$form.BackColor
+        $to=$accountInfo.ForeColor
+        $r=[int][Math]::Round($from.R+($to.R-$from.R)*$smooth)
+        $g=[int][Math]::Round($from.G+($to.G-$from.G)*$smooth)
+        $b=[int][Math]::Round($from.B+($to.B-$from.B)*$smooth)
+        $hintVersion.ForeColor=[Drawing.Color]::FromArgb($r,$g,$b)
+        if($t -ge 1.0){$script:ownerVersionIntroTimer.Stop()}
+    })
+    $form.Add_Shown({
+        if([Windows.Forms.SystemInformation]::HighContrast){
+            $hintVersion.ForeColor=$accountInfo.ForeColor
+        }else{$script:ownerVersionIntroTimer.Start()}
+    })
+}
 $tip.SetToolTip($accountInfo,'Аккаунт Desktop Commander, к которому привязан этот компьютер')
 
 $contentHost = New-Object Windows.Forms.TableLayoutPanel
@@ -4172,8 +4260,10 @@ function Set-FinishButtonMode([bool]$running) {
 function Set-RuntimeDisplay([string]$left,[string]$right = '',[bool]$showSeparator = $false) {
     $runtimeLeft.Text = $left
     $runtimeRight.Text = $right
-    $runtimeSep.Visible = $showSeparator
     $runtimeRight.Visible = -not [string]::IsNullOrWhiteSpace($right)
+    # Owner uses the same separator for quota | uptime as legacy uses for
+    # PID | runtime. Hide it only when there is no right-hand value.
+    $runtimeSep.Visible = ($showSeparator -and $runtimeRight.Visible)
 }
 function Set-AccountDisplay([string]$email) {
     if ([string]::IsNullOrWhiteSpace($email)) {
@@ -4644,10 +4734,11 @@ function Render-CompactLog {
                     $accentOrange
                 )
             }
-            # Apply the same 1 px RichEdit paragraph tightening that removed the
-            # horizontal seams in the startup banner to the entire header text,
-            # including Unicode box-drawing blocks such as Next / Commands.
-            $headerLog.ApplyCompactLineSpacing()
+            # RC1: preserve compact banner and box borders but never compress
+            # ordinary paragraphs or green Unicode connection/status glyphs.
+            # The legacy 1.5.18 view keeps its original whole-header layout.
+            if($OwnerGui){$headerLog.ApplyCompactHeaderLineArtSpacing()}
+            else{$headerLog.ApplyCompactLineSpacing()}
             Color-HeaderSemantics $headerLog $headerLog.TextLength
             Color-LogToken $headerLog '🔧' $accentOrange
             Color-LogToken $headerLog '🚀' $accentOrange
@@ -4689,7 +4780,14 @@ function Render-CompactLog {
     foreach ($item in $visible) {
         if (-not [string]::IsNullOrWhiteSpace($item)) { [void]$parts.Add($item.TrimEnd()) }
     }
-    $display = [string]::Join(($nl+$nl),$parts)
+    # Owner RC1 journal uses a continuous aligned number/bar column.
+    # Keep original double-separated event layout in legacy 1.5.18 mode.
+    $eventSeparator = if($script:ownerCompactJournal){$nl}else{$nl+$nl}
+    $display = [string]::Join($eventSeparator,$parts)
+    # Owner RC1 only: keep one blank line above the activity text.
+    # No geometry changes to RichEdit, overlay scrollbars or splitter.
+    # Reconstructed from event blocks on every render, so it cannot accumulate.
+    if($script:ownerCompactJournal -and $display.Length -gt 0){$display=$nl+$display}
     if ($script:lastRenderedText -ceq $display) {
         # RichEdit can defer repaint/reflow after a hidden/redraw-frozen update.
         # Keep the viewport visually honest even when the logical text did not
@@ -4729,6 +4827,12 @@ function Render-CompactLog {
         # Keep line-art glyphs visually joined in every RdcLogBox, not only the
         # startup banner.
         $log.ApplyCompactLineSpacing()
+        if($script:ownerCompactJournal){
+            # Consistent monospaced six-digit gutter and a connected Unicode │.
+            # Event sequence is neutral body text, not highlighted metadata.
+            Color-LogRegex $log '^(\d{6,18})\s+│' $log.ForeColor -1 1
+            Color-LogRegex $log '^\d{6,18}\s+(│)' ([Drawing.Color]::Gainsboro) -1 1
+        }
         Color-LogToken $log '🔧' $accentOrange
         Color-LogToken $log '🚀' $accentOrange
         Color-LogToken $log '✅' $accentPurple
@@ -4942,6 +5046,7 @@ function Add-RemoteChunk([string]$text) {
     Render-CompactLog
 }
 function Open-Reader {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     if ($script:reader -or -not (Test-Path $logPath)) { return }
     try {
         $stream = New-Object IO.FileStream(
@@ -5046,6 +5151,7 @@ function Move-ReaderToRecentTailIfBehind {
     } catch {}
 }
 function Read-LiveLog {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     Open-Reader
     if ($script:reader) {
         Move-ReaderToRecentTailIfBehind
@@ -5054,6 +5160,7 @@ function Read-LiveLog {
     }
 }
 function Find-ExistingRemote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     try {
         # Only attach to a launcher that writes to this installation's own log.
         # Do not adopt an arbitrary desktop-commander process started manually
@@ -5161,6 +5268,7 @@ function Start-NoWindowCmd([string]$commandLine) {
     return [Diagnostics.Process]::Start($psi)
 }
 function Start-Remote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     try {
         if ($script:proc -and -not $script:proc.HasExited) { return }
         $script:manualStopRequested = $false
@@ -5225,6 +5333,7 @@ function Start-Remote {
     }
 }
 function Stop-Remote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     if (-not $script:proc -or $script:proc.HasExited) { return }
     try {
         $freezePoint = $log.GetViewPosition()
@@ -5283,6 +5392,7 @@ function Set-RemoteActionsEnabled([bool]$enabled) {
 }
 
 function Begin-RemoteOperation([string]$action) {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     if ($script:remoteOperation -or $script:initializing) { return }
     $script:manualStopRequested = ($action -eq 'stop')
     $script:remoteOperation = [pscustomobject]@{
@@ -5337,6 +5447,7 @@ function Complete-RemoteOperation([string]$errorText = '') {
 }
 
 function Update-RemoteOperation {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $op = $script:remoteOperation
     if (-not $op) { return }
     try {
@@ -5398,6 +5509,7 @@ function Invoke-AutoReconnect {
 }
 
 function Restart-Remote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $answer = [Windows.Forms.MessageBox]::Show(
         'RDC Relay будет кратковременно отключён и запущен снова под текущим аккаунтом.',
         'Переподключить RDC Relay', [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)
@@ -5410,6 +5522,7 @@ function Restart-Remote {
 }
 
 function Switch-RemoteAccount {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $message = 'Смена аккаунта разорвёт текущее удалённое соединение.' + $nl + $nl +
         'После выхода RDC Relay запустится снова и предложит авторизоваться в браузере.' + $nl + $nl +
         'Войдите в тот же аккаунт Desktop Commander, который подключён в ChatGPT.' + $nl + $nl + 'Продолжить?'
@@ -5420,6 +5533,7 @@ function Switch-RemoteAccount {
 }
 
 function Start-RuntimeInitialization {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $script:initializing = $true
     Set-RemoteActionsEnabled $false
     $updaterPath = Join-Path $root 'update.ps1'
@@ -5477,6 +5591,19 @@ function Complete-RuntimeInitialization {
 }
 
 $finish.Add_Click({
+    if ($OwnerGui) {
+        if (-not $script:ownerManagedMode) { return }
+        if ($script:ownerCanStop) {
+            $answer=[Windows.Forms.MessageBox]::Show(
+                'Остановить только Remote, созданный этим RC1 Host?',
+                'RDC Relay 1.6.0 RC1',
+                [Windows.Forms.MessageBoxButtons]::YesNo,
+                [Windows.Forms.MessageBoxIcon]::Question)
+            if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
+            $script:ownerQueuedAction='STOP'
+        } elseif ($script:ownerCanStart) { $script:ownerQueuedAction='START' }
+        return
+    }
     if ($script:remoteOperation -or $script:initializing) { return }
     if ($script:proc -and -not $script:proc.HasExited) {
         Begin-RemoteOperation 'stop'
@@ -5492,15 +5619,47 @@ $finish.Add_Click({
         Set-FinishButtonMode $false
     }
 })
+$quotaAuthItem.Add_Click({
+    # Explicit manual OAuth+PKCE fallback; trusted managed Host may also
+    # initiate browser consent for its confirmed Remote account.
+    # No device.json/token sharing or Remote process action.
+    if(-not $OwnerGui -or -not $script:ownerRealMode){return}
+    $quotaScript=Join-Path $root 'rc1-quota-client.ps1'
+    if(-not [IO.File]::Exists($quotaScript)){return}
+    try{
+        Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
+          '-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Authorize'
+        ) -WindowStyle Hidden | Out-Null
+    }catch{}
+})
 $accountButton.Add_Click({
     $accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))
 })
-$switchAccountItem.Add_Click({ Switch-RemoteAccount })
-$reconnectItem.Add_Click({ Restart-Remote })
+$switchAccountItem.Add_Click({
+    if ($OwnerGui) { return } # Credentials are not managed by this release.
+    Switch-RemoteAccount
+})
+$reconnectItem.Add_Click({
+    if ($OwnerGui) {
+        if (-not $script:ownerManagedMode -or -not $script:ownerCanReconnect) { return }
+        $answer=[Windows.Forms.MessageBox]::Show(
+            'Перезапустить Remote, принадлежащий текущему RC1 Host?',
+            'RDC Relay 1.6.0 RC1',[Windows.Forms.MessageBoxButtons]::YesNo,
+            [Windows.Forms.MessageBoxIcon]::Question)
+        if ($answer -eq [Windows.Forms.DialogResult]::Yes) { $script:ownerQueuedAction='RECONNECT' }
+        return
+    }
+    Restart-Remote
+})
 $devicesItem.Add_Click({
+    if ($OwnerGui) {
+        if ($script:ownerRealMode) { $script:ownerQueuedNavigation='DEVICE_MANAGEMENT' }
+        return
+    }
     try { Start-Process 'https://mcp.desktopcommander.app/' } catch {}
 })
 $verifyDeviceItem.Add_Click({
+    if ($OwnerGui) { return } # The RC1 item is absent; no manual verification path.
     try { Start-Process 'https://mcp.desktopcommander.app/device/verify' } catch {}
 })
 $helpMenu = New-Object Windows.Forms.ContextMenuStrip
@@ -5541,6 +5700,29 @@ $aboutItem.Add_Click({
         'При первой авторизации подтвердите устройство в браузере, сверив код из журнала. ' +
         'Повторные запуски обычно используют сохранённую сессию. ' + $nl + $nl +
         'Пароли и токены эта оболочка не копирует и не хранит.'
+    if ($OwnerGui) {
+        if($script:ownerObservedMode){
+            $helpText = 'RDC Relay 1.6.0 RC1' + $nl + $nl +
+              'Найден уже работающий Desktop Commander Remote. Приложение показывает его состояние, не прерывая подключение.' + $nl + $nl +
+              'Закрытие окна закрывает только GUI; Host и Remote продолжают работать.' + $nl +
+              'Повторное открытие через трей восстанавливает состояние и журнал.' + $nl +
+              'Полное завершение RDC Relay через трей не отключает ранее запущенный Remote.'
+        }elseif($script:ownerManagedMode){
+            $helpText = 'RDC Relay 1.6.0 RC1' + $nl + $nl +
+              'Host запускает Desktop Commander Remote 0.2.52.' + $nl + $nl +
+              'Закрытие окна закрывает только GUI; Host и Remote продолжают работать.' + $nl +
+              'Повторное открытие через трей восстанавливает состояние и журнал.' + $nl +
+              'Статистику вызовов при необходимости можно подключить повторно в меню «Аккаунт».'
+        }else{
+            $helpText = 'RDC Relay 1.6.0 RC1' + $nl + $nl +
+              'Режим проверки: Desktop Commander Remote не подключён.' + $nl +
+              'Закрытие окна закрывает только GUI; Host продолжает работать.' + $nl +
+              'Повторное открытие через трей восстанавливает состояние и журнал.'
+        }
+        # Diagnostics belong in About, not the compact RC1 footer.
+        $helpPid=if([int]$script:ownerRemotePid -gt 0){[string][int]$script:ownerRemotePid}else{'—'}
+        $helpText += $nl + $nl + 'PID Remote: ' + $helpPid
+    }
     [Windows.Forms.MessageBox]::Show(
         $helpText,
         'RDC Relay — справка',
@@ -5550,6 +5732,23 @@ $aboutItem.Add_Click({
 })
 
 $openLogItem.Add_Click({
+    if ($OwnerGui) {
+        # The Host sends a fixed-category, credential-free bounded journal.
+        # Show that actual GUI pane; never open a private legacy Remote log.
+        try {
+            Render-CompactLog
+            $log.Focus()
+            $log.SelectionStart = $log.TextLength
+            $log.ScrollToCaret()
+        } catch {
+            [Windows.Forms.MessageBox]::Show(
+                'Не удалось открыть журнал RC1 в окне.',
+                'RDC Relay 1.6 RC1', [Windows.Forms.MessageBoxButtons]::OK,
+                [Windows.Forms.MessageBoxIcon]::Warning
+            ) | Out-Null
+        }
+        return
+    }
     try {
         if (-not (Test-Path $logPath)) {
             [Windows.Forms.MessageBox]::Show(
@@ -5572,6 +5771,7 @@ $openLogItem.Add_Click({
     }
 })
 function Refresh-Window {
+    if ($OwnerGui) { return }
     if ($script:initializing) { Complete-RuntimeInitialization; return }
     if ($script:remoteOperation) { Update-RemoteOperation; return }
     Apply-SystemFrameTheme
@@ -5764,6 +5964,8 @@ $form.Add_ResizeEnd({
 
 $form.Add_FormClosing({
     param($sender,$e)
+    # OwnerGui X always closes this replacement GUI, never legacy Remote.
+    if ($OwnerGui) { return }
     if ($script:allowClose -or $SelfTest -or $Preview) { return }
     if ($script:initializing -or $script:remoteOperation) {
         $e.Cancel = $true
@@ -5778,6 +5980,11 @@ $form.Add_FormClosing({
 })
 $form.Add_FormClosed({
     $timer.Stop()
+    if($script:ownerVersionIntroTimer){
+        $script:ownerVersionIntroTimer.Stop()
+        $script:ownerVersionIntroTimer.Dispose()
+        $script:ownerVersionIntroTimer=$null
+    }
     if ($script:enableUpdateNotice) { Dispose-RdcUpdateNotice }
     if ($script:shortcutSyncTimer) {
         try { $script:shortcutSyncTimer.Stop() } catch {}
@@ -5965,9 +6172,10 @@ if ($SelfTest) {
             throw 'Divider drag mask center geometry regressed'
         }
         if ($runtimeSourceText.IndexOf('ApplyCompactLineSpacing()',[StringComparison]::Ordinal) -lt 0 -or
-            $runtimeSourceText.IndexOf('$headerLog.ApplyCompactLineSpacing()',[StringComparison]::Ordinal) -lt 0 -or
+            $runtimeSourceText.IndexOf('if($OwnerGui){$headerLog.ApplyCompactHeaderLineArtSpacing()}',[StringComparison]::Ordinal) -lt 0 -or
+            $runtimeSourceText.IndexOf('else{$headerLog.ApplyCompactLineSpacing()}',[StringComparison]::Ordinal) -lt 0 -or
             $runtimeSourceText.IndexOf('$log.ApplyCompactLineSpacing()',[StringComparison]::Ordinal) -lt 0) {
-            throw 'Global RichEdit compact line spacing regressed'
+            throw 'RC1 selective / legacy RichEdit spacing contract regressed'
         }
         if ($runtimeSourceText.IndexOf('250.0 * i / fadeDenominator',[StringComparison]::Ordinal) -lt 0 -or
             $runtimeSourceText.IndexOf('250.0 * (crossingFade-1-i) / fadeDenominator',[StringComparison]::Ordinal) -lt 0) {
@@ -6647,6 +6855,13 @@ if ($SelfTest) {
     Write-Output 'GUI LOGIC SELF TEST PASSED'
     $form.Dispose()
     if ($windowMutex) { $windowMutex.ReleaseMutex(); $windowMutex.Dispose() }
+    exit 0
+}
+if ($OwnerGui) {
+    # The exact ORIGINAL product WinForms controls are already constructed.
+    # Only the OwnerGui attach path runs the candidate remote-free IPC viewer.
+    . (Join-Path $root 'rc1-owner-gui.ps1')
+    Start-RdcOwnerGui
     exit 0
 }
 if ($Preview) {

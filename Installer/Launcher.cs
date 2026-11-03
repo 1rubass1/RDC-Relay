@@ -14,6 +14,10 @@ internal static class LauncherProgram
     [STAThread]
     private static int Main()
     {
+#if RDC_RC1_BLOCKED
+        // Candidate is not installation/launch approved. No production Remote.
+        return 42;
+#endif
         try
         {
             string root = AppDomain.CurrentDomain.BaseDirectory;
