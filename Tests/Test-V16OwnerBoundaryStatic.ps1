@@ -34,7 +34,9 @@ try{
    $owner.Contains('$openLogItem.Enabled=[bool]$initialCapabilities.sanitizedJournal') -and
    $owner.Contains('OPEN_EXTERNAL') -and $owner.Contains('RC1_NAVIGATION_NOT_APPROVED')) 'safe devices and sanitized journal routed through Host-verified capabilities'
  $source=Get-Content -LiteralPath $file -Raw -Encoding UTF8
- Check ($source.Contains("X закрывает только текущий GUI-процесс") -and $source.Contains("настоящий Remote не подключён")) 'RC1 About states real X semantics and no Remote'
+ Check ($source.Contains('Закрытие окна закрывает только GUI; Host и Remote продолжают работать.') -and
+ $source.Contains('Режим проверки: Desktop Commander Remote не подключён.') -and
+ $source.Contains('PID Remote: ')) 'RC1 About explains close semantics and keeps diagnostics at bottom'
  Check ($source.Contains('if (-not $SelfTest -and -not $OwnerGui)') -and $source.Contains('$script:enableUpdateNotice = -not $OwnerGui')) 'legacy mutex and updater bypassed'
  $runtime=Get-Content -LiteralPath (Join-Path $src 'RdcOwnerRuntime.cs') -Raw -Encoding UTF8
  Check ($runtime.Contains('CreateThen(TicketPayload()') -and $runtime.Contains('ticketStore.RevokeOnlyOwned()')) 'ticket failure and clean close use same owned-token guard'

@@ -46,17 +46,26 @@ try {
  $owner=[IO.File]::ReadAllText((Join-Path $source 'rc1-owner-gui.ps1'),[Text.Encoding]::UTF8)
  Check ($layout.Contains('if(-not $OwnerGui){$infoHost.Controls.Add($runtimeSep)}') -and
  $layout.Contains('if(-not $OwnerGui){$infoHost.Controls.Add($accountSep)}')) 'owner hides both footer dividers while legacy keeps them'
- Check ($layout.Contains('if($OwnerGui){$infoHost.Controls.Add($quotaLabel)}') -and
- $layout.IndexOf('$infoHost.Controls.Add($runtimeLeft)') -lt $layout.IndexOf('$infoHost.Controls.Add($quotaLabel)') -and
- $layout.IndexOf('$infoHost.Controls.Add($quotaLabel)') -lt $layout.IndexOf('$infoHost.Controls.Add($runtimeRight)')) 'quota is between PID and uptime'
+ Check ($layout.Contains('if(-not $OwnerGui){$infoHost.Controls.Add($runtimeLeft)}') -and
+ $layout.Contains('if($OwnerGui){$infoHost.Controls.Add($quotaLabel)}') -and
+ $layout.IndexOf('$infoHost.Controls.Add($quotaLabel)') -lt $layout.IndexOf('$infoHost.Controls.Add($runtimeRight)')) 'RC1 footer shows account, quota, uptime without PID; legacy retains PID'
  Check ($layout.Contains('if(-not $OwnerGui){') -and
  $layout.Contains('$hintHost.Controls.Add($hintVersion)') -and
  $layout.Contains('if($OwnerGui){110}else{440}')) 'version right aligned in narrow owner-only corner column'
 Check ($layout.Contains('$script:ownerVersionIntroTimer.Interval=25') -and
  $layout.Contains('if([Windows.Forms.SystemInformation]::HighContrast)') -and
  $layout.Contains('$script:ownerVersionIntroTimer.Dispose()')) 'version fades into far corner with high-contrast and disposal safeguards'
- Check ($layout.Contains('if($OwnerGui){'+'$runtimeLeft.Margin=') -and
- $layout.Contains('Остаток вызовов —')) 'owner has neutral spacing and unavailable label'
+ Check ($layout.Contains('if($OwnerGui){$quotaLabel.Margin=') -and
+ $layout.Contains('Остаток вызовов —')) 'owner has neutral quota spacing and unavailable label'
+ Check ($layout.Contains("'PID Remote: ' + "+'$helpPid') -and
+ $layout.Contains('$script:ownerRemotePid') -and
+ $layout.Contains('Закрытие окна закрывает только GUI') -and
+ -not $layout.Contains('Host запускает Desktop Commander Remote 0.2.52 в отдельной проверяемой Windows Job.')) 'About explains lifecycle in plain language and shows current Remote PID last'
+ Check ($layout.Contains('if(-not $OwnerGui){[void]$accountMenu.Items.Add($verifyDeviceItem)}') -and
+ $layout.Contains('if($OwnerGui){[void]$accountMenu.Items.Add($quotaAuthItem)}')) 'RC1 hides redundant device verification but keeps manual quota link'
+ $hostRuntime=[IO.File]::ReadAllText((Join-Path $source 'RdcOwnerRuntime.cs'),[Text.Encoding]::UTF8)
+ Check ($hostRuntime.Contains('{"deviceVerificationLink",false}') -and
+ -not $hostRuntime.Contains('if(destination=="DEVICE_VERIFICATION")')) 'RC1 Host refuses redundant device verification navigation'
  Check (-not $owner.Contains("('Remote PID '") -and -not $owner.Contains("Set-RuntimeDisplay 'Remote PID")) 'PID label omits word Remote'
  Check ($layout.Contains("$"+'quotaAuthItem.Add_Click({') -and
  $layout.Contains("$"+'quotaAuthItem.Visible=[bool]$OwnerGui') -and

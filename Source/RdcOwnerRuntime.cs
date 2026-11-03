@@ -990,7 +990,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    {"guiFailures",guiFailures},{"closeGeneration",closeGeneration},{"lastEventSeq",sequence},
    {"revision",sequence},{"remoteRevision",observed["revision"]},{"isActualRemote",observedMode||managedMode},
    {"capabilities",new Dictionary<string,object>{
-     {"deviceManagementLink",observedMode||managedMode},{"deviceVerificationLink",observedMode||managedMode},
+     {"deviceManagementLink",observedMode||managedMode},{"deviceVerificationLink",false},
      {"sanitizedJournal",true},{"about",true},
      {"startRemote",managedMode && (managedProcess==null||!managedProcess.Running)},
      {"stopRemote",managedMode && managedProcess!=null&&managedProcess.Running},
@@ -1060,8 +1060,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
     string destination=RdcOwnerWire.String(request,"navigation");
     if(destination=="DEVICE_MANAGEMENT")return Answer("NAVIGATION",requestId,new {
      route=destination,url="https://mcp.desktopcommander.app/"});
-    if(destination=="DEVICE_VERIFICATION")return Answer("NAVIGATION",requestId,new {
-     route=destination,url="https://mcp.desktopcommander.app/device/verify"});
+    // RC1 device verification happens in the official browser authorization flow;
+    // no separate manual verification route is offered.
     return Error(requestId,"NAVIGATION_NOT_ALLOWLISTED");
    }
    if(verb=="REMOTE_ACTION"){

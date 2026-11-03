@@ -195,7 +195,7 @@ function Start-RdcOwnerGui {
  $initialCapabilities=$handshake.payload.capabilities
  if(-not $initialCapabilities){throw 'RC1_OWNER_CAPABILITIES_MISSING'}
  $devicesItem.Enabled=[bool]$initialCapabilities.deviceManagementLink
- $verifyDeviceItem.Enabled=[bool]$initialCapabilities.deviceVerificationLink
+ $verifyDeviceItem.Enabled=$false # RC1 manual verification removed
  $openLogItem.Enabled=[bool]$initialCapabilities.sanitizedJournal
  $openLogItem.Text='Показать журнал RC1'
  $helpButton.Enabled=$true
@@ -441,7 +441,6 @@ function Start-RdcOwnerGui {
      $url=[string]$reply.payload.url
      $expectedUrl=switch($script:ownerRequestedNavigation){
       'DEVICE_MANAGEMENT' {'https://mcp.desktopcommander.app/'}
-      'DEVICE_VERIFICATION' {'https://mcp.desktopcommander.app/device/verify'}
       default {''}
      }
      if(-not $expectedUrl -or $route -cne $script:ownerRequestedNavigation -or

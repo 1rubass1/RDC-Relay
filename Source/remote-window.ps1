@@ -3562,7 +3562,7 @@ $verifyDeviceItem.Text = 'Подтвердить новое устройство
 [void]$accountMenu.Items.Add($reconnectItem)
 [void]$accountMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
 [void]$accountMenu.Items.Add($devicesItem)
-[void]$accountMenu.Items.Add($verifyDeviceItem)
+if(-not $OwnerGui){[void]$accountMenu.Items.Add($verifyDeviceItem)}
 $quotaAuthItem=New-Object Windows.Forms.ToolStripMenuItem
 $quotaAuthItem.Text='Подключить статистику вызовов…'
 $quotaAuthItem.Visible=[bool]$OwnerGui
@@ -3642,11 +3642,11 @@ $quotaLabel.Visible = $OwnerGui
 
 $infoHost.Controls.Add($accountInfo)
 if(-not $OwnerGui){$infoHost.Controls.Add($accountSep)}
-$infoHost.Controls.Add($runtimeLeft)
+if(-not $OwnerGui){$infoHost.Controls.Add($runtimeLeft)}
 if(-not $OwnerGui){$infoHost.Controls.Add($runtimeSep)}
 if($OwnerGui){$infoHost.Controls.Add($quotaLabel)}
 $infoHost.Controls.Add($runtimeRight)
-if($OwnerGui){$runtimeLeft.Margin=New-Object Windows.Forms.Padding(12,2,0,0)}
+if($OwnerGui){$quotaLabel.Margin=New-Object Windows.Forms.Padding(12,2,0,0)}
 
 $hintHost = New-Object Windows.Forms.FlowLayoutPanel
 $hintHost.Dock = 'Fill'
@@ -5655,10 +5655,7 @@ $devicesItem.Add_Click({
     try { Start-Process 'https://mcp.desktopcommander.app/' } catch {}
 })
 $verifyDeviceItem.Add_Click({
-    if ($OwnerGui) {
-        if ($script:ownerRealMode) { $script:ownerQueuedNavigation='DEVICE_VERIFICATION' }
-        return
-    }
+    if ($OwnerGui) { return } # The RC1 item is absent; no manual verification path.
     try { Start-Process 'https://mcp.desktopcommander.app/device/verify' } catch {}
 })
 $helpMenu = New-Object Windows.Forms.ContextMenuStrip
@@ -5701,33 +5698,26 @@ $aboutItem.Add_Click({
         'Пароли и токены эта оболочка не копирует и не хранит.'
     if ($OwnerGui) {
         if($script:ownerObservedMode){
-            $helpText = 'RDC Relay 1.6.0 RC1 — личный Pilot' + $nl +
-              'Подключён существующий Desktop Commander Remote только для наблюдения (Adopted).' + $nl +
-              'Статус определяется по проверенным маркерам реального журнала; это не проверка каждой MCP-команды.' + $nl + $nl +
-              'X закрывает только GUI. Host и текущий Remote продолжают работу.' + $nl +
-              'Открытие из трея загружает актуальную версию GUI с диска.' + $nl +
-              'Пункт «Закрыть RC1» завершает только Pilot GUI/Host, оставляя Remote подключённым.' + $nl +
-              'Запуск, остановка, переподключение и смена аккаунта заблокированы: Remote не принадлежит RC1.' + $nl +
-              'Аккаунт ▾ открывает безопасные ссылки управления устройствами и подтверждения в браузере.' + $nl +
-              'Справка → Показать журнал RC1 переводит к обезличенному журналу Host в нижней панели.' + $nl +
-              'Автообновления RC1 и полный выход реального Remote отключены до проверки владения.'
+            $helpText = 'RDC Relay 1.6.0 RC1' + $nl + $nl +
+              'Найден уже работающий Desktop Commander Remote. Приложение показывает его состояние, не прерывая подключение.' + $nl + $nl +
+              'Закрытие окна закрывает только GUI; Host и Remote продолжают работать.' + $nl +
+              'Повторное открытие через трей восстанавливает состояние и журнал.' + $nl +
+              'Полное завершение RDC Relay через трей не отключает ранее запущенный Remote.'
         }elseif($script:ownerManagedMode){
-            $helpText = 'RDC Relay 1.6.0 RC1 — управляемая оболочка' + $nl + $nl +
-              'Host запускает Desktop Commander Remote 0.2.52 в отдельной проверяемой Windows Job.' + $nl +
-              'Кнопки «Запустить», «Остановить» и «Переподключить» управляют только процессами этого Host.' + $nl +
-              'Остановка завершает только созданную Host группу процессов после явного подтверждения.' + $nl +
-              'X закрывает только окно GUI; Host и Remote продолжают работать.' + $nl +
-              'Повторное открытие через трей восстанавливает состояние и журнал Host.' + $nl +
-              'Смена аккаунта и автоматическая публикация обновлений пока заблокированы.' + $nl +
-              'Если найден прежний Remote, он не будет принудительно завершён: используйте режим Adopted.'
+            $helpText = 'RDC Relay 1.6.0 RC1' + $nl + $nl +
+              'Host запускает Desktop Commander Remote 0.2.52.' + $nl + $nl +
+              'Закрытие окна закрывает только GUI; Host и Remote продолжают работать.' + $nl +
+              'Повторное открытие через трей восстанавливает состояние и журнал.' + $nl +
+              'Статистику вызовов при необходимости можно подключить повторно в меню «Аккаунт».'
         }else{
-            $helpText = 'RDC Relay 1.6.0 RC1' + $nl +
-              'Режим проверки: настоящий Remote не подключён.' + $nl + $nl +
-              'X закрывает только текущий GUI-процесс. Tray Host сохраняет состояние.' + $nl +
-              'Открытие из трея загружает новую версию GUI с диска.' + $nl +
-              'Управление аккаунтом, Remote и обновлениями здесь отключено.' + $nl +
-              'Полный выход реального Remote заблокирован до проверки владения.'
+            $helpText = 'RDC Relay 1.6.0 RC1' + $nl + $nl +
+              'Режим проверки: Desktop Commander Remote не подключён.' + $nl +
+              'Закрытие окна закрывает только GUI; Host продолжает работать.' + $nl +
+              'Повторное открытие через трей восстанавливает состояние и журнал.'
         }
+        # Diagnostics belong in About, not the compact RC1 footer.
+        $helpPid=if([int]$script:ownerRemotePid -gt 0){[string][int]$script:ownerRemotePid}else{'—'}
+        $helpText += $nl + $nl + 'PID Remote: ' + $helpPid
     }
     [Windows.Forms.MessageBox]::Show(
         $helpText,
