@@ -3671,11 +3671,11 @@ $hintSep.Margin = New-Object Windows.Forms.Padding(0,2,6,0)
 $hintVersion = New-Object Windows.Forms.Label
 $hintVersion.AutoSize = $true
 $hintVersion.Text = 'v' + $appVersion
-$hintVersion.Font = if($OwnerGui){$accountInfo.Font}else{$hint.Font}
+$hintVersion.Font = if($OwnerGui){$form.Font}else{$hint.Font}
 $hintVersion.ForeColor = if($OwnerGui){$accountInfo.ForeColor}else{[Drawing.Color]::Gray}
 # Owner aligns the version with the account/quota/uptime text; the right
 # column remains independently right-anchored across window widths.
-$hintVersion.Margin = New-Object Windows.Forms.Padding(0,$(if($OwnerGui){3}else{6}),0,0)
+$hintVersion.Margin = New-Object Windows.Forms.Padding(0,$(if($OwnerGui){2}else{6}),0,0)
 
 if(-not $OwnerGui){
     $hintHost.Controls.Add($hint)
@@ -4260,8 +4260,10 @@ function Set-FinishButtonMode([bool]$running) {
 function Set-RuntimeDisplay([string]$left,[string]$right = '',[bool]$showSeparator = $false) {
     $runtimeLeft.Text = $left
     $runtimeRight.Text = $right
-    $runtimeSep.Visible = ($showSeparator -and -not $OwnerGui)
     $runtimeRight.Visible = -not [string]::IsNullOrWhiteSpace($right)
+    # Owner uses the same separator for quota | uptime as legacy uses for
+    # PID | runtime. Hide it only when there is no right-hand value.
+    $runtimeSep.Visible = ($showSeparator -and $runtimeRight.Visible)
 }
 function Set-AccountDisplay([string]$email) {
     if ([string]::IsNullOrWhiteSpace($email)) {

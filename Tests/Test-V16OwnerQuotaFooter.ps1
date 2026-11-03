@@ -62,9 +62,10 @@ Check ($layout.Contains('$script:ownerVersionIntroTimer.Interval=25') -and
  Check ($layout.Contains('$quotaLabel.Margin = New-Object Windows.Forms.Padding(0,2,0,0)') -and
  $layout.Contains('$runtimeRight.Margin = New-Object Windows.Forms.Padding(0,2,0,0)') -and
  $layout.Contains('Остаток вызовов —')) 'owner quota and uptime align after stable separators'
- Check ($layout.Contains('$hintVersion.Font = if($OwnerGui){$accountInfo.Font}else{$hint.Font}') -and
+ Check ($layout.Contains('$hintVersion.Font = if($OwnerGui){$form.Font}else{$hint.Font}') -and
+ $layout.Contains('$form.Font = New-Object Drawing.Font('+"'Segoe UI',10"+')') -and
  $layout.Contains('$hintVersion.ForeColor = if($OwnerGui){$accountInfo.ForeColor}else{[Drawing.Color]::Gray}') -and
- $layout.Contains('$hintVersion.Margin = New-Object Windows.Forms.Padding(0,$(if($OwnerGui){3}else{6}),0,0)') -and
+ $layout.Contains('$hintVersion.Margin = New-Object Windows.Forms.Padding(0,$(if($OwnerGui){2}else{6}),0,0)') -and
  $layout.Contains('$to=$accountInfo.ForeColor') -and
  $layout.Contains('$hintVersion.ForeColor=$accountInfo.ForeColor')) 'version matches owner footer typography, color and adjusted baseline, including fade completion'
  Check ($layout.Contains("'PID Remote: ' + "+'$helpPid') -and
@@ -84,8 +85,45 @@ Check ($layout.Contains('$script:ownerVersionIntroTimer.Interval=25') -and
  Check ($owner.Contains('Get-Rc1QuotaStatus $script:ownerQuotaPath') -and
  $owner.Contains('AddSeconds(15)')) 'quota file polled without remote OAuth or UI thread network calls'
  $errors=$null;$tokens=$null
- [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $source 'remote-window.ps1'),[ref]$tokens,[ref]$errors)
+ $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $source 'remote-window.ps1'),[ref]$tokens,[ref]$errors)
  Check ($errors.Count -eq 0) 'legacy shell and owner footer parse'
+ # Execute the exact production setter against disposable label stand-ins;
+ # a source check alone missed the old owner-only separator suppression.
+ $setter=$ast.Find({param($node)
+   $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+   $node.Name -ceq 'Set-RuntimeDisplay'
+ },$true)
+ if($setter){
+  . ([scriptblock]::Create($setter.Extent.Text))
+  foreach($ownerMode in @($true,$false)){
+   $OwnerGui=$ownerMode
+   $runtimeLeft=[pscustomobject]@{Text=''}
+   $runtimeRight=[pscustomobject]@{Text='';Visible=$false}
+   $runtimeSep=[pscustomobject]@{Visible=$false}
+   Set-RuntimeDisplay 'PID 42' 'Время работы 00:03:00' $true
+   Check ($runtimeSep.Visible -and $runtimeRight.Visible -and
+    $runtimeRight.Text -ceq 'Время работы 00:03:00') ('runtime divider visible with uptime, owner='+$ownerMode)
+   Set-RuntimeDisplay 'PID 42' '' $true
+   Check (-not $runtimeSep.Visible -and -not $runtimeRight.Visible) ('runtime divider hidden with no uptime, owner='+$ownerMode)
+  }
+ }else{Check $false 'production runtime setter found for executable regression'}
+ # Control construction without installing or launching Remote proves the
+ # owner's version inherits the actual 10pt Form font, not an early 8.25pt
+ # default from a not-yet-parented FlowLayoutPanel.
+ Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+ $probeForm=New-Object Windows.Forms.Form
+ try{
+  $probeForm.Font=New-Object Drawing.Font('Segoe UI',10)
+  $probePanel=New-Object Windows.Forms.FlowLayoutPanel
+  $probeAccount=New-Object Windows.Forms.Label
+  $probeVersion=New-Object Windows.Forms.Label
+  $probeVersion.Font=$probeForm.Font
+  $probeForm.Controls.Add($probePanel)
+  $probePanel.Controls.Add($probeAccount)
+  $probePanel.Controls.Add($probeVersion)
+  Check ([Math]::Abs($probeAccount.Font.SizeInPoints-$probeVersion.Font.SizeInPoints) -lt 0.01 -and
+   $probeAccount.PreferredHeight -eq $probeVersion.PreferredHeight) 'version 10pt label and account share line-height after parent layout'
+ }finally{$probeForm.Dispose()}
  $errors=$null;$tokens=$null
  [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $source 'rc1-owner-gui.ps1'),[ref]$tokens,[ref]$errors)
  Check ($errors.Count -eq 0) 'owner quota helper syntax parses'
