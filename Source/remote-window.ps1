@@ -5616,7 +5616,8 @@ $finish.Add_Click({
     }
 })
 $quotaAuthItem.Add_Click({
-    # Only an explicit user click may start independent OAuth+PKCE consent.
+    # Explicit manual OAuth+PKCE fallback; trusted managed Host may also
+    # initiate browser consent for its confirmed Remote account.
     # No device.json/token sharing or Remote process action.
     if(-not $OwnerGui -or -not $script:ownerRealMode){return}
     $quotaScript=Join-Path $root 'rc1-quota-client.ps1'

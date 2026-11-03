@@ -1,6 +1,8 @@
 ﻿# RC1 optional OAuth client for read-only Remote MCP usage percentage.
 # Never touches the device-agent's device.json or starts/controls Remote.
-# The first -Authorize call MUST be user-initiated from the Account menu.
+# Authorization starts from the explicit Account menu or after the Host
+# confirms a newly connected managed Remote account. Browser/provider may
+# still require user consent; the device-agent's credentials are never read.
 param([switch]$Authorize,[switch]$Poll)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Security,System.Web

@@ -166,6 +166,19 @@ public sealed class RdcOwnerRuntime : IDisposable {
  public string Generation { get {return generation;} }
  public string Status { get {lock(gate){return guiState;}} }
  public string LastGuiError {get{lock(gate){return lastGuiError;}}}
+ // Only a ready Remote launched into THIS Host's private Job can select
+ // the quota OAuth account. External/observed/fake identity never triggers login.
+ public string ActiveManagedAccount {
+  get {
+   lock(gate){
+    if(!managedMode||observedMode||trialRoot!=null||managedState!="Ready"||
+       managedProcess==null||!managedProcess.Running)return "";
+    return System.Text.RegularExpressions.Regex.IsMatch(managedAccount??"",
+      @"\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z")?
+      managedAccount:"";
+   }
+  }
+ }
  public RdcOwnerRuntime(string root,bool fakeOnly):this(root,fakeOnly,null,false,0,false){}
  public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot):this(root,fakeOnly,isolatedTrialRoot,false,30,false){}
  public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot,bool failOnce,int exitSeconds,bool reopenOnce):

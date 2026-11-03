@@ -40,6 +40,8 @@ $owner=$null
 $observerTimer=$null
 $quotaTimer=$null
 $quotaPollProcess=$null
+$quotaLastAccount=''
+$quotaAutoTried=@{}
 try{
  if($ObserveExisting -or $Full){
   . (Join-Path $root 'rc1-remote-observer.ps1')
@@ -127,26 +129,51 @@ try{
   $quotaScript=Join-Path $root 'rc1-quota-client.ps1'
   $quotaNextPollUtc=[DateTime]::MinValue
   $quotaTimer=New-Object Windows.Forms.Timer
-  $quotaTimer.Interval=60000
+  $quotaTimer.Interval=15000
   $quotaTimer.Add_Tick({
+   # Quota credentials are independent of Remote device credentials.
+   # Automatic browser consent is allowed only for confirmed Host-owned Ready
+   # account identity; never for fake or adopted Remote.
+   $activeAccount=[string]$owner.ActiveManagedAccount
+   if(-not $activeAccount){
+    $quotaLastAccount=''
+    $quotaNextPollUtc=[DateTime]::MinValue
+    return
+   }
+   if(-not [string]::Equals($activeAccount,$quotaLastAccount,[StringComparison]::OrdinalIgnoreCase)){
+    $quotaLastAccount=$activeAccount
+    $quotaNextPollUtc=[DateTime]::MinValue
+   }
    if([DateTime]::UtcNow -lt $quotaNextPollUtc){return}
    if($quotaPollProcess -and -not $quotaPollProcess.HasExited){return}
    if($quotaPollProcess){$quotaPollProcess.Dispose();$quotaPollProcess=$null}
+   $quotaCache=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'remote-usage-cache.json'
+   $quotaCachedAccount=''
+   if([IO.File]::Exists($quotaCache)){
+    try{
+     $quotaData=[IO.File]::ReadAllText($quotaCache,[Text.Encoding]::UTF8)|ConvertFrom-Json
+     if([string]$quotaData.source -cne 'official-remote-who-am-i'){return}
+     $quotaCachedAccount=[string]$quotaData.accountEmail
+    }catch{return} # transient read error is never an OAuth consent trigger
+   }
+   $mode='-Poll'
+   if(-not [string]::Equals($quotaCachedAccount,$activeAccount,[StringComparison]::OrdinalIgnoreCase) -and
+      -not $quotaAutoTried.ContainsKey($activeAccount.ToLowerInvariant())){
+    # One browser launch per account per Host run. The provider may still
+    # require visible user consent or account selection; no token interception.
+    $quotaAutoTried[$activeAccount.ToLowerInvariant()]=$true
+    $mode='-Authorize'
+   }
    $quotaNextPollUtc=[DateTime]::UtcNow.AddMinutes(30)
    try{
     $quotaPollProcess=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
-     '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Poll'
+     '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),$mode
     ) -WindowStyle Hidden -PassThru -ErrorAction Stop
-   }catch{} # UI and Remote remain usable if quota polling fails.
+   }catch{} # Host and Remote remain usable if quota authorization fails.
   })
-  # Startup fetch, then poll every 30 minutes; never block WinForms.
+  # A confirmed owned account triggers its initial quota request on the next
+  # timer pulse, then every 30m. GUI independently reads the cache every 15s.
   $quotaTimer.Start()
-  $quotaNextPollUtc=[DateTime]::UtcNow.AddMinutes(30)
-  try{
-   $quotaPollProcess=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
-    '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Poll'
-   ) -WindowStyle Hidden -PassThru -ErrorAction Stop
-  }catch{}
  }
  $owner.Run()
 }finally{

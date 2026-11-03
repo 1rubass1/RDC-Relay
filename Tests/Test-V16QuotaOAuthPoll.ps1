@@ -88,11 +88,22 @@ Check ($code.Contains("scope='mcp:tools'") -and $code.Contains("code_challenge_m
 Check ($code.Contains('[Security.Cryptography.ProtectedData]::Protect') -and $code.Contains('[Security.Cryptography.DataProtectionScope]::CurrentUser')) 'tokens encrypted with user-scoped DPAPI'
 Check ($code.Contains("method='tools/call'") -and $code.Contains("name='who_am_i'") -and -not $code.Contains('Get-Content -LiteralPath $env:USERPROFILE')) 'only who_am_i and no device credentials'
 Check ($code.Contains('Validate-OfficialEndpoint') -and $code.Contains('mcp.desktopcommander.app')) 'fixed official endpoints enforced'
-Check (([regex]::Matches($hostCode,'\$quotaNextPollUtc=\[DateTime\]::UtcNow\.AddMinutes\(30\)')).Count -eq 2 -and
- -not $hostCode.Contains('AddHours(1)') -and
+Check ($hostCode.Contains('$quotaNextPollUtc=[DateTime]::UtcNow.AddMinutes(30)') -and
+ $hostCode.Contains('$quotaTimer.Interval=15000') -and
  $hostCode.Contains('quotaPollProcess=Start-Process') -and
- $hostCode.Contains('if($Full -and -not $TrialRoot)')) 'Host polls on startup then every 30 minutes, full mode only'
-Check ($window.Contains('rc1-quota-client.ps1') -and $window.Contains("'-Authorize'") -and $gui.Contains('$quotaAuthItem.Enabled=$script:ownerRealMode')) 'browser OAuth requires explicit Account menu action'
+ $hostCode.Contains('if($Full -and -not $TrialRoot)')) 'Host schedules quota at 30min after verified managed account appears'
+$runtime=[IO.File]::ReadAllText((Join-Path $src 'RdcOwnerRuntime.cs'),[Text.Encoding]::UTF8)
+Check ($runtime.Contains('public string ActiveManagedAccount') -and
+ $runtime.Contains('managedState!="Ready"') -and
+ $runtime.Contains('!managedProcess.Running') -and
+ $hostCode.Contains('$activeAccount=[string]$owner.ActiveManagedAccount')) 'automatic quota browser launch gated by actual ready Host-owned identity'
+Check ($hostCode.Contains("$"+'mode='+"'-Authorize'") -and
+ $hostCode.Contains("$"+'quotaAutoTried.ContainsKey') -and
+ $hostCode.Contains("$"+'quotaData.source -cne '+"'official-remote-who-am-i'") -and
+ $hostCode.Contains('[StringComparison]::OrdinalIgnoreCase')) 'mismatch triggers one automatic browser attempt without repeated prompts'
+Check (-not $hostCode.Contains("'remote --logout'") -and
+ -not $hostCode.Contains('StopManagedRemote(')) 'automatic quota never logs out or controls Remote'
+Check ($window.Contains('rc1-quota-client.ps1') -and $window.Contains("'-Authorize'") -and $gui.Contains('$quotaAuthItem.Enabled=$script:ownerRealMode')) 'manual Account-menu OAuth fallback remains available'
 Check ($gui.Contains('Остаток вызовов 0%') -and $gui.Contains('[Drawing.Color]::LightCoral')) '0% rendered red'
 Write-Output ('RC1_QUOTA_OAUTH_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}
