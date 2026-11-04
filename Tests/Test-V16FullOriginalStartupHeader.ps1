@@ -65,8 +65,12 @@ Check ($renderedNext.Contains('🚀 Next') -and
  $renderedNext.Contains('💻 You can close this window; RDC Relay continues running in the system tray.')) 'Owner Next replaces terminal-only instructions with tray guidance'
 Check (-not $renderedNext.Contains('Keep this Terminal running.') -and
  -not $renderedNext.Contains('Press Ctrl+C to disconnect.') -and
+ $renderedNext.Contains('⏹ Click Stop to disconnect Remote.') -and
  $renderedNext.Contains('🔧 Commands') -and
- $renderedNext.Contains('  Help: npx @wonderwhy-er/desktop-commander@latest remote --help')) 'Owner removes only Ctrl+C line and preserves Commands and other original startup lines'
+ $renderedNext.Contains('  Help: npx @wonderwhy-er/desktop-commander@latest remote --help')) 'Owner closes Next with Stop action and retains original Commands section'
+Check ($renderedNext.Contains("⏹ Click Stop to disconnect Remote.`n🔧 Commands") -and
+ ([regex]::Matches($renderedNext,[regex]::Escape('Click Stop to disconnect Remote.'))).Count -eq 1 -and
+ $new.Contains("if("+ '$OwnerGui' +"){Color-LogToken "+ '$headerLog' +" '⏹' "+ '$accentOrange' +"}")) 'Next final line sits immediately before Commands and uses matching accent icon'
 Check ($originalNext.Contains('Keep this Terminal running.') -and
  $originalNext.Contains('Press Ctrl+C to disconnect.') -and
  $runtime.Contains('Press Ctrl\+C to disconnect\.') -and
@@ -75,7 +79,11 @@ Check ($originalNext.Contains('Keep this Terminal running.') -and
  $new.Contains('$script:startupBlock.TrimEnd()')) 'Host provenance stays original; only RC1 rendered copy is transformed'
 Check ((Convert-Rc1OwnerStartupInstructions '🚀 Next').Equals('🚀 Next') -and
  (Convert-Rc1OwnerStartupInstructions '💻 Keep this Terminal running. You can minimize it. extra') -ceq
- '💻 Keep this Terminal running. You can minimize it. extra') 'Unrecognized or incomplete header lines are never rewritten'
+ '💻 Keep this Terminal running. You can minimize it. extra' -and
+ (Convert-Rc1OwnerStartupInstructions '⌨ Press Ctrl+C to disconnect. extra') -ceq
+ '⌨ Press Ctrl+C to disconnect. extra') 'Unrecognized or incomplete header lines are never rewritten'
+Check ((Convert-Rc1OwnerStartupInstructions "⌨ Press Ctrl+C to disconnect.`r`n🔧 Commands") -ceq
+ "⏹ Click Stop to disconnect Remote.`n🔧 Commands") 'CRLF original keeps Next closing line instead of deleting it'
 # Regression: verification can emit dozens of empty/whitespace progress rows.
 # Preserve exactly one separator while retaining all subsequent useful text.
 $keepBlank=([RdcOwnerRuntime]).GetMethod('ShouldKeepStartupLine',[Reflection.BindingFlags]'Static,NonPublic')

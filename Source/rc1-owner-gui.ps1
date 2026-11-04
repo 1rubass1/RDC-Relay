@@ -90,11 +90,19 @@ function Convert-Rc1OwnerStartupInstructions([string]$header) {
  $terminalKeep='Keep this Terminal running. You can minimize it.'
  $terminalStop='Press Ctrl+C to disconnect.'
  $ownerKeep='You can close this window; RDC Relay continues running in the system tray.'
+ $ownerStop='Click Stop to disconnect Remote.'
  $display=New-Object 'System.Collections.Generic.List[string]'
  foreach($line in ($header.Replace("`r`n","`n") -split "`n",-1)){
   # Ctrl+C interrupts an interactive terminal, not this separate Host/GUI.
-  if($line.EndsWith($terminalStop,[StringComparison]::Ordinal)){continue}
-  if($line.EndsWith($terminalKeep,[StringComparison]::Ordinal)){
+  # Replace its keyboard hint with the action's Stop symbol in the same
+  # final instruction slot, so the Next block keeps its visual ending.
+  if($line.EndsWith($terminalStop,[StringComparison]::Ordinal)){
+   $prefix=$line.Substring(0,$line.Length-$terminalStop.Length)
+   if($prefix.EndsWith('⌨ ',[StringComparison]::Ordinal)){
+    $prefix=$prefix.Substring(0,$prefix.Length-2)+'⏹ '
+   }
+   [void]$display.Add($prefix+$ownerStop)
+  }elseif($line.EndsWith($terminalKeep,[StringComparison]::Ordinal)){
    [void]$display.Add($line.Substring(0,$line.Length-$terminalKeep.Length)+$ownerKeep)
   }else{[void]$display.Add($line)}
  }

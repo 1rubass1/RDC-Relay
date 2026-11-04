@@ -4747,6 +4747,7 @@ function Render-CompactLog {
             Color-HeaderSemantics $headerLog $headerLog.TextLength
             Color-LogToken $headerLog '🔧' $accentOrange
             Color-LogToken $headerLog '🚀' $accentOrange
+            if($OwnerGui){Color-LogToken $headerLog '⏹' $accentOrange}
             Color-LogToken $headerLog '✅' $accentPurple
             Color-LogToken $headerLog '🔌' $statusGreen
             Color-LogToken $headerLog '⏳' $accentWait
