@@ -48,6 +48,34 @@ if($parser){
  SafeLine '  - Device Name: [bad-control]' $false 'bad-control'
  SafeLine 'secret: nobody-should-see-this' $false 'secret'
 }
+# RC1 must show instructions appropriate to the GUI while retaining the
+# authentic Host startup header and the legacy renderer unchanged.
+. (Join-Path $src 'rc1-owner-gui.ps1')
+$originalNext=[string]::Join("`n",@(
+ '🚀 Next',
+ '➡ Return to ChatGPT or Claude and continue your conversation.',
+ '💻 Keep this Terminal running. You can minimize it.',
+ '⌨ Press Ctrl+C to disconnect.',
+ '🔧 Commands',
+ '  Help: npx @wonderwhy-er/desktop-commander@latest remote --help'
+))
+$renderedNext=Convert-Rc1OwnerStartupInstructions $originalNext
+Check ($renderedNext.Contains('🚀 Next') -and
+ $renderedNext.Contains('➡ Return to ChatGPT or Claude and continue your conversation.') -and
+ $renderedNext.Contains('💻 You can close this window; RDC Relay continues running in the system tray.')) 'Owner Next replaces terminal-only instructions with tray guidance'
+Check (-not $renderedNext.Contains('Keep this Terminal running.') -and
+ -not $renderedNext.Contains('Press Ctrl+C to disconnect.') -and
+ $renderedNext.Contains('🔧 Commands') -and
+ $renderedNext.Contains('  Help: npx @wonderwhy-er/desktop-commander@latest remote --help')) 'Owner removes only Ctrl+C line and preserves Commands and other original startup lines'
+Check ($originalNext.Contains('Keep this Terminal running.') -and
+ $originalNext.Contains('Press Ctrl+C to disconnect.') -and
+ $runtime.Contains('Press Ctrl\+C to disconnect\.') -and
+ $new.Contains('if($OwnerGui -and $headerDisplay)') -and
+ $new.Contains('$headerDisplay=Convert-Rc1OwnerStartupInstructions $headerDisplay') -and
+ $new.Contains('$script:startupBlock.TrimEnd()')) 'Host provenance stays original; only RC1 rendered copy is transformed'
+Check ((Convert-Rc1OwnerStartupInstructions '🚀 Next').Equals('🚀 Next') -and
+ (Convert-Rc1OwnerStartupInstructions '💻 Keep this Terminal running. You can minimize it. extra') -ceq
+ '💻 Keep this Terminal running. You can minimize it. extra') 'Unrecognized or incomplete header lines are never rewritten'
 # Regression: verification can emit dozens of empty/whitespace progress rows.
 # Preserve exactly one separator while retaining all subsequent useful text.
 $keepBlank=([RdcOwnerRuntime]).GetMethod('ShouldKeepStartupLine',[Reflection.BindingFlags]'Static,NonPublic')

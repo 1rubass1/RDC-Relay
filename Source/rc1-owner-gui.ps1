@@ -82,12 +82,30 @@ function Format-Rc1JournalLine([long]$number,[string]$message) {
  }
  return $number.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '+$description
 }
+# These are the original, allowlisted Remote startup lines from Host. Only
+# Owner GUI's display copy is adapted: the source log and IPC snapshot remain
+# unchanged for evidence/provenance, and legacy 1.5.18 rendering is untouched.
+function Convert-Rc1OwnerStartupInstructions([string]$header) {
+ if([string]::IsNullOrEmpty($header)){return $header}
+ $terminalKeep='Keep this Terminal running. You can minimize it.'
+ $terminalStop='Press Ctrl+C to disconnect.'
+ $ownerKeep='You can close this window; RDC Relay continues running in the system tray.'
+ $display=New-Object 'System.Collections.Generic.List[string]'
+ foreach($line in ($header.Replace("`r`n","`n") -split "`n",-1)){
+  # Ctrl+C interrupts an interactive terminal, not this separate Host/GUI.
+  if($line.EndsWith($terminalStop,[StringComparison]::Ordinal)){continue}
+  if($line.EndsWith($terminalKeep,[StringComparison]::Ordinal)){
+   [void]$display.Add($line.Substring(0,$line.Length-$terminalKeep.Length)+$ownerKeep)
+  }else{[void]$display.Add($line)}
+ }
+ return [string]::Join("`n",$display.ToArray())
+}
 # A read-only, expiring private snapshot from an authorized official
 # Remote Desktop Commander who_am_i call. The Windows device-agent's OAuth
 # credentials are NOT reused: they are not the ChatGPT/hosted MCP client grant.
 # If no fresh service-provided snapshot is present, show an honest dash.
 function Get-Rc1QuotaStatus([string]$path,[string]$expectedEmail,[DateTime]$nowUtc) {
- $missing='Остаток вызовов —'
+ $missing='Остаток вызовов: --%'
  if(-not $path -or -not $expectedEmail -or -not [IO.File]::Exists($path)){return $missing}
  try {
   $file=Get-Item -LiteralPath $path -ErrorAction Stop
@@ -108,7 +126,7 @@ function Get-Rc1QuotaStatus([string]$path,[string]$expectedEmail,[DateTime]$nowU
       [ref]$observed)){return $missing}
   $age=($nowUtc.ToUniversalTime()-$observed).TotalMinutes
   if($age -lt -2 -or $age -ge 60){return $missing}
-  return ('Остаток вызовов '+$n+'%')
+  return ('Остаток вызовов: '+$n+'%')
  }catch{return $missing}
 }
 function Start-RdcOwnerGui {
@@ -480,7 +498,7 @@ function Start-RdcOwnerGui {
    if($quotaText -cne $script:ownerLastQuotaText){
     $script:ownerLastQuotaText=$quotaText
     $quotaLabel.Text=$quotaText
-    $quotaLabel.ForeColor=if($quotaText -ceq 'Остаток вызовов 0%'){
+    $quotaLabel.ForeColor=if($quotaText -ceq 'Остаток вызовов: 0%'){
      [Drawing.Color]::LightCoral
     }else{[Drawing.Color]::Silver}
    }

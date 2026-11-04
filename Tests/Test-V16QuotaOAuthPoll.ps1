@@ -104,7 +104,7 @@ Check ($hostCode.Contains("$"+'mode='+"'-Authorize'") -and
 Check (-not $hostCode.Contains("'remote --logout'") -and
  -not $hostCode.Contains('StopManagedRemote(')) 'automatic quota never logs out or controls Remote'
 Check ($window.Contains('rc1-quota-client.ps1') -and $window.Contains("'-Authorize'") -and $gui.Contains('$quotaAuthItem.Enabled=$script:ownerRealMode')) 'manual Account-menu OAuth fallback remains available'
-Check ($gui.Contains('Остаток вызовов 0%') -and $gui.Contains('[Drawing.Color]::LightCoral')) '0% rendered red'
+Check ($gui.Contains('Остаток вызовов: 0%') -and $gui.Contains('[Drawing.Color]::LightCoral')) '0% rendered red'
 Write-Output ('RC1_QUOTA_OAUTH_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}
 exit 0

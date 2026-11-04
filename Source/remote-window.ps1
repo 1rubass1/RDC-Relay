@@ -3635,7 +3635,7 @@ $runtimeRight.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
 # Owner-only account quota label: no change to the stable 1.5.18 footer.
 $quotaLabel = New-Object Windows.Forms.Label
 $quotaLabel.AutoSize = $true
-$quotaLabel.Text = 'Остаток вызовов —'
+$quotaLabel.Text = 'Остаток вызовов: --%'
 $quotaLabel.ForeColor = [Drawing.Color]::Silver
 $quotaLabel.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
 $quotaLabel.Visible = $OwnerGui
@@ -4711,6 +4711,11 @@ function Render-CompactLog {
     if (-not $log -or $log.IsDisposed -or -not $headerLog -or $headerLog.IsDisposed) { return }
 
     $headerDisplay = if ([string]::IsNullOrWhiteSpace($script:startupBlock)) { '' } else { $script:startupBlock.TrimEnd() }
+    # Present desktop-GUI instructions, not upstream terminal-only shortcuts.
+    # Transform only the render copy; the original Host startup text is intact.
+    if($OwnerGui -and $headerDisplay){
+        $headerDisplay=Convert-Rc1OwnerStartupInstructions $headerDisplay
+    }
     if ($script:lastRenderedHeader -cne $headerDisplay) {
         $headerView = $null
         try { $headerView = $headerLog.GetViewPosition() } catch {}

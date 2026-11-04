@@ -16,32 +16,32 @@ function Put($percent,$email,$date,$origin){
  [IO.File]::WriteAllText($file,($data|ConvertTo-Json -Compress),[Text.Encoding]::UTF8)
 }
 try {
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'no cache means unknown, not fake 94%'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов: --%') 'no cache means unknown, not fake 94%'
  $iso=$now.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture)
  Put 94 'tester@example.org' $iso 'official-remote-who-am-i'
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов 94%') 'fresh official quota is shown'
- Check ((Get-Rc1QuotaStatus $file 'other@example.org' $now) -ceq 'Остаток вызовов —') 'quota cannot leak across different account'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов: 94%') 'fresh official quota is shown'
+ Check ((Get-Rc1QuotaStatus $file 'other@example.org' $now) -ceq 'Остаток вызовов: --%') 'quota cannot leak across different account'
  Put 0 'tester@example.org' $iso 'official-remote-who-am-i'
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов 0%') 'zero percent is valid'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов: 0%') 'zero percent is valid'
  Put 100 'tester@example.org' $iso 'official-remote-who-am-i'
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов 100%') '100 percent is valid'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов: 100%') '100 percent is valid'
  Put 101 'tester@example.org' $iso 'official-remote-who-am-i'
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'reject out of range'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов: --%') 'reject out of range'
  Put 'nope' 'tester@example.org' $iso 'official-remote-who-am-i'
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'reject nonnumber'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов: --%') 'reject nonnumber'
  Put 94 'tester@example.org' $iso 'untrusted-local-guess'
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'reject wrong provenance'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов: --%') 'reject wrong provenance'
  Put 94 'tester@example.org' $now.AddMinutes(-59).ToString('yyyy-MM-ddTHH:mm:ssZ') 'official-remote-who-am-i'
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов 94%') 'last confirmed value remains visible just before one hour'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов: 94%') 'last confirmed value remains visible just before one hour'
  $nowExact=$now.AddTicks(-($now.Ticks % [TimeSpan]::TicksPerSecond))
  Put 94 'tester@example.org' $nowExact.AddMinutes(-60).ToString('yyyy-MM-ddTHH:mm:ssZ') 'official-remote-who-am-i'
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $nowExact) -ceq 'Остаток вызовов —') 'value becomes unavailable exactly at one hour'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $nowExact) -ceq 'Остаток вызовов: --%') 'value becomes unavailable exactly at one hour'
  Put 94 'tester@example.org' $now.AddMinutes(-61).ToString('yyyy-MM-ddTHH:mm:ssZ') 'official-remote-who-am-i'
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'stale value stays hidden after one hour'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов: --%') 'stale value stays hidden after one hour'
  Put 94 'tester@example.org' $now.AddMinutes(3).ToString('yyyy-MM-ddTHH:mm:ssZ') 'official-remote-who-am-i'
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'reject excessive future date'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов: --%') 'reject excessive future date'
  [IO.File]::WriteAllText($file,('A'*1000),[Text.Encoding]::UTF8)
- Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов —') 'bounded cache size'
+ Check ((Get-Rc1QuotaStatus $file 'tester@example.org' $now) -ceq 'Остаток вызовов: --%') 'bounded cache size'
  $layout=[IO.File]::ReadAllText((Join-Path $source 'remote-window.ps1'),[Text.Encoding]::UTF8)
  $owner=[IO.File]::ReadAllText((Join-Path $source 'rc1-owner-gui.ps1'),[Text.Encoding]::UTF8)
  Check ($layout.Contains('$infoHost.Controls.Add($accountSep)') -and
@@ -61,7 +61,7 @@ Check ($layout.Contains('$script:ownerVersionIntroTimer.Interval=25') -and
  $layout.Contains('$script:ownerVersionIntroTimer.Dispose()')) 'version fades into far corner with high-contrast and disposal safeguards'
  Check ($layout.Contains('$quotaLabel.Margin = New-Object Windows.Forms.Padding(0,2,0,0)') -and
  $layout.Contains('$runtimeRight.Margin = New-Object Windows.Forms.Padding(0,2,0,0)') -and
- $layout.Contains('Остаток вызовов —')) 'owner quota and uptime align after stable separators'
+ $layout.Contains('Остаток вызовов: --%')) 'owner quota and uptime align after stable separators'
  Check ($layout.Contains('$hintVersion.Font = if($OwnerGui){$form.Font}else{$hint.Font}') -and
  $layout.Contains('$form.Font = New-Object Drawing.Font('+"'Segoe UI',10"+')') -and
  $layout.Contains('$hintVersion.ForeColor = if($OwnerGui){$accountInfo.ForeColor}else{[Drawing.Color]::Gray}') -and
@@ -81,7 +81,7 @@ Check ($layout.Contains('$script:ownerVersionIntroTimer.Interval=25') -and
  Check ($layout.Contains("$"+'quotaAuthItem.Add_Click({') -and
  $layout.Contains("$"+'quotaAuthItem.Visible=[bool]$OwnerGui') -and
  $owner.Contains('quotaAuthItem.Enabled=$script:ownerRealMode')) 'OAuth authorization requires explicit owner Account click'
- Check ($owner.Contains('Остаток вызовов 0%') -and $owner.Contains('[Drawing.Color]::LightCoral')) 'genuine zero remaining appears in red'
+ Check ($owner.Contains('Остаток вызовов: 0%') -and $owner.Contains('[Drawing.Color]::LightCoral')) 'genuine zero remaining appears in red'
  Check ($owner.Contains('Get-Rc1QuotaStatus $script:ownerQuotaPath') -and
  $owner.Contains('AddSeconds(15)')) 'quota file polled without remote OAuth or UI thread network calls'
  $errors=$null;$tokens=$null
