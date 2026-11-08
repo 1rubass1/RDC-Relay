@@ -3453,18 +3453,31 @@ $form = New-Object Windows.Forms.Form
 $form.Text = 'RDC Relay'
 $baseWindowWidth = 1074
 $baseWindowHeight = 900
-$paneMinHeightPreferred = 125 # Header baseline; preserve its original minimum.
-# Reserve one additional full activity-log line beneath the last visible row
-# at the pane's smallest size. Measure it with the actual Consolas 10 font,
-# rather than assuming a fixed pixel count on different Windows DPI settings.
-$activityLineFont=New-Object Drawing.Font('Consolas',10)
-try{
-    $activityLineHeight=[Windows.Forms.TextRenderer]::MeasureText(
-        'Ag',$activityLineFont,(New-Object Drawing.Size(1000,1000)),
-        ([Windows.Forms.TextFormatFlags]::NoPadding -bor [Windows.Forms.TextFormatFlags]::SingleLine)
-    ).Height
-}finally{$activityLineFont.Dispose()}
-$activityPaneMinHeightPreferred=$paneMinHeightPreferred+$(if($OwnerGui){$activityLineHeight}else{0})
+$paneMinHeightPreferred = 125 # Unchanged upper-pane and legacy minimum.
+function Get-Rc1ActivityRowReserve([int]$baselineHeight) {
+    # The old 125px pane ALREADY contains some lower slack. Measure the
+    # actual RichEdit line advance and add only the missing part of a row.
+    # The horizontal scrollbar occupies 17px below the text viewport.
+    $probe=New-Object Windows.Forms.RichTextBox
+    $font=New-Object Drawing.Font('Consolas',10)
+    try {
+        $probe.Font=$font
+        $probe.BorderStyle=[Windows.Forms.BorderStyle]::None
+        $probe.WordWrap=$false
+        $probe.Text="Ag`nAg"
+        [void]$probe.Handle
+        $linePitch=$probe.GetPositionFromCharIndex(3).Y -
+                   $probe.GetPositionFromCharIndex(0).Y
+        if($linePitch -lt 8 -or $linePitch -gt 50){throw 'RC1_INVALID_LOG_LINE_PITCH'}
+        $existingSlack=([Math]::Max(1,$baselineHeight-17) % $linePitch)
+        return $(if($existingSlack -eq 0){$linePitch}else{$linePitch-$existingSlack})
+    }finally{
+        $probe.Dispose()
+        $font.Dispose()
+    }
+}
+$activityRowReserve=if($OwnerGui){Get-Rc1ActivityRowReserve $paneMinHeightPreferred}else{0}
+$activityPaneMinHeightPreferred=$paneMinHeightPreferred+$activityRowReserve
 $startupScreen = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position)
 $startupWorkArea = $startupScreen.WorkingArea
 $windowWidth = [Math]::Min($baseWindowWidth,$startupWorkArea.Width)
