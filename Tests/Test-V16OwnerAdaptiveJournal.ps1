@@ -21,6 +21,7 @@ foreach($name in @('Get-Rc1ActivityRowReserve','Get-Rc1JournalVisibleRowCapacity
 }
 function Limit-UiEvent([string]$text){return $text}
 $OwnerGui=$true
+$script:ownerTextFontFamily='Segoe UI Emoji'
 $script:ownerCompactJournal=$true
 $script:eventBlocks=New-Object System.Collections.ArrayList
 $script:ownerLastJournalCapacity=-1
@@ -28,12 +29,12 @@ $reserve=Get-Rc1ActivityRowReserve 125
 $linePitch=[int]$script:ownerJournalLinePitch
 $minOwner=125+$reserve
 $log=[pscustomobject]@{IsDisposed=$false;ClientSize=(New-Object Drawing.Size(800,($minOwner-17)))}
-Check ($minOwner -eq 137 -and $linePitch -eq 15) 'on STARMER the measured 137px minimum yields 15px line pitch'
+Check ($minOwner -eq (8*$linePitch+17) -and $linePitch -eq 17) 'on STARMER Emoji 10pt, 153px minimum yields 17px pitch and six events'
 Check ((Get-Rc1JournalVisibleRowCapacity) -eq 6) 'minimum fits exactly six event lines plus top and bottom row'
-$log.ClientSize=New-Object Drawing.Size(800,($minOwner-17+45))
-Check ((Get-Rc1JournalVisibleRowCapacity) -eq 9) '45px pane growth shows three more entries'
-$log.ClientSize=New-Object Drawing.Size(800,($minOwner-17+90))
-Check ((Get-Rc1JournalVisibleRowCapacity) -eq 12) '90px pane growth shows six more entries'
+$log.ClientSize=New-Object Drawing.Size(800,($minOwner-17+3*$linePitch))
+Check ((Get-Rc1JournalVisibleRowCapacity) -eq 9) 'three row-pitches of growth show three more entries'
+$log.ClientSize=New-Object Drawing.Size(800,($minOwner-17+6*$linePitch))
+Check ((Get-Rc1JournalVisibleRowCapacity) -eq 12) 'six row-pitches of growth show six more entries'
 $log.ClientSize=New-Object Drawing.Size(800,5)
 Check ((Get-Rc1JournalVisibleRowCapacity) -eq 1) 'transient tiny viewport has a bounded one-row fallback'
 $log.ClientSize=New-Object Drawing.Size(800,3000)
@@ -44,7 +45,7 @@ Check ($script:eventBlocks.Count -eq 64 -and
  $script:eventBlocks[63] -ceq 'safe-entry-80') 'Owner retains 64 bounded sanitized events rather than discarding down to six'
 $log.ClientSize=New-Object Drawing.Size(800,($minOwner-17))
 $firstSix=@($script:eventBlocks | Select-Object -Last (Get-Rc1JournalVisibleRowCapacity))
-$log.ClientSize=New-Object Drawing.Size(800,($minOwner-17+60))
+$log.ClientSize=New-Object Drawing.Size(800,($minOwner-17+4*$linePitch))
 $expanded=@($script:eventBlocks | Select-Object -Last (Get-Rc1JournalVisibleRowCapacity))
 Check ($firstSix.Count -eq 6 -and $expanded.Count -eq 10 -and
  $expanded[0] -ceq 'safe-entry-71' -and $firstSix[0] -ceq 'safe-entry-75') 'expansion reveals older retained entries in chronological order'
@@ -56,13 +57,13 @@ function Render-CompactLog {$script:renderTriggered++}
 $script:ownerLastJournalCapacity=6
 $script:uiInteracting=$false
 $script:logRedrawFrozen=$false
-$log.ClientSize=New-Object Drawing.Size(800,($minOwner-17+30))
+$log.ClientSize=New-Object Drawing.Size(800,($minOwner-17+2*$linePitch))
 Refresh-Rc1JournalOnResize
 Check ($script:renderTriggered -eq 1) 'resize with changed row capacity triggers reconstruction'
 $script:ownerLastJournalCapacity=8
 Refresh-Rc1JournalOnResize
 Check ($script:renderTriggered -eq 1) 'same capacity does not repeatedly rebuild RichEdit'
-$log.ClientSize=New-Object Drawing.Size(800,($minOwner-17+45))
+$log.ClientSize=New-Object Drawing.Size(800,($minOwner-17+3*$linePitch))
 $script:uiInteracting=$true
 Refresh-Rc1JournalOnResize
 Check ($script:renderTriggered -eq 1) 'active drag postpones RichEdit rewrite until release'

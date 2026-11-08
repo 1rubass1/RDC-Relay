@@ -3454,12 +3454,15 @@ $form.Text = 'RDC Relay'
 $baseWindowWidth = 1074
 $baseWindowHeight = 900
 $paneMinHeightPreferred = 125 # Legacy and activity baseline are unchanged.
+# Owner font trial: one private preset for both RichEdit controls and metric probes.
+# Future UI font selection may update this single source of truth.
+$script:ownerTextFontFamily=if($OwnerGui){'Segoe UI Emoji'}else{'Consolas'}
 function Get-Rc1HeaderBannerMinimum {
     # The pinned Remote header's Desktop Commander banner occupies six
     # compact rows. Keep all six visible when the owner header is collapsed.
     # Include its 7px draggable divider and a tiny 2px bottom breathing room.
     $probe=New-Object Windows.Forms.RichTextBox
-    $font=New-Object Drawing.Font('Consolas',9)
+    $font=New-Object Drawing.Font($script:ownerTextFontFamily,9)
     try{
         $probe.Font=$font
         $probe.BorderStyle=[Windows.Forms.BorderStyle]::None
@@ -3477,11 +3480,11 @@ function Get-Rc1HeaderBannerMinimum {
 }
 $headerPaneMinHeightPreferred=if($OwnerGui){Get-Rc1HeaderBannerMinimum}else{$paneMinHeightPreferred}
 function Get-Rc1ActivityRowReserve([int]$baselineHeight) {
-    # The old 125px pane ALREADY contains some lower slack. Measure the
-    # actual RichEdit line advance and add only the missing part of a row.
-    # The horizontal scrollbar occupies 17px below the text viewport.
+    # Measure the actual RichEdit line advance for the selected font.
+    # Owner needs six events plus two blank rows; the legacy fallback keeps
+    # its existing-slack calculation. The scrollbar reserves another 17px.
     $probe=New-Object Windows.Forms.RichTextBox
-    $font=New-Object Drawing.Font('Consolas',10)
+    $font=New-Object Drawing.Font($script:ownerTextFontFamily,10)
     try {
         $probe.Font=$font
         $probe.BorderStyle=[Windows.Forms.BorderStyle]::None
@@ -3494,7 +3497,12 @@ function Get-Rc1ActivityRowReserve([int]$baselineHeight) {
         # Both minimum-pane and journal-capacity calculations use the same
         # measured RichEdit line pitch.
         $existingSlack=([Math]::Max(1,$baselineHeight-17) % $linePitch)
-        if($OwnerGui){$script:ownerJournalLinePitch=[int]$linePitch}
+        if($OwnerGui){
+            $script:ownerJournalLinePitch=[int]$linePitch
+            # Six visible events plus one empty row above and below.
+            # Non-Consolas fonts may need more than a single row of reserve.
+            return [Math]::Max(0,(8*$linePitch)+17-$baselineHeight)
+        }
         return $(if($existingSlack -eq 0){$linePitch}else{$linePitch-$existingSlack})
     }finally{
         $probe.Dispose()
@@ -3806,7 +3814,7 @@ $headerLog.ReadOnly = $true
 $headerLog.TabStop = $false
 $headerLog.BackColor = [Drawing.Color]::FromArgb(18,20,23)
 $headerLog.ForeColor = [Drawing.Color]::Gainsboro
-$headerLog.Font = New-Object Drawing.Font('Consolas',9)
+$headerLog.Font = New-Object Drawing.Font($script:ownerTextFontFamily,9)
 $headerLog.WordWrap = $true
 $headerLog.BorderStyle = 'None'
 $headerLog.ScrollBars = [Windows.Forms.RichTextBoxScrollBars]::None
@@ -3910,7 +3918,7 @@ $log.ReadOnly = $true
 $log.TabStop = $false
 $log.BackColor = [Drawing.Color]::FromArgb(18,20,23)
 $log.ForeColor = [Drawing.Color]::Gainsboro
-$log.Font = New-Object Drawing.Font('Consolas',10)
+$log.Font = New-Object Drawing.Font($script:ownerTextFontFamily,10)
 $log.WordWrap = $false
 $log.BorderStyle = 'None'
 $log.ScrollBars = [Windows.Forms.RichTextBoxScrollBars]::None
