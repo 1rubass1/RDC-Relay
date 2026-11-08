@@ -3469,7 +3469,10 @@ function Get-Rc1ActivityRowReserve([int]$baselineHeight) {
         $linePitch=$probe.GetPositionFromCharIndex(3).Y -
                    $probe.GetPositionFromCharIndex(0).Y
         if($linePitch -lt 8 -or $linePitch -gt 50){throw 'RC1_INVALID_LOG_LINE_PITCH'}
+        # Both minimum-pane and journal-capacity calculations use the same
+        # measured RichEdit line pitch.
         $existingSlack=([Math]::Max(1,$baselineHeight-17) % $linePitch)
+        if($OwnerGui){$script:ownerJournalLinePitch=[int]$linePitch}
         return $(if($existingSlack -eq 0){$linePitch}else{$linePitch-$existingSlack})
     }finally{
         $probe.Dispose()
@@ -4015,7 +4018,10 @@ function Position-DividerDragPreview([double]$paneHeight) {
     )
     $dividerDragPreview.UpdateDivider((Get-DividerPreviewY $paneHeight))
 }
-$logHost.Add_Resize({ Layout-LogScrollbars })
+$logHost.Add_Resize({
+    Layout-LogScrollbars
+    if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
+})
 $contentHost.Add_Resize({
     Set-ActivityPaneHeight $contentHost.RowStyles[1].Height
 })
@@ -4033,12 +4039,14 @@ $scrollCorner.Add_MouseUp({
     $script:uiInteracting = $false
     Layout-LogScrollbars
     Stop-LogResizeInteraction
+    if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
 })
 $scrollCorner.Add_MouseCaptureChanged({
     if (-not $scrollCorner.Capture) {
         $script:uiInteracting = $false
         Layout-LogScrollbars
         Stop-LogResizeInteraction
+        if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
     }
 })
 
@@ -4063,6 +4071,7 @@ function Complete-DividerDrag {
     } finally {
         Stop-LogResizeInteraction
     }
+    if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
 
     try { $gpuDivider.SetInteractiveMove($false) } catch {}
 
@@ -4640,7 +4649,10 @@ function Add-CompletedEvent([string]$text) {
     $item = Limit-UiEvent $text
     if ([string]::IsNullOrWhiteSpace($item)) { return }
     [void]$script:eventBlocks.Add($item)
-    while ($script:eventBlocks.Count -gt 6) { $script:eventBlocks.RemoveAt(0) }
+    # Owner keeps bounded history independently from visible rows; resizing
+    # can reveal older events without querying Host or discarding newer data.
+    $retained=if($OwnerGui){64}else{6}
+    while ($script:eventBlocks.Count -gt $retained) { $script:eventBlocks.RemoveAt(0) }
 }
 function Commit-CurrentEvent {
     if (-not [string]::IsNullOrWhiteSpace($script:currentEvent)) {
@@ -4742,6 +4754,23 @@ function Color-HeaderSemantics([RdcLogBox]$target,[int]$headerLimit) {
     Color-LogRegex $target '^\s*-\s*Device Name:\s*(.+)$' $headerValue $headerLimit 1
     Color-LogRegex $target '^\s*Device:\s*(.+)$' $headerValue $headerLimit 1
 }
+function Get-Rc1JournalVisibleRowCapacity {
+    if(-not $OwnerGui -or -not $script:ownerCompactJournal){return 6}
+    if(-not $log -or $log.IsDisposed){return 6}
+    $linePitch=[Math]::Max(1,[int]$script:ownerJournalLinePitch)
+    if($linePitch -le 1){return 6}
+    # The RichEdit viewport excludes the separate 17px horizontal scrollbar.
+    # Reserve one blank line above the first entry and one below the last.
+    $wholeLines=[int][Math]::Floor([Math]::Max(0,$log.ClientSize.Height)/$linePitch)
+    return [Math]::Max(1,[Math]::Min(64,$wholeLines-2))
+}
+function Refresh-Rc1JournalOnResize {
+    if(-not $OwnerGui -or -not $script:ownerCompactJournal -or
+       $script:uiInteracting -or $script:logRedrawFrozen -or
+       -not $script:eventBlocks){return}
+    $capacity=Get-Rc1JournalVisibleRowCapacity
+    if($capacity -ne $script:ownerLastJournalCapacity){Render-CompactLog}
+}
 function Render-CompactLog {
     if (-not $log -or $log.IsDisposed -or -not $headerLog -or $headerLog.IsDisposed) { return }
 
@@ -4815,7 +4844,11 @@ function Render-CompactLog {
     $visible = @()
     foreach ($item in $script:eventBlocks) { $visible += [string]$item }
     if (-not [string]::IsNullOrWhiteSpace($script:currentEvent)) { $visible += [string]$script:currentEvent }
-    if ($visible.Count -gt 6) { $visible = $visible[($visible.Count-6)..($visible.Count-1)] }
+    $visibleLimit=Get-Rc1JournalVisibleRowCapacity
+    $script:ownerLastJournalCapacity=$visibleLimit
+    if ($visible.Count -gt $visibleLimit) {
+        $visible = $visible[($visible.Count-$visibleLimit)..($visible.Count-1)]
+    }
 
     $parts = New-Object System.Collections.Generic.List[string]
     foreach ($item in $visible) {
@@ -5999,6 +6032,7 @@ $form.Add_ResizeBegin({
 $form.Add_ResizeEnd({
     $script:uiInteracting = $false
     Layout-LogScrollbars
+    if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
     try { $log.RefreshViewport() } catch {}
     Refresh-Window
 })

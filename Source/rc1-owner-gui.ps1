@@ -247,6 +247,7 @@ function Start-RdcOwnerGui {
  $script:ownerLastLogEpoch=-1
  # Owner-only compact activity journal; legacy 1.5.18 renderer remains spaced.
  $script:ownerCompactJournal=$true
+ $script:ownerLastJournalCapacity=-1
  $script:ownerLastToolFault=$false
  $script:ownerLastRemoteLinkState=''
  if($script:ownerObservedMode){

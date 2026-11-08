@@ -134,10 +134,21 @@ Check ($new.Contains("Color-LogToken "+'$headerLog '+"'🔌' "+'$statusGreen') -
  $new.Contains('Color-HeaderSemantics $headerLog $headerLog.TextLength')) 'Connection green semantic color unchanged; only spacing changed'
 # Ensure the specific original classic style pipeline has not been replaced.
 Check ($old.Contains('function Color-HeaderSemantics') -and $new.Contains('function Color-HeaderSemantics')) 'Full 1.5.18 header coloring function available'
-$pattern='(?s)(function Color-HeaderSemantics.*?)(?=function Render-CompactLog)'
-$oldColors=([regex]::Match($old,$pattern).Groups[1].Value -replace "`r`n","`n").Trim()
-$newColors=([regex]::Match($new,$pattern).Groups[1].Value -replace "`r`n","`n").Trim()
-Check ($oldColors.Length -gt 300 -and $newColors -ceq $oldColors) 'Original 1.5.18 semantic coloring rules identical'
+# Compare only the actual function body. A new neighboring helper must not
+# invalidate this legacy-provenance check without changing the colorizer.
+$oldTokens=$null;$oldErrors=$null;$newTokens=$null;$newErrors=$null
+$oldAst=[Management.Automation.Language.Parser]::ParseInput($old,[ref]$oldTokens,[ref]$oldErrors)
+$newAst=[Management.Automation.Language.Parser]::ParseInput($new,[ref]$newTokens,[ref]$newErrors)
+$findColorizer={param($node)
+ $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+ $node.Name -ceq 'Color-HeaderSemantics'
+}
+$oldColorNode=$oldAst.Find($findColorizer,$true)
+$newColorNode=$newAst.Find($findColorizer,$true)
+$oldColors=if($oldColorNode){($oldColorNode.Extent.Text -replace "`r`n","`n").Trim()}else{''}
+$newColors=if($newColorNode){($newColorNode.Extent.Text -replace "`r`n","`n").Trim()}else{''}
+Check ($oldErrors.Count -eq 0 -and $newErrors.Count -eq 0 -and
+ $oldColors.Length -gt 300 -and $newColors -ceq $oldColors) 'Original 1.5.18 semantic coloring rules identical'
 Write-Output ('FULL_ORIGINAL_HEADER_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}
 exit 0
