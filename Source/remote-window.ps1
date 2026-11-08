@@ -3453,13 +3453,24 @@ $form = New-Object Windows.Forms.Form
 $form.Text = 'RDC Relay'
 $baseWindowWidth = 1074
 $baseWindowHeight = 900
-$paneMinHeightPreferred = 125
+$paneMinHeightPreferred = 125 # Header baseline; preserve its original minimum.
+# Reserve one additional full activity-log line beneath the last visible row
+# at the pane's smallest size. Measure it with the actual Consolas 10 font,
+# rather than assuming a fixed pixel count on different Windows DPI settings.
+$activityLineFont=New-Object Drawing.Font('Consolas',10)
+try{
+    $activityLineHeight=[Windows.Forms.TextRenderer]::MeasureText(
+        'Ag',$activityLineFont,(New-Object Drawing.Size(1000,1000)),
+        ([Windows.Forms.TextFormatFlags]::NoPadding -bor [Windows.Forms.TextFormatFlags]::SingleLine)
+    ).Height
+}finally{$activityLineFont.Dispose()}
+$activityPaneMinHeightPreferred=$paneMinHeightPreferred+$(if($OwnerGui){$activityLineHeight}else{0})
 $startupScreen = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position)
 $startupWorkArea = $startupScreen.WorkingArea
 $windowWidth = [Math]::Min($baseWindowWidth,$startupWorkArea.Width)
 $windowHeight = [Math]::Min($baseWindowHeight,$startupWorkArea.Height)
 $form.Size = New-Object Drawing.Size($windowWidth,$windowHeight)
-$preferredMinimumHeight = 78 + 38 + (2 * $paneMinHeightPreferred) + 7 + 48
+$preferredMinimumHeight = 78 + 38 + $paneMinHeightPreferred + $activityPaneMinHeightPreferred + 7 + 48
 $minimumWindowHeight = [Math]::Min($windowHeight,$preferredMinimumHeight)
 $form.MinimumSize = New-Object Drawing.Size($windowWidth,$minimumWindowHeight)
 $form.MaximumSize = New-Object Drawing.Size($windowWidth,10000)
@@ -3724,7 +3735,7 @@ $contentHost.Margin = New-Object Windows.Forms.Padding(0)
 $contentHost.Padding = New-Object Windows.Forms.Padding(0)
 $contentHost.ColumnCount = 1
 $contentHost.RowCount = 2
-$activityDefaultHeight = $paneMinHeightPreferred
+$activityDefaultHeight = $activityPaneMinHeightPreferred
 [void]$contentHost.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent,100)))
 [void]$contentHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent,100)))
 [void]$contentHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,$activityDefaultHeight)))
@@ -3949,13 +3960,20 @@ function Stop-LogResizeInteraction {
     try { $log.RefreshViewport() } catch {}
 }
 function Get-EffectivePaneMinHeight {
-    $available = [Math]::Max(1,$contentHost.ClientSize.Height)
-    $half = [Math]::Max(48,[int][Math]::Floor($available / 2))
-    return [Math]::Min($paneMinHeightPreferred,$half)
+    $available=[Math]::Max(1,$contentHost.ClientSize.Height)
+    # At normal window size keep the header's original 125px minimum.
+    # On constrained displays allow both panes to degrade symmetrically.
+    $headerReserve=[Math]::Min($paneMinHeightPreferred,
+        [Math]::Max(48,[int][Math]::Floor($available/2)))
+    return [Math]::Min($activityPaneMinHeightPreferred,
+        [Math]::Max(48,$available-$headerReserve))
 }
 function Get-ClampedActivityPaneHeight([double]$requestedHeight) {
-    $paneMinHeight = Get-EffectivePaneMinHeight
-    $maxHeight = [Math]::Max($paneMinHeight,($contentHost.ClientSize.Height - $paneMinHeight))
+    $paneMinHeight=Get-EffectivePaneMinHeight
+    $headerMinHeight=[Math]::Min($paneMinHeightPreferred,
+        [Math]::Max(48,$contentHost.ClientSize.Height-$paneMinHeight))
+    $maxHeight=[Math]::Max($paneMinHeight,
+        ($contentHost.ClientSize.Height-$headerMinHeight))
     return [Math]::Max($paneMinHeight,[Math]::Min($maxHeight,$requestedHeight))
 }
 function Set-ActivityPaneHeight([double]$requestedHeight) {
