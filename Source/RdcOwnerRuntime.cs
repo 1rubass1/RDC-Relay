@@ -130,6 +130,11 @@ public sealed class RdcOwnerRuntime : IDisposable {
  bool observedMode=false,managedMode=false,reopenAfterModeChange=false,autoStartPending=false;
  DateTime nextAutoStartUtc=DateTime.MinValue;
  RdcOwnerManagedProcess managedProcess=null;
+ // Logout is a separate, bounded private Job; never execute in the GUI or
+ // borrow the running Remote's process tree or credential files.
+ RdcOwnerManagedProcess accountLogoutProcess=null;
+ DateTime accountLogoutDeadlineUtc=DateTime.MinValue;
+ bool accountSwitchFaultLatched=false;
  readonly List<string> managedLogs=new List<string>();
  string managedLogPath="",managedLogFragment="",managedState="Disconnected",managedDetail="";
  string managedAccount="",managedDeviceName="",managedDeviceId="";
@@ -270,6 +275,11 @@ public sealed class RdcOwnerRuntime : IDisposable {
        MessageBoxIcon.Question)!=DialogResult.Yes)return;
     lock(gate){
      if(exitRequested)return;
+     if(accountLogoutProcess!=null){
+      MessageBox.Show("Смена аккаунта ещё выполняется. Дождитесь результата.",
+       "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+      return;
+     }
      if(managedMode && managedProcess!=null && managedProcess.Running){
       try{
        if(!managedProcess.StopOwnedOnly(10000)){
@@ -298,7 +308,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
      // idle exit, never accepting PID/name-based termination from Setup.
      if(idleUpgradeSignal!=null && idleUpgradeSignal.WaitOne(0) && !exitRequested){
       try{
-       if(managedMode && !observedMode &&
+       if(managedMode && !observedMode && accountLogoutProcess==null &&
+          !accountSwitchFaultLatched &&
           (managedProcess==null || !managedProcess.Running) &&
           !AnotherDesktopCommanderRemote() && !AnotherLegacyShell()){
         autoStartPending=false;exitRequested=true;closeGeneration++;
@@ -310,6 +321,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
       reopenAfterModeChange=false;OpenGui();
      }
      if(managedMode){
+      if(accountLogoutProcess!=null && !accountSwitchFaultLatched)AdvanceManagedAccountSwitch();
       RefreshManagedRemote();
       if(autoStartPending && guiAuthenticated && guiState=="CONNECTED" &&
        !reopenAfterModeChange && DateTime.UtcNow>=nextAutoStartUtc)
@@ -388,11 +400,12 @@ public sealed class RdcOwnerRuntime : IDisposable {
  bool RemoveOwnedManagedLogs(){
   if(!managedMode)return true;
   if(managedProcess!=null && managedProcess.Running)return false;
+  if(accountLogoutProcess!=null && accountLogoutProcess.Running)return false;
   foreach(string path in managedLogs){
    try{
     if(Path.GetDirectoryName(path)!=stateRoot ||
        !System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(path),
-        @"^remote-[0-9a-f]{32}\.log$",System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+        @"^(?:remote|logout)-[0-9a-f]{32}\.log$",System.Text.RegularExpressions.RegexOptions.CultureInvariant))
      return false;
     CheckPath(path);
     if(File.Exists(path))File.Delete(path);
@@ -519,8 +532,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
  // transition away from an EXTERNAL Remote; failure preserves the GUI.
  public bool TryAutoStartManagedRemote(){
   lock(gate){
-   if(disposed||exitRequested||observedMode||!managedMode||
-      !guiAuthenticated||guiState!="CONNECTED"||reopenAfterModeChange)return false;
+   if(disposed||exitRequested||observedMode||!managedMode||accountLogoutProcess!=null||
+      accountSwitchFaultLatched||!guiAuthenticated||guiState!="CONNECTED"||reopenAfterModeChange)return false;
    if(managedProcess!=null&&managedProcess.Running){autoStartPending=false;return true;}
    try{StartManagedRemote();autoStartPending=false;return true;}
    catch(Exception problem){
@@ -611,7 +624,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
   }catch{throw new InvalidOperationException("RC1_EXTERNAL_REMOTE_SCAN_UNAVAILABLE");}
  }
  void StartManagedRemote(){
-  if(!managedMode||observedMode||exitRequested)
+  if(!managedMode||observedMode||exitRequested||accountLogoutProcess!=null)
    throw new InvalidOperationException("RC1_NOT_MANAGED");
   if(managedProcess!=null && managedProcess.Running)
    throw new InvalidOperationException("RC1_OWNED_REMOTE_ALREADY_RUNNING");
@@ -627,6 +640,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    child.Start(npx,"--yes @wonderwhy-er/desktop-commander@0.2.52 remote",sourceRoot,file);
    if(managedProcess!=null)managedProcess.Dispose();
    managedProcess=child;managedLogPath=file;managedLogs.Add(file);managedLogOffset=0;
+   accountSwitchFaultLatched=false;
    toolJournal.Reset();
    managedLogFragment="";managedAccount="";managedDeviceName="";managedDeviceId="";
    managedBornUtcTicks=child.BornUtcTicks;managedBannerArt.Clear();managedBannerScanned=0;
@@ -636,6 +650,84 @@ public sealed class RdcOwnerRuntime : IDisposable {
    autoStartPending=false;
    Append("remote","new Host-owned Remote launched in verified private Job");
   }catch{child.Dispose();throw;}
+ }
+ // Only Host-owned Remote can be switched. The old Job must be fully
+ // drained before official logout: never revoke a borrowed/adopted session.
+ // Running logout gets its own private Job and the Host stays alive.
+ void BeginManagedAccountSwitch(){
+  if(disposed||exitRequested||observedMode||!managedMode||trialRoot!=null||
+     accountLogoutProcess!=null||accountSwitchFaultLatched||
+     managedProcess==null||!managedProcess.Running||managedState!="Ready")
+   throw new InvalidOperationException("RC1_ACCOUNT_SWITCH_NOT_OWNED_READY");
+  string npx=ResolvePinnedNpx();
+  if(AnotherLegacyShell())
+   throw new InvalidOperationException("RC1_ACCOUNT_SWITCH_LEGACY_SHELL");
+  bool stopped=false;
+  try{
+   StopManagedRemote();
+   stopped=true;
+   // The shared local device authorization must not be revoked if ANY other
+   // Remote or legacy GUI remains. Failure leaves this owned Remote stopped.
+   if(AnotherDesktopCommanderRemote()||AnotherLegacyShell())
+    throw new InvalidOperationException("RC1_ACCOUNT_SWITCH_EXTERNAL_REMOTE");
+   string file=Path.Combine(stateRoot,"logout-"+Guid.NewGuid().ToString("N")+".log");
+   CheckPath(file);
+   managedLogs.Add(file); // account for a partially created private log too
+   var worker=new RdcOwnerManagedProcess();
+   try{
+    worker.Start(npx,"--yes @wonderwhy-er/desktop-commander@0.2.52 remote --logout",sourceRoot,file);
+    accountLogoutProcess=worker;
+   }catch{worker.Dispose();throw;}
+   accountLogoutDeadlineUtc=DateTime.UtcNow.AddSeconds(60);
+   managedState="AuthPending";managedDetail="Official device logout in progress";
+   remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
+   Append("remote","owner confirmed account change; private logout Job started");
+  }catch(Exception failure){
+   if(stopped){
+    accountSwitchFaultLatched=true;autoStartPending=false;
+    managedState="Fault";managedDetail="Account switch refused; owned Remote remains stopped";
+    remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
+    Append("remote","account change did not start: "+failure.GetType().Name);
+   }
+   throw;
+  }
+ }
+ void AdvanceManagedAccountSwitch(){
+  if(accountLogoutProcess==null||accountSwitchFaultLatched)return;
+  bool logoutConfirmed=false;
+  try{
+   int code;
+   if(accountLogoutProcess.TryGetCompletedExitCode(out code)){
+    accountLogoutProcess.Dispose();accountLogoutProcess=null;
+    if(code!=0)throw new InvalidOperationException("RC1_ACCOUNT_LOGOUT_NONZERO_EXIT");
+    logoutConfirmed=true;
+    Append("remote","official logout succeeded; starting new browser pairing");
+    StartManagedRemote();
+    Append("remote","fresh Host-owned Remote started after confirmed logout");
+    return;
+   }
+   if(DateTime.UtcNow<accountLogoutDeadlineUtc)return;
+   if(!accountLogoutProcess.StopOwnedOnly(10000))
+    throw new TimeoutException("RC1_ACCOUNT_LOGOUT_JOB_SURVIVORS");
+   accountLogoutProcess.Dispose();accountLogoutProcess=null;
+   throw new TimeoutException("RC1_ACCOUNT_LOGOUT_TIMEOUT");
+  }catch(Exception failure){
+   // Stop only this newly-created logout Job; never kill by PID/name.
+   // If ownership cannot be verified, retain the handle and deny actions.
+   if(accountLogoutProcess!=null){
+    try{
+     if(accountLogoutProcess.StopOwnedOnly(10000)){
+      accountLogoutProcess.Dispose();accountLogoutProcess=null;
+     }
+    }catch{}
+   }
+   accountSwitchFaultLatched=true;autoStartPending=false;
+   managedState="Fault";
+   managedDetail=logoutConfirmed?"Authorization revoked; Remote restart failed":
+     "Logout not confirmed; Remote remains stopped";
+   remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
+   Append("remote","account switch failed: "+failure.GetType().Name);
+  }
  }
  void StopManagedRemote(){
   if(!managedMode||managedProcess==null || !managedProcess.HasStarted)
@@ -852,6 +944,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
    currentState=="Connecting"||currentState=="AuthPending";
  }
  void RefreshManagedRemote(){
+  if(accountLogoutProcess!=null||accountSwitchFaultLatched)return;
   if(!managedMode||managedProcess==null||!managedProcess.HasStarted)return;
   if(!managedProcess.Running){
    if(managedState!="Disconnected"){
@@ -992,10 +1085,13 @@ public sealed class RdcOwnerRuntime : IDisposable {
    {"capabilities",new Dictionary<string,object>{
      {"deviceManagementLink",observedMode||managedMode},{"deviceVerificationLink",false},
      {"sanitizedJournal",true},{"about",true},
-     {"startRemote",managedMode && (managedProcess==null||!managedProcess.Running)},
-     {"stopRemote",managedMode && managedProcess!=null&&managedProcess.Running},
-     {"reconnectRemote",managedMode && managedProcess!=null&&managedProcess.Running},
-     {"switchAccount",false},{"update",false},{"fullExit",managedMode},
+     {"startRemote",managedMode && accountLogoutProcess==null && (managedProcess==null||!managedProcess.Running)},
+     {"stopRemote",managedMode && accountLogoutProcess==null && managedProcess!=null&&managedProcess.Running},
+     {"reconnectRemote",managedMode && accountLogoutProcess==null && managedProcess!=null&&managedProcess.Running},
+     {"switchAccount",managedMode && !observedMode && trialRoot==null &&
+       accountLogoutProcess==null && !accountSwitchFaultLatched &&
+       managedProcess!=null && managedProcess.Running && managedState=="Ready"},
+     {"update",false},{"fullExit",managedMode && accountLogoutProcess==null},
      {"reason",observedMode?"ADOPTED_REMOTE_READ_ONLY":managedMode?"KERNEL_JOB_OWNED_ONLY":"NO_OWNED_REMOTE"}
    }}
   };
@@ -1075,10 +1171,11 @@ public sealed class RdcOwnerRuntime : IDisposable {
     // snapshot or tray discovery, can authorize a managed Remote action.
     if(RdcOwnerWire.String(request,"userConfirmed")!="YES")
      return Error(requestId,"REMOTE_ACTION_USER_CONFIRMATION_REQUIRED");
-    if(action=="SWITCH_ACCOUNT"||action=="UPDATE")
-     return Error(requestId,"REMOTE_ACTION_NOT_SAFELY_IMPLEMENTED");
+    if(accountLogoutProcess!=null)return Error(requestId,"ACCOUNT_CHANGE_IN_PROGRESS");
+    if(action=="UPDATE")return Error(requestId,"REMOTE_ACTION_NOT_SAFELY_IMPLEMENTED");
     try{
-     if(action=="START")StartManagedRemote();
+     if(action=="SWITCH_ACCOUNT")BeginManagedAccountSwitch();
+     else if(action=="START")StartManagedRemote();
      else if(action=="STOP")StopManagedRemote();
      else if(action=="RECONNECT"){
       StopManagedRemote();
@@ -1116,6 +1213,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
     filesClean=RemoveOwnedManagedLogs() && ticketStore.RevokeOnlyOwned() && RemoveEmptyOwnedRunRoot();
    }
    if(managedProcess!=null)managedProcess.Dispose();
+   if(accountLogoutProcess!=null)accountLogoutProcess.Dispose();
    try{singleton.ReleaseMutex();}catch{}
    singleton.Dispose();
    if(trialRoot!=null){

@@ -61,9 +61,9 @@ $pilot=[ordered]@{
  status='OWNER_FULL_RC1';installable=$true;publishable=$false;
  liveRemoteEnabled=$true;ownerMode='FULL_HOST_GUI_RC1';
  stableManifestEnabled=$false;autoUpdateEnabled=$false;
- accountMutationEnabled=$false;remoteStopEnabled=$true;
+ accountMutationEnabled=$true;remoteStopEnabled=$true;
  remoteLaunchEnabled=$true;separateOwnerApprovalRequired=$false;
- reason='User-approved full Host/GUI candidate: owned kernel Job only; existing Remote Adopted read-only'
+ reason='Owner-confirmed logout and new pairing only for Host-owned Remote; existing Remote remains Adopted read-only'
 }
 [IO.File]::WriteAllText((Join-Path $payload 'rc1-candidate.json'),
  ($pilot|ConvertTo-Json -Depth 5),(New-Object Text.UTF8Encoding($false)))

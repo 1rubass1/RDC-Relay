@@ -23,8 +23,9 @@ try{
  $owner=Get-Content -LiteralPath (Join-Path $src 'rc1-owner-gui.ps1') -Raw -Encoding UTF8
  Check ($owner.Contains('$finish.Enabled=$script:ownerManagedMode') -and
    $owner.Contains('$accountButton.Enabled=$true') -and
-   $owner.Contains('$switchAccountItem.Enabled=$false') -and
-   $owner.Contains('$reconnectItem.Enabled=$false')) 'Adopted remains blocked; Managed mode gets Host-authorized actions'
+   $owner.Contains('$script:ownerCanSwitchAccount=[bool]$initialCapabilities.switchAccount') -and
+   $owner.Contains('$switchAccountItem.Enabled=$script:ownerCanSwitchAccount') -and
+   $owner.Contains('$reconnectItem.Enabled=$false')) 'Adopted blocked and Managed account switch follows Host capability'
  Check ($owner.Contains('$remoteSnapshot=$snapshot.remote') -and $owner.Contains('RC1_REMOTE_MODE_MISMATCH') -and
         $owner.Contains('$remoteSnapshot.logStreamEpoch') -and $owner.Contains('$remoteSnapshot.logCursor') -and
         $owner.Contains('Add-CompletedEvent') -and $owner.Contains('Reset-CompactLogSession')) 'GUI rehydrates bounded Host snapshot in exact observer/fake mode'

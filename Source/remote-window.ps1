@@ -5732,7 +5732,20 @@ $accountButton.Add_Click({
     $accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))
 })
 $switchAccountItem.Add_Click({
-    if ($OwnerGui) { return } # Credentials are not managed by this release.
+    if ($OwnerGui) {
+        if (-not $script:ownerManagedMode -or -not $script:ownerCanSwitchAccount) { return }
+        $message = 'Смена аккаунта разорвёт текущее удалённое соединение и отзовёт авторизацию этого устройства.' + $nl + $nl +
+            'После выхода из аккаунта RDC Relay запустит новый Remote и предложит авторизоваться в браузере.' + $nl + $nl +
+            'Войдите в тот же аккаунт Desktop Commander, который подключён в ChatGPT.' + $nl + $nl + 'Продолжить?'
+        $answer = [Windows.Forms.MessageBox]::Show($message,'Сменить аккаунт Desktop Commander',
+            [Windows.Forms.MessageBoxButtons]::YesNo,[Windows.Forms.MessageBoxIcon]::Warning)
+        if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
+        $script:ownerCanSwitchAccount=$false
+        $switchAccountItem.Enabled=$false
+        $script:ownerQueuedAction='SWITCH_ACCOUNT'
+        Set-State 'Смена аккаунта…' 'Host проверяет владение Remote и выполняет штатный выход.' ([Drawing.Color]::Khaki)
+        return
+    }
     Switch-RemoteAccount
 })
 $reconnectItem.Add_Click({

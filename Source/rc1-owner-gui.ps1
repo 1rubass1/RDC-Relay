@@ -216,7 +216,8 @@ function Start-RdcOwnerGui {
  $accountButton.Enabled=$true
  $quotaAuthItem.Enabled=$script:ownerRealMode
  $accountButton.AccessibleDescription='Аккаунт: переход к управлению устройствами без изменения Remote.'
- $switchAccountItem.Enabled=$false
+ $script:ownerCanSwitchAccount=[bool]$initialCapabilities.switchAccount
+ $switchAccountItem.Enabled=$script:ownerCanSwitchAccount
  $reconnectItem.Enabled=$false
  $initialCapabilities=$handshake.payload.capabilities
  if(-not $initialCapabilities){throw 'RC1_OWNER_CAPABILITIES_MISSING'}
@@ -293,6 +294,8 @@ function Start-RdcOwnerGui {
      $devicesItem.Enabled=[bool]$snapshot.capabilities.deviceManagementLink
      $verifyDeviceItem.Enabled=[bool]$snapshot.capabilities.deviceVerificationLink
      $openLogItem.Enabled=[bool]$snapshot.capabilities.sanitizedJournal
+     $script:ownerCanSwitchAccount=[bool]$snapshot.capabilities.switchAccount
+     $switchAccountItem.Enabled=$script:ownerCanSwitchAccount
      if($script:ownerManagedMode){
       $script:ownerCanStart=[bool]$snapshot.capabilities.startRemote
       $script:ownerCanStop=[bool]$snapshot.capabilities.stopRemote
@@ -461,7 +464,9 @@ function Start-RdcOwnerGui {
      if(-not $script:ownerRequestedAction -or
         [string]$reply.payload.action -cne $script:ownerRequestedAction -or
         -not [bool]$reply.payload.success){throw 'RC1_REMOTE_ACK_MISMATCH'}
-     Add-CompletedEvent ('Host подтвердил выполнение: '+$script:ownerRequestedAction)
+     if($script:ownerRequestedAction -ceq 'SWITCH_ACCOUNT'){
+      Add-CompletedEvent 'Host принял смену аккаунта; ожидается штатный выход и новый вход.'
+     }else{Add-CompletedEvent ('Host подтвердил выполнение: '+$script:ownerRequestedAction)}
      $script:ownerNextVerb='GET_SNAPSHOT'
     }elseif([string]$reply.type -eq 'NAVIGATION'){
      $route=[string]$reply.payload.route
@@ -492,6 +497,8 @@ function Start-RdcOwnerGui {
      $script:ownerCanStart=$false
      $script:ownerCanStop=$false
      $script:ownerCanReconnect=$false
+     $script:ownerCanSwitchAccount=$false
+     $switchAccountItem.Enabled=$false
      $finish.Enabled=$false
      $reconnectItem.Enabled=$false
      Set-DividerWorkState $false

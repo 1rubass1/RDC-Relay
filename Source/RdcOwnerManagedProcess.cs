@@ -46,6 +46,8 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
  static extern bool CloseHandle(IntPtr handle);
  [DllImport("kernel32.dll",SetLastError=true)]
  static extern bool TerminateProcess(IntPtr process,uint exitCode);
+ [DllImport("kernel32.dll",SetLastError=true)]
+ static extern bool GetExitCodeProcess(IntPtr process,out uint exitCode);
  IntPtr job=IntPtr.Zero,process=IntPtr.Zero;
  int pid;long born;int session;
  bool started,disposed,stopRequested;
@@ -90,7 +92,8 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
   // Only the verified Node npx.cmd shim may be used to start pinned Remote.
   // No arbitrary shell command or user string enters this launcher.
   if(!String.Equals(Path.GetFileName(executable),"npx.cmd",StringComparison.OrdinalIgnoreCase)||
-     arguments!="--yes @wonderwhy-er/desktop-commander@0.2.52 remote")
+     (arguments!="--yes @wonderwhy-er/desktop-commander@0.2.52 remote" &&
+      arguments!="--yes @wonderwhy-er/desktop-commander@0.2.52 remote --logout"))
    throw new InvalidOperationException("RC1_OWNED_PIN_REFUSED");
   string cmdExe=Path.Combine(Environment.SystemDirectory,"cmd.exe");
   SafePath(cmdExe);
@@ -136,6 +139,23 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
    }
    if(handle!=IntPtr.Zero)CloseHandle(handle);
   }
+ }
+ // A complete command requires both the cmd.exe root's exit status and zero
+ // live descendants in its private Job. Never infer success from PID absence.
+ public bool TryGetCompletedExitCode(out int exitCode) {
+  exitCode=0;
+  if(disposed||!started||job==IntPtr.Zero||process==IntPtr.Zero)
+   throw new InvalidOperationException("RC1_OWNED_COMPLETION_BOUNDARY");
+  JOB_ACCOUNTING a;
+  if(!Accounting(out a))throw new InvalidOperationException("RC1_OWNED_JOB_QUERY_FAILED");
+  if(a.active>0)return false;
+  if(WaitForSingleObject(process,0)!=0)
+   throw new InvalidOperationException("RC1_OWNED_ROOT_EXIT_UNVERIFIED");
+  uint nativeCode;
+  if(!GetExitCodeProcess(process,out nativeCode))
+   throw new Win32Exception(Marshal.GetLastWin32Error(),"RC1_OWNED_EXIT_CODE_FAILED");
+  exitCode=unchecked((int)nativeCode);
+  return true;
  }
  // Explicit GUI-confirmed stop: kernel private Job contains only descendants
  // of this newly-created suspended root. No process name, HWND, or PID kill.
