@@ -3453,7 +3453,29 @@ $form = New-Object Windows.Forms.Form
 $form.Text = 'RDC Relay'
 $baseWindowWidth = 1074
 $baseWindowHeight = 900
-$paneMinHeightPreferred = 125 # Unchanged upper-pane and legacy minimum.
+$paneMinHeightPreferred = 125 # Legacy and activity baseline are unchanged.
+function Get-Rc1HeaderBannerMinimum {
+    # The pinned Remote header's Desktop Commander banner occupies six
+    # compact rows. Keep all six visible when the owner header is collapsed.
+    # Include its 7px draggable divider and a tiny 2px bottom breathing room.
+    $probe=New-Object Windows.Forms.RichTextBox
+    $font=New-Object Drawing.Font('Consolas',9)
+    try{
+        $probe.Font=$font
+        $probe.BorderStyle=[Windows.Forms.BorderStyle]::None
+        $probe.WordWrap=$false
+        $probe.Text="Ag`nAg"
+        [void]$probe.Handle
+        $linePitch=$probe.GetPositionFromCharIndex(3).Y -
+                   $probe.GetPositionFromCharIndex(0).Y
+        if($linePitch -lt 8 -or $linePitch -gt 50){throw 'RC1_INVALID_HEADER_LINE_PITCH'}
+        return [Math]::Max(64,(6*$linePitch)+7+2)
+    }finally{
+        $probe.Dispose()
+        $font.Dispose()
+    }
+}
+$headerPaneMinHeightPreferred=if($OwnerGui){Get-Rc1HeaderBannerMinimum}else{$paneMinHeightPreferred}
 function Get-Rc1ActivityRowReserve([int]$baselineHeight) {
     # The old 125px pane ALREADY contains some lower slack. Measure the
     # actual RichEdit line advance and add only the missing part of a row.
@@ -3486,7 +3508,7 @@ $startupWorkArea = $startupScreen.WorkingArea
 $windowWidth = [Math]::Min($baseWindowWidth,$startupWorkArea.Width)
 $windowHeight = [Math]::Min($baseWindowHeight,$startupWorkArea.Height)
 $form.Size = New-Object Drawing.Size($windowWidth,$windowHeight)
-$preferredMinimumHeight = 78 + 38 + $paneMinHeightPreferred + $activityPaneMinHeightPreferred + 7 + 48
+$preferredMinimumHeight = 78 + 38 + $headerPaneMinHeightPreferred + $activityPaneMinHeightPreferred + 7 + 48
 $minimumWindowHeight = [Math]::Min($windowHeight,$preferredMinimumHeight)
 $form.MinimumSize = New-Object Drawing.Size($windowWidth,$minimumWindowHeight)
 $form.MaximumSize = New-Object Drawing.Size($windowWidth,10000)
@@ -3977,16 +3999,16 @@ function Stop-LogResizeInteraction {
 }
 function Get-EffectivePaneMinHeight {
     $available=[Math]::Max(1,$contentHost.ClientSize.Height)
-    # At normal window size keep the header's original 125px minimum.
+    # Keep the six-line Owner logo (or legacy 125px header) visible.
     # On constrained displays allow both panes to degrade symmetrically.
-    $headerReserve=[Math]::Min($paneMinHeightPreferred,
+    $headerReserve=[Math]::Min($headerPaneMinHeightPreferred,
         [Math]::Max(48,[int][Math]::Floor($available/2)))
     return [Math]::Min($activityPaneMinHeightPreferred,
         [Math]::Max(48,$available-$headerReserve))
 }
 function Get-ClampedActivityPaneHeight([double]$requestedHeight) {
     $paneMinHeight=Get-EffectivePaneMinHeight
-    $headerMinHeight=[Math]::Min($paneMinHeightPreferred,
+    $headerMinHeight=[Math]::Min($headerPaneMinHeightPreferred,
         [Math]::Max(48,$contentHost.ClientSize.Height-$paneMinHeight))
     $maxHeight=[Math]::Max($paneMinHeight,
         ($contentHost.ClientSize.Height-$headerMinHeight))
@@ -6430,7 +6452,11 @@ if ($SelfTest) {
     if ($form.Width -ne $testFormWidth -or $form.Height -ne $testFormHeight) { throw 'Pane resize changed whole window size' }
     if ($contentHost.RowStyles[1].Height -lt $testPaneMin) { throw 'Activity pane minimum height failed' }
     Set-ActivityPaneHeight 99999
-    if (($contentHost.ClientSize.Height - $contentHost.RowStyles[1].Height) -lt ($testPaneMin-1)) { throw 'Header minimum height clamp failed' }
+    $testHeaderMin=[Math]::Min($headerPaneMinHeightPreferred,
+        [Math]::Max(48,$contentHost.ClientSize.Height-$testPaneMin))
+    if (($contentHost.ClientSize.Height - $contentHost.RowStyles[1].Height) -lt ($testHeaderMin-1)) {
+        throw 'Header banner minimum height clamp failed'
+    }
     Set-ActivityPaneHeight $testPaneHeight
     if ($log.GetType().Name -ne 'RdcLogBox') { throw 'Activity log control missing' }
     if ($logHost.GetType().Name -ne 'RdcBufferedPanel') { throw 'Buffered log viewport missing' }
