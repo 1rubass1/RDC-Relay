@@ -21,7 +21,9 @@ foreach($name in @('Get-Rc1ActivityRowReserve','Get-Rc1JournalVisibleRowCapacity
 }
 function Limit-UiEvent([string]$text){return $text}
 $OwnerGui=$true
-$script:ownerTextFontFamily='Segoe UI Emoji'
+$script:ownerTextFontFamily='Consolas'
+$script:ownerEmojiFontFamily='Segoe UI Emoji'
+$script:ownerEmojiEnabled=$true
 $script:ownerCompactJournal=$true
 $script:eventBlocks=New-Object System.Collections.ArrayList
 $script:ownerLastJournalCapacity=-1
@@ -29,7 +31,7 @@ $reserve=Get-Rc1ActivityRowReserve 125
 $linePitch=[int]$script:ownerJournalLinePitch
 $minOwner=125+$reserve
 $log=[pscustomobject]@{IsDisposed=$false;ClientSize=(New-Object Drawing.Size(800,($minOwner-17)))}
-Check ($minOwner -eq (8*$linePitch+17) -and $linePitch -eq 17) 'on STARMER Emoji 10pt, 153px minimum yields 17px pitch and six events'
+Check ($minOwner -eq (8*$linePitch+17) -and $linePitch -eq 17) 'on STARMER mixed Consolas/Emoji, 153px minimum yields 17px safe pitch and six events'
 Check ((Get-Rc1JournalVisibleRowCapacity) -eq 6) 'minimum fits exactly six event lines plus top and bottom row'
 $log.ClientSize=New-Object Drawing.Size(800,($minOwner-17+3*$linePitch))
 Check ((Get-Rc1JournalVisibleRowCapacity) -eq 9) 'three row-pitches of growth show three more entries'

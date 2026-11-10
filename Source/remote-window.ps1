@@ -3454,9 +3454,11 @@ $form.Text = 'RDC Relay'
 $baseWindowWidth = 1074
 $baseWindowHeight = 900
 $paneMinHeightPreferred = 125 # Legacy and activity baseline are unchanged.
-# Owner font trial: one private preset for both RichEdit controls and metric probes.
-# Future UI font selection may update this single source of truth.
-$script:ownerTextFontFamily=if($OwnerGui){'Segoe UI Emoji'}else{'Consolas'}
+# G98: keep fixed-width line art and text; only emoji spans use a fallback font.
+# A future Help/Journal preference can toggle this Owner-only text preset.
+$script:ownerTextFontFamily='Consolas'
+$script:ownerEmojiFontFamily='Segoe UI Emoji'
+$script:ownerEmojiEnabled=[bool]$OwnerGui
 function Get-Rc1HeaderBannerMinimum {
     # The pinned Remote header's Desktop Commander banner occupies six
     # compact rows. Keep all six visible when the owner header is collapsed.
@@ -3493,6 +3495,17 @@ function Get-Rc1ActivityRowReserve([int]$baselineHeight) {
         [void]$probe.Handle
         $linePitch=$probe.GetPositionFromCharIndex(3).Y -
                    $probe.GetPositionFromCharIndex(0).Y
+        if($OwnerGui -and $script:ownerEmojiEnabled){
+            # Inline emoji may increase row height even with Consolas body text.
+            # Measure the taller font as an upper bound for event capacity.
+            $emojiFont=New-Object Drawing.Font($script:ownerEmojiFontFamily,10)
+            try {
+                $probe.Font=$emojiFont
+                $emojiPitch=$probe.GetPositionFromCharIndex(3).Y -
+                            $probe.GetPositionFromCharIndex(0).Y
+                $linePitch=[Math]::Max($linePitch,$emojiPitch)
+            } finally { $emojiFont.Dispose() }
+        }
         if($linePitch -lt 8 -or $linePitch -gt 50){throw 'RC1_INVALID_LOG_LINE_PITCH'}
         # Both minimum-pane and journal-capacity calculations use the same
         # measured RichEdit line pitch.
@@ -4760,6 +4773,22 @@ function Color-LogToken([RdcLogBox]$target,[string]$token,[Drawing.Color]$color)
         $pos += $token.Length
     }
 }
+function Apply-OwnerEmojiFont([Windows.Forms.RichTextBox]$target) {
+    # In WinForms RichEdit the font for every character can be chosen without
+    # changing its value, color or the fixed-width surrounding paragraphs.
+    # Do not format U+2500..U+259F line art: that keeps the six-row logo intact.
+    if(-not $script:ownerEmojiEnabled -or -not $target -or $target.TextLength -eq 0){return}
+    $all=$target.Text
+    $emojiRuns=[Regex]::Matches($all,'(?:[\uD83C-\uDBFF][\uDC00-\uDFFF]|[\u2300-\u23FF\u2600-\u27BF])\uFE0F?')
+    if($emojiRuns.Count -eq 0){return}
+    $font=New-Object Drawing.Font($script:ownerEmojiFontFamily,$target.Font.Size)
+    try {
+        foreach($run in $emojiRuns){
+            $target.Select($run.Index,$run.Length)
+            $target.SelectionFont=$font
+        }
+    } finally { $font.Dispose() }
+}
 function Color-LogRegex([RdcLogBox]$target,[string]$pattern,[Drawing.Color]$color,[int]$limit=-1,[int]$group=0) {
     if (-not $target -or [string]::IsNullOrEmpty($pattern) -or $target.TextLength -eq 0) { return }
     $all = $target.Text
@@ -4848,6 +4877,7 @@ function Render-CompactLog {
             Color-LogToken $headerLog '🌐' $accentNetwork
             Color-LogToken $headerLog '💾' $accentStorage
             Color-LogToken $headerLog '👋' $accentPresence
+            if($OwnerGui){Apply-OwnerEmojiFont $headerLog}
 
             if ($headerHadSelection) {
                 $restoreHeaderStart = [Math]::Min($headerSelectionStart,$headerLog.TextLength)
@@ -4946,6 +4976,7 @@ function Render-CompactLog {
         Color-LogToken $log '🌐' $accentNetwork
         Color-LogToken $log '💾' $accentStorage
         Color-LogToken $log '👋' $accentPresence
+        if($OwnerGui){Apply-OwnerEmojiFont $log}
 
         if ($hadUserSelection) {
             $restoreStart = [Math]::Min($oldSelectionStart,$log.TextLength)

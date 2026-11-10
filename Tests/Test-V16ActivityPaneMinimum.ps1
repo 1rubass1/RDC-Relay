@@ -38,7 +38,9 @@ $measureDef=$ast.Find({param($n)
 if(-not $measureDef){throw 'Missing production RichEdit row-reserve calculator'}
 . ([scriptblock]::Create($measureDef.Extent.Text))
 $probe=New-Object Windows.Forms.RichTextBox
-$script:ownerTextFontFamily='Segoe UI Emoji'
+$script:ownerTextFontFamily='Consolas'
+$script:ownerEmojiFontFamily='Segoe UI Emoji'
+$script:ownerEmojiEnabled=$true
 $font=New-Object Drawing.Font($script:ownerTextFontFamily,10)
 try {
  $probe.Font=$font
@@ -60,14 +62,14 @@ $contentHost.RowCount=2
 [void]$contentHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,$activityPaneMinHeightPreferred)))
 $headerVScroll=New-Object Windows.Forms.Panel
 try{
- $oldVisibleHeight=$paneMinHeightPreferred-17
- $oldFullRows=[Math]::Floor($oldVisibleHeight/$line)
- $newBottomGap=($activityPaneMinHeightPreferred-17)-(8*$line)
+ $ownerPitch=[int]$script:ownerJournalLinePitch
+ $newBottomGap=($activityPaneMinHeightPreferred-17)-(8*$ownerPitch)
  Check ($line -ge 12 -and $line -le 35 -and
+  $ownerPitch -ge $line -and $ownerPitch -le 35 -and
   $activityRowReserve -ge 1 -and
-  $newBottomGap -eq 0 -and $activityPaneMinHeightPreferred -eq (8*$line+17)) 'Owner minimum fits six events plus top and bottom blank rows after font change'
- Check ((($paneMinHeightPreferred-17+$activityRowReserve) % $line) -eq 0) 'inner viewport aligns to text line pitch without double-counting existing space'
- Check (($line -ne 17) -or ($activityRowReserve -eq 28 -and $activityPaneMinHeightPreferred -eq 153)) 'STARMER Emoji 10pt line pitch 17px gives six visible events at 153px'
+  $newBottomGap -eq 0 -and $activityPaneMinHeightPreferred -eq (8*$ownerPitch+17)) 'Owner minimum fits six events plus top and bottom blank rows after font change'
+ Check ((($paneMinHeightPreferred-17+$activityRowReserve) % $ownerPitch) -eq 0) 'inner viewport aligns to text line pitch without double-counting existing space'
+ Check (($line -ne 15 -or $ownerPitch -ne 17) -or ($activityRowReserve -eq 28 -and $activityPaneMinHeightPreferred -eq 153)) 'STARMER mixed 15px body/17px emoji pitch reserves six events at 153px'
  $headerProbe=New-Object Windows.Forms.RichTextBox
  $headerFont=New-Object Drawing.Font($script:ownerTextFontFamily,9)
  try {
@@ -81,7 +83,7 @@ try{
   Check ($headerPaneMinHeightPreferred -eq $expectedHeader -and
    $headerPaneMinHeightPreferred -lt 125 -and
    $headerPaneMinHeightPreferred -ge 64) 'Owner header minimum fits six measured banner rows and divider'
-  Check (($headerPitch -ne 16) -or ($headerPaneMinHeightPreferred -eq 105)) 'STARMER Emoji 9pt collapsed header minimum is 105px'
+  Check (($headerPitch -ne 14) -or ($headerPaneMinHeightPreferred -eq 93)) 'STARMER Consolas 9pt logo minimum restored to 93px'
   # Match the real Owner header: wrapped RichEdit, no native scrollbars,
   # wide text host and a separate external vertical scroll control.
   $headerProbe.WordWrap=$true
@@ -102,9 +104,9 @@ try{
  Set-ActivityPaneHeight 99999
  Check ([Math]::Abs(($contentHost.ClientSize.Height-$contentHost.RowStyles[1].Height)-$upperMin) -lt 0.1) 'actual divider setter respects new smaller header minimum'
  Check ($headerPaneMinHeightPreferred -lt 125 -and
-  $activityPaneMinHeightPreferred -eq (8*$line+17)) 'Owner pane clamp follows changed Emoji font metrics'
+  $activityPaneMinHeightPreferred -eq (8*$ownerPitch+17)) 'Owner pane clamp follows mixed glyph metrics'
  $minWindowHeight=78+38+$headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred+7+48
- Check (($headerPitch -ne 16 -or $line -ne 17) -or ($minWindowHeight -eq 429)) 'full Owner window minimum accounts for Emoji line spacing'
+ Check (($headerPitch -ne 14 -or $ownerPitch -ne 17) -or ($minWindowHeight -eq 417)) 'full Owner window minimum accounts for mono banner plus emoji events'
  $minPaneHeight=$headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred
  $contentHost.Height=$minPaneHeight
  Check ((Get-EffectivePaneMinHeight) -eq $activityPaneMinHeightPreferred -and
