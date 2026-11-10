@@ -438,30 +438,24 @@ function Update-RdcUpdateNoticePolling {
     }
 }
 
-# -Preview only: keep the original footer on screen long enough to be seen
-# before playing the 3-stage reveal, then reset and replay every ~7 seconds.
-# In production this timer does not exist; a real update animates just once.
+# Owner RC1 demo: reveal the preview exactly ONCE per GUI launch, then
+# leave the static expanded notice visible. It never offers installation.
+# The real (non-preview) update notice already animates once per version.
 function Start-RdcUpdateNoticePreview([string]$Version) {
     if ((-not $Preview -and -not $script:ownerUpdateDemoMode) -or
         -not $script:enableUpdateNotice) { return }
-    if ($script:rdcNoticePreviewTimer) { return }
+    if ($script:rdcNoticePreviewShown -or $script:rdcNoticePreviewTimer) { return }
     $script:rdcNoticePreviewVersion = $Version
-    $script:rdcNoticePreviewShown = $false
     $script:rdcNoticePreviewNextAt = (Get-Date).AddSeconds(1.8)
     $script:rdcNoticePreviewTimer = New-Object Windows.Forms.Timer
     $script:rdcNoticePreviewTimer.Interval = 100
     $script:rdcNoticePreviewTimer.Add_Tick({
-        $now = Get-Date
-        if ($now -lt $script:rdcNoticePreviewNextAt) { return }
-        if ($script:rdcNoticePreviewShown) {
-            Hide-RdcUpdateNotice
-            $script:rdcNoticePreviewShown = $false
-            $script:rdcNoticePreviewNextAt = $now.AddSeconds(1.4)
-        } else {
-            Show-RdcUpdateNotice $script:rdcNoticePreviewVersion
-            $script:rdcNoticePreviewShown = $true
-            $script:rdcNoticePreviewNextAt = $now.AddSeconds(5.8)
-        }
+        if ((Get-Date) -lt $script:rdcNoticePreviewNextAt) { return }
+        $script:rdcNoticePreviewShown = $true
+        $script:rdcNoticePreviewTimer.Stop()
+        $script:rdcNoticePreviewTimer.Dispose()
+        $script:rdcNoticePreviewTimer = $null
+        Show-RdcUpdateNotice $script:rdcNoticePreviewVersion
     })
     $script:rdcNoticePreviewTimer.Start()
 }

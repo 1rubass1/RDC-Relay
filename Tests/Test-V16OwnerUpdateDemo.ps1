@@ -113,7 +113,28 @@ try{
   -not $script:rdcNoticeControl.TabStop) 'fake update is inaccessible as an interactive install control'
  Hide-RdcUpdateNotice
  Check ($bottom.ColumnStyles[1].Width -eq 115 -and
-  -not $script:rdcNoticeControl.IsActive) 'animation returns to compact idle and can replay'
+  -not $script:rdcNoticeControl.IsActive) 'manual reset remains available without changing geometry'
+ # The Owner RC1 demo is shown ONCE at GUI Shown. Test its real timer
+ # handler by invoking WinForms OnTick without a message pump or Remote.
+ $script:rdcNoticePreviewShown=$false
+ Start-RdcUpdateNoticePreview '1.6.0 RC2'
+ $previewTimer=$script:rdcNoticePreviewTimer
+ Check ($previewTimer -and $previewTimer.Enabled -and
+  -not $script:rdcNoticePreviewShown) 'one-shot preview schedules a single delayed reveal'
+ $script:rdcNoticePreviewNextAt=(Get-Date).AddSeconds(-1)
+ $tickMethod=[Windows.Forms.Timer].GetMethod('OnTick',
+  [Reflection.BindingFlags]'Instance,NonPublic')
+ [void]$tickMethod.Invoke($previewTimer,@([EventArgs]::Empty))
+ Check ($script:rdcNoticePreviewShown -and
+  -not $script:rdcNoticePreviewTimer -and
+  $script:rdcNoticeActive) 'first preview tick shows update and disposes replay timer'
+ $activeVersion=$script:rdcNoticeControl.OfferedVersion
+ Start-RdcUpdateNoticePreview '1.6.0 RC3'
+ Check (-not $script:rdcNoticePreviewTimer -and
+  $script:rdcNoticeControl.OfferedVersion -ceq $activeVersion) 'repeat calls cannot restart animation or alter offered version'
+ Check ($noticeSource.Contains('if ($script:rdcNoticePreviewShown -or $script:rdcNoticePreviewTimer) { return }') -and
+  -not $noticeSource.Contains('$now.AddSeconds(5.8)') -and
+  -not $noticeSource.Contains('$now.AddSeconds(1.4)')) 'old automatic hide-and-replay schedule removed'
 }finally{
  if($script:rdcNoticeControl){Dispose-RdcUpdateNotice}
  if($active){$active.Dispose()}
