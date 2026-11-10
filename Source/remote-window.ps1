@@ -465,6 +465,14 @@ public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
 
     public RdcOwnerAccountMenuRenderer(ProfessionalColorTable colors) : base(colors) { }
 
+    // Owner Account only: remove the orange image-column fill without
+    // changing the shared color table (used by the Help and legacy menus).
+    // Use the actual menu BackColor so the glyph gutter joins the text area.
+    protected override void OnRenderImageMargin(ToolStripRenderEventArgs e) {
+        using (Brush brush = new SolidBrush(e.ToolStrip.BackColor))
+            e.Graphics.FillRectangle(brush, e.AffectedBounds);
+    }
+
     public static Rectangle QuotaBoxBounds(ToolStripItem item) {
         const int side = 16;
         return new Rectangle(6, Math.Max(0, (item.Height - side) / 2), side, side);

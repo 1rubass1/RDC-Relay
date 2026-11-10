@@ -1,4 +1,4 @@
-# G103: isolated WinForms paint and toggle regression for Account quota menu.
+# G104: isolated WinForms paint and toggle regression for Account quota menu.
 # Uses extracted production C# renderer only; no GUI, Host, Remote, network or tokens.
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Drawing,System.Windows.Forms
@@ -40,7 +40,7 @@ function Render-QuotaGlyph([bool]$checked,[bool]$enabled){
  $bitmap=New-Object Drawing.Bitmap(260,25)
  $graphics=[Drawing.Graphics]::FromImage($bitmap)
  try {
-  $graphics.Clear([Drawing.Color]::FromArgb(191,118,67))
+  $graphics.Clear($menu.BackColor)
   [RdcOwnerAccountMenuRenderer]::PaintQuotaBox($graphics,$quota)
  }finally{$graphics.Dispose()}
  return ,$bitmap
@@ -60,6 +60,29 @@ try{
  Check ($menu.Renderer -is [RdcOwnerAccountMenuRenderer]) 'Owner Account menu uses dedicated renderer'
  Check ($ownerRenderer -is [Windows.Forms.ToolStripProfessionalRenderer] -and
   $normalRenderer -is [Windows.Forms.ToolStripProfessionalRenderer]) 'other menus retain system renderer compatibility'
+ # Draw the actual production renderer's image margin without opening a UI.
+ # Owner gutter must match the menu text BackColor; legacy/help remain orange.
+ $menu.BackColor=[Drawing.Color]::FromArgb(38,41,46)
+ $marginBounds=New-Object Drawing.Rectangle(0,0,28,80)
+ $ownerBitmap=New-Object Drawing.Bitmap(40,80)
+ $legacyBitmap=New-Object Drawing.Bitmap(40,80)
+ try{
+  $ownerGraphics=[Drawing.Graphics]::FromImage($ownerBitmap)
+  $legacyGraphics=[Drawing.Graphics]::FromImage($legacyBitmap)
+  try{
+   $ownerGraphics.Clear([Drawing.Color]::Black)
+   $legacyGraphics.Clear([Drawing.Color]::Black)
+   $ownerEvent=[Windows.Forms.ToolStripRenderEventArgs]::new($ownerGraphics,$menu,$marginBounds,$menu.BackColor)
+   $legacyEvent=[Windows.Forms.ToolStripRenderEventArgs]::new($legacyGraphics,$menu,$marginBounds,$menu.BackColor)
+   $ownerRenderer.DrawImageMargin($ownerEvent)
+   $normalRenderer.DrawImageMargin($legacyEvent)
+  }finally{$ownerGraphics.Dispose();$legacyGraphics.Dispose()}
+  $expected=[Drawing.Color]::FromArgb(38,41,46)
+  $actual=$ownerBitmap.GetPixel(10,35)
+  $original=$legacyBitmap.GetPixel(10,35)
+  Check ($actual.ToArgb() -eq $expected.ToArgb()) 'Owner orange image gutter replaced by exact menu body background RGB 38,41,46'
+  Check ($original.ToArgb() -eq ([Drawing.Color]::FromArgb(191,118,67)).ToArgb()) 'Help and legacy image gutter retains original orange'
+ }finally{$ownerBitmap.Dispose();$legacyBitmap.Dispose()}
  $bounds=[RdcOwnerAccountMenuRenderer]::QuotaBoxBounds($quota)
  Check ($bounds.Width -eq 16 -and $bounds.Height -eq 16 -and
   $bounds.X -eq 6 -and $bounds.Y -eq [Math]::Max(0,($quota.Height-16)/2)) 'checkbox has compact 16px square in original image gutter'
@@ -73,7 +96,7 @@ try{
   Check ($onCount -ge 9 -and $offCount -lt 5) ('checked state has high-contrast tick; ON pixels='+$onCount+' OFF pixels='+$offCount)
   Check ($onPixel.ToArgb() -ne $offPixel.ToArgb()) 'checkbox has visually distinct ON versus OFF center'
   Check ($on.GetPixel($bounds.X,$bounds.Y).ToArgb() -ne
-   [Drawing.Color]::FromArgb(191,118,67).ToArgb()) 'square background visibly separates checkbox from orange gutter'
+   $menu.BackColor.ToArgb()) 'square fill contrasts with the neutral menu gutter'
  }finally{$on.Dispose();$off.Dispose()}
  $menu.PerformLayout()
  $quota.Enabled=$true
