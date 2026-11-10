@@ -1,4 +1,4 @@
-﻿# G113 — exercise real Owner Stop and Help WinForms dialogs from AST.
+﻿# G113/G114 — exercise real Owner Stop, Reconnect and Help dialogs from AST.
 # Fake controls only. Never start/stop/logout Remote, Host or browser.
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
@@ -12,6 +12,7 @@ function Check([bool]$ok,[string]$label){
 }
 Check ($errors.Count -eq 0) 'production GUI source parses'
 foreach($name in @('New-RdcOwnerStopDialog','Show-RdcOwnerStopConfirmation',
+ 'New-RdcOwnerReconnectDialog','Show-RdcOwnerReconnectConfirmation',
  'New-RdcOwnerHelpDialog','Show-RdcOwnerHelp')){
  $fn=$ast.Find({param($n)
   $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
@@ -58,12 +59,55 @@ try{
   $yes.Bottom -le $buttons.ClientSize.Height) 'Stop question and action buttons fit inside dialog'
 }finally{$stop.Dispose()}
 
+$reconnect=New-RdcOwnerReconnectDialog
+try {
+ $layout=@($reconnect.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+ $row=$layout.GetControlFromPosition(0,0)
+ $warning=$row.GetControlFromPosition(0,0)
+ $question=$row.GetControlFromPosition(1,0)
+ $buttons=$layout.GetControlFromPosition(0,1)
+ $no=@($buttons.Controls|Where-Object{$_.Name -ceq 'rc1-reconnect-remote-no'})|Select-Object -First 1
+ $yes=@($buttons.Controls|Where-Object{$_.Name -ceq 'rc1-reconnect-remote-yes'})|Select-Object -First 1
+ Check ($reconnect.Name -ceq 'rc1-reconnect-remote-confirmation' -and
+  $reconnect.Text -ceq 'Переподключение Remote' -and
+  $reconnect.ClientSize.Width -eq 480 -and $reconnect.ClientSize.Height -eq 168 -and
+  $reconnect.FormBorderStyle -eq [Windows.Forms.FormBorderStyle]::FixedDialog) 'Reconnect has same compact modal geometry and dedicated title'
+ Check ($question.Name -ceq 'rc1-reconnect-remote-question' -and
+  $question.Text -ceq 'Переподключить Remote?' -and $question.Font.Bold -and
+  $reconnect.Controls.Find('rc1-stop-remote-question',$true).Count -eq 0) 'Reconnect body contains only exact user-approved question'
+ $expectedQuestion=([Drawing.SystemIcons]::Question).ToBitmap()
+ $expectedWarning=([Drawing.SystemIcons]::Warning).ToBitmap()
+ try {
+  # Compare actual pixel-color signatures to ensure the icon was not left
+  # as the old standard blue Question system icon.
+  Check ($warning.Name -ceq 'rc1-reconnect-remote-warning-icon' -and
+   $warning.Image.Width -eq 32 -and $warning.Image.Height -eq 32 -and
+   $warning.AccessibleDescription -ceq 'Стандартный значок предупреждения.' -and
+   -not $warning.TabStop -and
+   $warning.Image.GetPixel(16,16).ToArgb() -eq $expectedWarning.GetPixel(16,16).ToArgb()) 'Reconnect reuses actual Windows exclamation warning icon, not Question'
+ }finally{$expectedQuestion.Dispose();$expectedWarning.Dispose()}
+ Check ($reconnect.BackColor.ToArgb() -eq ([Drawing.Color]::FromArgb(29,32,36)).ToArgb() -and
+  $reconnect.Font.Name -ceq 'Segoe UI' -and $buttons.Controls.Count -eq 2) 'Reconnect dark palette and buttons match Stop'
+ Check ($no.Text -ceq 'Нет' -and $yes.Text -ceq 'Да' -and
+  $no.Size.Width -eq 96 -and $yes.Size.Width -eq 96 -and
+  $reconnect.AcceptButton -eq $no -and $reconnect.CancelButton -eq $no -and
+  $reconnect.ActiveControl -eq $no -and
+  $no.DialogResult -eq [Windows.Forms.DialogResult]::No -and
+  $yes.DialogResult -eq [Windows.Forms.DialogResult]::Yes) 'Reconnect Enter/Escape defaults safely to No, Yes requires explicit action'
+ $reconnect.PerformLayout();$layout.PerformLayout();$row.PerformLayout();$buttons.PerformLayout()
+ Check ($question.Width -gt 0 -and $question.Height -gt 0 -and
+  $question.Right -le $row.ClientSize.Width -and
+  $no.Bottom -le $buttons.Height -and $yes.Bottom -le $buttons.Height) 'Reconnect label and action buttons fit without clipping'
+}finally{$reconnect.Dispose()}
+
 $content='RDC Relay 1.6.0 RC1'+[Environment]::NewLine+[Environment]::NewLine+
  ('Текст справки, доступный для прокрутки. ' * 55)
 $help=New-RdcOwnerHelpDialog $content
 try{
  $layout=@($help.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
- $header=$layout.GetControlFromPosition(0,0)
+ $headerRow=$layout.GetControlFromPosition(0,0)
+ $helpIcon=$headerRow.GetControlFromPosition(0,0)
+ $header=$headerRow.GetControlFromPosition(1,0)
  $body=$layout.GetControlFromPosition(0,1)
  $buttons=$layout.GetControlFromPosition(0,2)
  $close=@($buttons.Controls|Where-Object{$_.Name -ceq 'rc1-help-close'})|Select-Object -First 1
@@ -76,7 +120,15 @@ try{
   $help.BackColor.ToArgb() -eq ([Drawing.Color]::FromArgb(29,32,36)).ToArgb() -and
   $help.ForeColor.ToArgb() -eq ([Drawing.Color]::Gainsboro).ToArgb()) 'Help uses Account Switch dark colors and font'
  Check ($header.Text -ceq 'Справка / О программе' -and
-  $header.Font.Bold -and $layout.RowCount -eq 3) 'Help has clear header, reading area and footer'
+  $header.Font.Bold -and $layout.RowCount -eq 3 -and
+  $headerRow.Name -ceq 'rc1-help-heading-row' -and
+  $headerRow.ColumnCount -eq 2) 'Help has clear header, reading area and footer'
+ Check ($helpIcon.Name -ceq 'rc1-help-question-icon' -and
+  $helpIcon.Image.Width -eq 32 -and $helpIcon.Image.Height -eq 32 -and
+  $helpIcon.AccessibleDescription -ceq 'Стандартный значок вопроса.' -and
+  -not $helpIcon.TabStop) 'Help header has standard circled question-mark icon'
+ Check ($body.BackColor.ToArgb() -eq $help.BackColor.ToArgb() -and
+  $body.ForeColor.ToArgb() -eq $help.ForeColor.ToArgb()) 'Help content is seamless with dark form background, no contrasting grey panel'
  Check ($body -is [Windows.Forms.RichTextBox] -and
   $body.Text -ceq $content -and $body.ReadOnly -and $body.WordWrap -and
   $body.ScrollBars -eq [Windows.Forms.RichTextBoxScrollBars]::Vertical -and
@@ -86,7 +138,9 @@ try{
   $close.Text -ceq 'Закрыть' -and $close.Size.Width -eq 96 -and
   $close.Size.Height -eq 34 -and
   $help.AcceptButton -eq $close -and $help.CancelButton -eq $close) 'Help footer uses same account-button styling with Enter/Esc close'
- $help.PerformLayout();$layout.PerformLayout()
+ $help.PerformLayout();$layout.PerformLayout();$headerRow.PerformLayout()
+ Check ($header.Left -gt $helpIcon.Left+32 -and
+  $header.Right -le $headerRow.ClientSize.Width) 'Help heading aligns after native icon without clipping'
  Check ($body.Width -gt 0 -and $body.Height -gt 0 -and
   $body.Right -le $layout.ClientSize.Width -and
   $close.Bottom -le $buttons.Height) 'Help scroll area and footer visible without overlap'
@@ -122,6 +176,41 @@ if($stopHandler){
   $script:ownerCanStop=$false;$script:ownerCanStart=$false
   & $click
   Check ($script:ownerQueuedAction -ceq '' -and $script:confirmCalls -eq 2) 'missing Host STOP capability bypasses confirmation'
+}
+$reconnectHandler=@($ast.FindAll({param($n)
+ $n -is [Management.Automation.Language.ScriptBlockExpressionAst] -and
+ $n.Extent.Text.Contains('Show-RdcOwnerReconnectConfirmation') -and
+ $n.Extent.Text.Contains('$script:ownerQueuedAction')
+},$true))|Select-Object -First 1
+Check ($null -ne $reconnectHandler) 'real Reconnect menu routes through the new warning confirmation'
+if($reconnectHandler){
+ $click=& ([scriptblock]::Create($reconnectHandler.Extent.Text))
+ $OwnerGui=$true
+ $script:ownerManagedMode=$true
+ $script:ownerCanReconnect=$true
+ $script:ownerQueuedAction=''
+ $script:reconnectDecision=[Windows.Forms.DialogResult]::No
+ $script:reconnectConfirmCalls=0
+ function Show-RdcOwnerReconnectConfirmation {
+  $script:reconnectConfirmCalls++
+  return $script:reconnectDecision
+ }
+ & $click
+ Check ($script:ownerQueuedAction -ceq '' -and $script:reconnectConfirmCalls -eq 1) 'Reconnect No does not queue Remote or Host actions'
+ $script:reconnectDecision=[Windows.Forms.DialogResult]::Yes
+ & $click
+ Check ($script:ownerQueuedAction -ceq 'RECONNECT' -and
+  $script:reconnectConfirmCalls -eq 2) 'Reconnect explicit Yes queues only existing Host RECONNECT action'
+ $script:ownerQueuedAction=''
+ $script:ownerCanReconnect=$false
+ & $click
+ Check ($script:ownerQueuedAction -ceq '' -and
+  $script:reconnectConfirmCalls -eq 2) 'Reconnect capability denial bypasses confirmation'
+ $script:ownerCanReconnect=$true
+ $script:ownerManagedMode=$false
+ & $click
+ Check ($script:ownerQueuedAction -ceq '' -and
+  $script:reconnectConfirmCalls -eq 2) 'Reconnect observed mode cannot open confirmation or queue Remote'
 }
 $helpHandler=@($ast.FindAll({param($n)
  $n -is [Management.Automation.Language.ScriptBlockExpressionAst] -and

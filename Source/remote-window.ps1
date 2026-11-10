@@ -6123,13 +6123,38 @@ $switchAccountItem.Add_Click({
     }
     Switch-RemoteAccount
 })
+# Reuse the exact Stop modal geometry, safe No default and standard
+# Windows warning triangle. No second style/layout implementation.
+function New-RdcOwnerReconnectDialog {
+    $dialog=New-RdcOwnerStopDialog
+    $dialog.Name='rc1-reconnect-remote-confirmation'
+    $dialog.Text='Переподключение Remote'
+    $message=@($dialog.Controls.Find('rc1-stop-remote-question',$true))|Select-Object -First 1
+    $warning=@($dialog.Controls.Find('rc1-stop-remote-warning-icon',$true))|Select-Object -First 1
+    $buttons=@($dialog.Controls.Find('rc1-stop-remote-buttons',$true))|Select-Object -First 1
+    $yes=@($dialog.Controls.Find('rc1-stop-remote-yes',$true))|Select-Object -First 1
+    $no=@($dialog.Controls.Find('rc1-stop-remote-no',$true))|Select-Object -First 1
+    if(-not $message -or -not $warning -or -not $buttons -or -not $yes -or -not $no){
+        $dialog.Dispose()
+        throw 'RC1_RECONNECT_CONFIRMATION_LAYOUT_MISSING'
+    }
+    $message.Name='rc1-reconnect-remote-question'
+    $message.Text='Переподключить Remote?'
+    $warning.Name='rc1-reconnect-remote-warning-icon'
+    $buttons.Name='rc1-reconnect-remote-buttons'
+    $yes.Name='rc1-reconnect-remote-yes'
+    $no.Name='rc1-reconnect-remote-no'
+    return $dialog
+}
+function Show-RdcOwnerReconnectConfirmation {
+    $confirmation=New-RdcOwnerReconnectDialog
+    try { return $confirmation.ShowDialog($form) }
+    finally { $confirmation.Dispose() }
+}
 $reconnectItem.Add_Click({
     if ($OwnerGui) {
         if (-not $script:ownerManagedMode -or -not $script:ownerCanReconnect) { return }
-        $answer=[Windows.Forms.MessageBox]::Show(
-            'Перезапустить Remote, принадлежащий текущему RC1 Host?',
-            'RDC Relay 1.6.0 RC1',[Windows.Forms.MessageBoxButtons]::YesNo,
-            [Windows.Forms.MessageBoxIcon]::Question)
+        $answer=Show-RdcOwnerReconnectConfirmation
         if ($answer -eq [Windows.Forms.DialogResult]::Yes) { $script:ownerQueuedAction='RECONNECT' }
         return
     }
@@ -6192,14 +6217,33 @@ function New-RdcOwnerHelpDialog([string]$content) {
     [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
     [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,52))
 
+    # Standard Windows circled-question icon, aligned with the title.
+    $headingRow=New-Object Windows.Forms.TableLayoutPanel
+    $headingRow.Name='rc1-help-heading-row'
+    $headingRow.Dock=[Windows.Forms.DockStyle]::Top
+    $headingRow.ColumnCount=2
+    $headingRow.RowCount=1
+    $headingRow.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    [void]$headingRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute,44))
+    [void]$headingRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    $helpIcon=New-Object Windows.Forms.PictureBox
+    $helpIcon.Name='rc1-help-question-icon'
+    $helpIcon.Image=([Drawing.SystemIcons]::Question).ToBitmap()
+    $helpIcon.Size=[Drawing.Size]::new(32,32)
+    $helpIcon.SizeMode=[Windows.Forms.PictureBoxSizeMode]::CenterImage
+    $helpIcon.Margin=[Windows.Forms.Padding]::new(0,0,12,0)
+    $helpIcon.TabStop=$false
+    $helpIcon.AccessibleDescription='Стандартный значок вопроса.'
     $heading=New-Object Windows.Forms.Label
     $heading.Name='rc1-help-heading'
     $heading.Text='Справка / О программе'
     $heading.Font=[Drawing.Font]::new('Segoe UI',12,[Drawing.FontStyle]::Bold)
     $heading.ForeColor=$dialog.ForeColor
     $heading.AutoSize=$true
-    $heading.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
-    [void]$layout.Controls.Add($heading,0,0)
+    $heading.Margin=[Windows.Forms.Padding]::new(0,3,0,0)
+    [void]$headingRow.Controls.Add($helpIcon,0,0)
+    [void]$headingRow.Controls.Add($heading,1,0)
+    [void]$layout.Controls.Add($headingRow,0,0)
 
     $body=New-Object Windows.Forms.RichTextBox
     $body.Name='rc1-help-content'
@@ -6213,7 +6257,8 @@ function New-RdcOwnerHelpDialog([string]$content) {
     $body.ShortcutsEnabled=$true
     $body.BorderStyle=[Windows.Forms.BorderStyle]::None
     $body.Dock=[Windows.Forms.DockStyle]::Fill
-    $body.BackColor=[Drawing.Color]::FromArgb(38,41,46)
+    # No contrasting grey textbox panel: help reads as one continuous surface.
+    $body.BackColor=$dialog.BackColor
     $body.ForeColor=$dialog.ForeColor
     $body.Font=$dialog.Font
     $body.Margin=[Windows.Forms.Padding]::new(0,0,0,8)
