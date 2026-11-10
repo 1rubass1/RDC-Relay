@@ -188,8 +188,12 @@ public sealed class RdcUpdateNoticeStrip : Control {
             g.Restore(save);
         }
 
-        // 2px clear margins above and below; no outline clips at control edge.
-        buttonBounds=new Rectangle(buttonX,Math.Max(2,(Height-21)/2),buttonWidth,21);
+        // Keep text in its original 21px slot; the Owner-only button outline
+        // extends one pixel upward without moving or resizing the label.
+        // Legacy button geometry remains unchanged.
+        Rectangle textBounds=new Rectangle(buttonX,Math.Max(2,(Height-21)/2),buttonWidth,21);
+        buttonBounds=compactOwner ? new Rectangle(textBounds.X,textBounds.Y-1,
+            textBounds.Width,textBounds.Height+1) : textBounds;
         if (buttonAlpha > 0.001) {
             int alpha=(int)(255*buttonAlpha);
             // Neutral gray surface with a substantial gold border and
@@ -212,7 +216,7 @@ public sealed class RdcUpdateNoticeStrip : Control {
             using (StringFormat centered=new StringFormat()) {
                 centered.Alignment=StringAlignment.Center;
                 centered.LineAlignment=StringAlignment.Center;
-                g.DrawString(newText,buttonFont,ink,(RectangleF)buttonBounds,centered);
+                g.DrawString(newText,buttonFont,ink,(RectangleF)textBounds,centered);
             }
             if (Focused && ButtonReady && ShowFocusCues) {
                 ControlPaint.DrawFocusRectangle(g,Rectangle.Inflate(buttonBounds,-3,-3));

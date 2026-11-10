@@ -84,6 +84,30 @@ try{
  Check ($expanded -eq 295 -and $script:rdcNoticeControl.IsActive -and
   $script:rdcNoticeControl.OfferedVersion -ceq '1.6.0 RC2') 'animation expands from 115 to 295 pixels with synthetic RC2'
  Check ($gold -gt 10 -and (NonBackgroundPixels $active) -gt $idlePixels) 'expanded frame visibly paints golden update button'
+ $boundsField=[RdcUpdateNoticeStrip].GetField('buttonBounds',[Reflection.BindingFlags]'Instance,NonPublic')
+ $ownerBounds=[Drawing.Rectangle]$boundsField.GetValue($script:rdcNoticeControl)
+ Check ($ownerBounds.Y -eq 1 -and $ownerBounds.Height -eq 22 -and
+  $ownerBounds.Bottom -eq 23) 'Owner update button extends 1px upward; bottom edge unchanged'
+ Check ($noticeSource.Contains('Rectangle textBounds=new Rectangle(buttonX,Math.Max(2,(Height-21)/2),buttonWidth,21);') -and
+  $noticeSource.Contains('textBounds.Height+1) : textBounds;') -and
+  $noticeSource.Contains('g.DrawString(newText,buttonFont,ink,(RectangleF)textBounds,centered);')) 'Update caption remains at unchanged 21px text rectangle and font'
+ $legacyNotice=New-Object RdcUpdateNoticeStrip
+ $legacyBitmap=$null
+ try{
+  $legacyNotice.CompactOwner=$false
+  $legacyNotice.VisualPreviewOnly=$true
+  $legacyNotice.Size=New-Object Drawing.Size(590,25)
+  $legacyNotice.Font=$form.Font
+  $legacyNotice.Begin('1.6.0 RC1','1.6.0 RC2','Synthetic preview')
+  $legacyNotice.FinishAnimationForTest()
+  $legacyBitmap=New-Object Drawing.Bitmap(590,25)
+  $legacyNotice.DrawToBitmap($legacyBitmap,(New-Object Drawing.Rectangle(0,0,590,25)))
+  $legacyBounds=[Drawing.Rectangle]$boundsField.GetValue($legacyNotice)
+  Check ($legacyBounds.Y -eq 2 -and $legacyBounds.Height -eq 21) 'Legacy update button unchanged at 2px top and 21px height'
+ }finally{
+  if($legacyBitmap){$legacyBitmap.Dispose()}
+  $legacyNotice.Dispose()
+ }
  Check (-not $script:rdcNoticeControl.ButtonReady -and
   $script:rdcNoticeControl.AccessibleRole -eq [Windows.Forms.AccessibleRole]::StaticText -and
   -not $script:rdcNoticeControl.TabStop) 'fake update is inaccessible as an interactive install control'
