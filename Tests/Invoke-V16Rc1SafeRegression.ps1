@@ -16,6 +16,7 @@ $names=@(
  'Test-V16OwnerAdaptiveJournal.ps1','Test-V16OwnerQuotaFooter.ps1','Test-V16OwnerUpdateDemo.ps1',
  'Test-V16ActivityPaneMinimum.ps1','Test-V16OwnerEmojiFont.ps1',
  'Test-V16OwnerJournalBottomGap.ps1','Test-V16QuotaDisplayToggle.ps1',
+ 'Test-V16QuotaMenuCheckbox.ps1',
  'Test-V16QuotaOAuthPoll.ps1',
  'Test-V16OwnerToolJournal.ps1','Test-V16OwnerAccountSwitch.ps1',
  'Test-V16OwnerIdentityHeader.ps1','Test-V16BannerUptimeContract.ps1',

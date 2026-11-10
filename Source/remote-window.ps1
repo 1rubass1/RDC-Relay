@@ -457,6 +457,72 @@ public class RdcMenuColorTable : ProfessionalColorTable {
     public override Color MenuItemPressedGradientEnd { get { return Color.FromArgb(128,74,55,103); } }
 }
 
+// Owner-only checkbox affordance: the orange image-margin is shared by all
+// Account commands, so show an actual high-contrast square for the quota toggle.
+// ToolStripMenuItem still owns Checked/CheckOnClick, keyboard and accessibility.
+public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
+    private const string QuotaItemName = "rc1-quota-display-toggle";
+
+    public RdcOwnerAccountMenuRenderer(ProfessionalColorTable colors) : base(colors) { }
+
+    public static Rectangle QuotaBoxBounds(ToolStripItem item) {
+        const int side = 16;
+        return new Rectangle(6, Math.Max(0, (item.Height - side) / 2), side, side);
+    }
+
+    public static void PaintQuotaBox(Graphics g, ToolStripMenuItem item) {
+        Rectangle rect = QuotaBoxBounds(item);
+        if (rect.Right > item.Width || rect.Bottom > item.Height) return;
+
+        SmoothingMode oldSmoothing = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        try {
+            // Let Windows supply actual contrast colors when High Contrast is on.
+            bool highContrast = SystemInformation.HighContrast;
+            Color fill = highContrast
+                ? (item.Checked ? SystemColors.Highlight : SystemColors.Window)
+                : (item.Enabled
+                  ? (item.Checked ? Color.FromArgb(63, 46, 82) : Color.FromArgb(37, 40, 47))
+                  : Color.FromArgb(66, 66, 70));
+            Color outline = highContrast
+                ? (item.Checked ? SystemColors.HighlightText : SystemColors.WindowText)
+                : (!item.Enabled ? Color.FromArgb(148, 148, 148)
+                  : (item.Selected ? Color.White
+                  : (item.Checked ? Color.FromArgb(255, 224, 160) : Color.FromArgb(238, 238, 238))));
+            using (Brush brush = new SolidBrush(fill))
+                g.FillRectangle(brush, rect);
+            using (Pen border = new Pen(outline, 1.35f))
+                g.DrawRectangle(border, rect.X + 0.65f, rect.Y + 0.65f,
+                                rect.Width - 1.3f, rect.Height - 1.3f);
+            if (item.Checked) {
+                Color tick = highContrast ? SystemColors.HighlightText
+                    : (item.Enabled ? Color.White : Color.FromArgb(195, 195, 195));
+                using (Pen pen = new Pen(tick, 2.15f)) {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    pen.LineJoin = LineJoin.Round;
+                    g.DrawLines(pen, new PointF[] {
+                        new PointF(rect.X + 3.5f, rect.Y + 8.0f),
+                        new PointF(rect.X + 6.6f, rect.Y + 11.2f),
+                        new PointF(rect.X + 12.3f, rect.Y + 4.9f)
+                    });
+                }
+            }
+        } finally { g.SmoothingMode = oldSmoothing; }
+    }
+
+    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e) {
+        base.OnRenderMenuItemBackground(e);
+        ToolStripMenuItem item = e.Item as ToolStripMenuItem;
+        if (item != null && item.Name == QuotaItemName) PaintQuotaBox(e.Graphics, item);
+    }
+
+    protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) {
+        if (e.Item != null && e.Item.Name == QuotaItemName) return;
+        base.OnRenderItemCheck(e);
+    }
+}
+
 public class RdcCircleButton : Control {
     private bool hovered;
     private bool pressed;
@@ -3614,7 +3680,7 @@ $menuRenderer = New-Object Windows.Forms.ToolStripProfessionalRenderer -Argument
 $accountMenu = New-Object Windows.Forms.ContextMenuStrip
 $accountMenu.BackColor = [Drawing.Color]::FromArgb(38,41,46)
 $accountMenu.ForeColor = [Drawing.Color]::Gainsboro
-$accountMenu.Renderer = $menuRenderer
+$accountMenu.Renderer = if($OwnerGui){New-Object RdcOwnerAccountMenuRenderer -ArgumentList $menuColors}else{$menuRenderer}
 $switchAccountItem = New-Object Windows.Forms.ToolStripMenuItem
 $switchAccountItem.Text = 'Сменить аккаунт…'
 $reconnectItem = New-Object Windows.Forms.ToolStripMenuItem
@@ -3630,6 +3696,8 @@ $verifyDeviceItem.Text = 'Подтвердить новое устройство
 if(-not $OwnerGui){[void]$accountMenu.Items.Add($verifyDeviceItem)}
 $quotaAuthItem=New-Object Windows.Forms.ToolStripMenuItem
 $quotaAuthItem.Text='Выводить остаток вызовов'
+$quotaAuthItem.Name='rc1-quota-display-toggle'
+$quotaAuthItem.AccessibleDescription='Флажок: включить или выключить автоматическое отображение остатка вызовов.'
 $quotaAuthItem.CheckOnClick=[bool]$OwnerGui
 $quotaAuthItem.Visible=[bool]$OwnerGui
 $quotaAuthItem.Enabled=$false
