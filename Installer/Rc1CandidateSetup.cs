@@ -11,6 +11,7 @@ using System.Text;
 using System.Reflection;
 using System.Diagnostics;
 using System.Web.Script.Serialization;
+using Microsoft.Win32;
 
 internal static class RdcRc1CandidateSetup {
  static readonly string[] Required=new string[]{
@@ -128,11 +129,76 @@ internal static class RdcRc1CandidateSetup {
   }
   Directory.Delete(staging,false);
  }
- // The main Desktop shortcut is the same first-install boundary used by
- // Rc1ManualUpgrade.ActivateDesktop: no shortcut means a fresh install.
- // This read-only check must never inspect or stop a Remote process.
+ // In the private Owner Pilot the stable Installed Apps registration is
+ // deliberately retained for quick rollback. Read it as evidence of an
+ // existing installation, but NEVER overwrite it during this pilot.
+ // The Desktop shortcut is secondary evidence of a prior RC1 handoff.
  internal static bool HasPrimaryDesktopShortcut(string desktop){
   return RdcRc1ManualUpgrade.HasPrimaryDesktopShortcut(desktop);
+ }
+ internal static bool ValidateInstalledRegistration(string name,string publisher,
+  string registryVersion,string registryRoot,string expectedRoot,
+  string diskVersion,bool hasGui,bool hasUpdater){
+  bool owner=String.Equals(name,"RDC Relay",StringComparison.Ordinal);
+  bool knownPublisher=String.Equals(publisher,"UMAS",StringComparison.Ordinal)||
+   String.Equals(publisher,"RUBASS",StringComparison.Ordinal);
+  bool version=System.Text.RegularExpressions.Regex.IsMatch(registryVersion??"",
+   @"^[0-9]+\.[0-9]+\.[0-9]+$");
+  bool samePath=false;
+  try{
+   samePath=!String.IsNullOrWhiteSpace(registryRoot)&&
+    String.Equals(Path.GetFullPath(registryRoot).TrimEnd(Path.DirectorySeparatorChar),
+     Path.GetFullPath(expectedRoot).TrimEnd(Path.DirectorySeparatorChar),
+     StringComparison.OrdinalIgnoreCase);
+  }catch(ArgumentException){}catch(NotSupportedException){}
+  if(!owner||!knownPublisher||!version||!samePath||
+   !String.Equals(registryVersion,diskVersion,StringComparison.Ordinal)||
+   !hasGui||!hasUpdater)
+   throw new InvalidOperationException("RC1_REGISTERED_INSTALL_INCONSISTENT");
+  return true;
+ }
+ internal static bool HasRegisteredStableInstallation(string localRoot){
+  const string uninstall=@"Software\Microsoft\Windows\CurrentVersion\Uninstall\RDC Relay";
+  // This pilot can replace only a known per-user stable installation, not
+  // an unverified machine-wide RDC Relay managed by an administrator.
+  const string machineUninstall=@"Software\Microsoft\Windows\CurrentVersion\Uninstall";
+  foreach(RegistryView view in new[]{RegistryView.Registry64,RegistryView.Registry32}){
+   using(var hive=RegistryKey.OpenBaseKey(RegistryHive.LocalMachine,view))
+   using(var entries=hive.OpenSubKey(machineUninstall,false)){
+    if(entries==null)continue;
+    foreach(string entry in entries.GetSubKeyNames()){
+     if(String.Equals(entry,"RDC Relay",StringComparison.OrdinalIgnoreCase))
+      throw new InvalidOperationException("RC1_MACHINE_INSTALL_REFUSED");
+     using(var key=entries.OpenSubKey(entry,false)){
+      if(key!=null&&String.Equals(Convert.ToString(key.GetValue("DisplayName","")),
+       "RDC Relay",StringComparison.OrdinalIgnoreCase))
+       throw new InvalidOperationException("RC1_MACHINE_INSTALL_REFUSED");
+     }
+    }
+   }
+  }
+  string stable=Path.Combine(localRoot,"RemoteDesktopCommanderLauncher");
+  string gui=Path.Combine(stable,"remote-window.ps1");
+  string updater=Path.Combine(stable,"update.ps1");
+  string versionFile=Path.Combine(stable,"version.txt");
+  PathSafe(stable);
+  using(var key=Registry.CurrentUser.OpenSubKey(uninstall,false)){
+   if(key==null){
+    // A leftover stable payload without an uninstall entry is not a
+    // clean first install; leave it untouched and ask for review.
+    if(File.Exists(gui)||File.Exists(updater)||File.Exists(versionFile))
+     throw new InvalidOperationException("RC1_UNREGISTERED_STABLE_PAYLOAD_REFUSED");
+    return false;
+   }
+   string diskVersion=File.Exists(versionFile)?
+    File.ReadAllText(versionFile,Encoding.UTF8).Trim():"";
+   return ValidateInstalledRegistration(
+    Convert.ToString(key.GetValue("DisplayName","")),
+    Convert.ToString(key.GetValue("Publisher","")),
+    Convert.ToString(key.GetValue("DisplayVersion","")),
+    Convert.ToString(key.GetValue("InstallLocation","")),
+    stable,diskVersion,File.Exists(gui),File.Exists(updater));
+  }
  }
  // Resolve the displayed version from the exact validated payload manifest,
  // not a second independently maintained literal in the confirmation text.
@@ -191,10 +257,10 @@ internal static class RdcRc1CandidateSetup {
    if((privateSideBySide||args.Length>0) &&
       Environment.GetEnvironmentVariable("RDC_RC1_OWNER_G1_GO")!="YES")
     throw new InvalidOperationException("RC1_EXPLICIT_G1_GO_REQUIRED");
-   // Validate the exact embedded payload before offering an upgrade.
-   // A first install has no previous primary Desktop shortcut: no upgrade
-   // warning in that case. The actual shortcut transaction still fails closed
-   // for unknown targets or any change between this check and activation.
+   // Validate the embedded payload and read-only installed-app state
+   // before offering an upgrade. Only the absence of both registration and
+   // primary shortcut is a fresh Owner Pilot install. Actual shortcut
+   // publication still fails closed for unknown or changed link targets.
    string source=Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
    if(manualUpgrade){extracted=ExtractEmbeddedCandidate();source=extracted;}
    ValidateSource(source);
@@ -202,7 +268,11 @@ internal static class RdcRc1CandidateSetup {
    if(String.IsNullOrEmpty(local))throw new InvalidOperationException("RC1_NO_APPDATA");
    if(manualUpgrade){
     string desktop=Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-    if(args.Length==0 && HasPrimaryDesktopShortcut(desktop)){
+    // Read-only ARP verification complements the Owner Pilot shortcut check.
+    // Neither this probe nor the confirmation mutates the live stable app.
+    bool registered=HasRegisteredStableInstallation(local);
+    bool priorShortcut=HasPrimaryDesktopShortcut(desktop);
+    if(args.Length==0 && (registered||priorShortcut)){
      string version=ValidatedCandidateDisplayVersion(source);
      var answer=System.Windows.Forms.MessageBox.Show(
       "Установить RDC Relay "+version+" как основную оболочку?",

@@ -21,16 +21,23 @@ Check ($builderText.Contains('Assert-Rc1CandidateVersionContract') -and
  $builderText.Contains('RC1_SOURCE_MUST_REMAIN_BLOCKED')) 'builder requires version contract before creating both payload and embedded manifest'
 $setupText=[IO.File]::ReadAllText((Join-Path $installer 'Rc1CandidateSetup.cs'),[Text.Encoding]::UTF8)
 $manualText=[IO.File]::ReadAllText((Join-Path $installer 'Rc1ManualUpgrade.cs'),[Text.Encoding]::UTF8)
-$guard=$setupText.IndexOf('if(args.Length==0 && HasPrimaryDesktopShortcut(desktop))',[StringComparison]::Ordinal)
+$registry=$setupText.IndexOf('bool registered=HasRegisteredStableInstallation(local);',[StringComparison]::Ordinal)
+$shortcutGuard=$setupText.IndexOf('bool priorShortcut=HasPrimaryDesktopShortcut(desktop);',[StringComparison]::Ordinal)
+$guard=$setupText.IndexOf('if(args.Length==0 && (registered||priorShortcut))',[StringComparison]::Ordinal)
 $prompt=$setupText.IndexOf('"Установить RDC Relay "+version+" как основную оболочку?"',[StringComparison]::Ordinal)
 $validation=$setupText.IndexOf('ValidateSource(source);',[StringComparison]::Ordinal)
 $activate=$setupText.IndexOf('RdcRc1ManualUpgrade.ActivateDesktop(release,local,desktop)',[StringComparison]::Ordinal)
-Check ($validation -gt 0 -and $validation -lt $guard -and $guard -lt $prompt -and $prompt -lt $activate) 'short upgrade question only after verified embedded payload and existing-shortcut check'
+Check ($validation -gt 0 -and $validation -lt $registry -and $registry -lt $shortcutGuard -and
+ $shortcutGuard -lt $guard -and $guard -lt $prompt -and $prompt -lt $activate) 'short upgrade question only after verified payload, registry and shortcut detection'
 Check ($setupText.Contains('MessageBoxDefaultButton.Button2') -and
  $setupText.Contains('if(answer!=System.Windows.Forms.DialogResult.Yes)return 1;') -and
  -not $setupText.Contains('Файлы рабочей 1.5.18 останутся для отката.')) 'one-line confirmation defaults No and drops old diagnostic paragraph'
 Check ($manualText.Contains('bool firstInstall=!HasPrimaryDesktopShortcut(desktop)') -and
- $setupText.Contains('return RdcRc1ManualUpgrade.HasPrimaryDesktopShortcut(desktop)')) 'prompt and shortcut activation share the exact same first-install criterion'
+ $setupText.Contains('return RdcRc1ManualUpgrade.HasPrimaryDesktopShortcut(desktop)')) 'pilot shortcut handoff still uses the same read-only primary-link identity'
+Check ($setupText.Contains('Registry.CurrentUser.OpenSubKey(uninstall,false)') -and
+ $setupText.Contains('RegistryKey.OpenBaseKey(RegistryHive.LocalMachine,view)') -and
+ $setupText.Contains('RC1_REGISTERED_INSTALL_INCONSISTENT') -and
+ $setupText.Contains('RC1_UNREGISTERED_STABLE_PAYLOAD_REFUSED')) 'registry inspection is read-only, rejects machine-wide/foreign/orphan installs'
 Check ($setupText.Contains('RC1_MANIFEST_CANDIDATE_VERSION_MISMATCH')) 'installer refuses mismatch between embedded manifest and included candidate identity'
 $work=Join-Path ([IO.Path]::GetTempPath()) ('RdcSetupPrompt-'+[Guid]::NewGuid().ToString('N'))
 $sourceCopy=Join-Path $work 'Source'
@@ -90,7 +97,39 @@ try {
  $flags=[Reflection.BindingFlags]'Static,NonPublic,Public'
  $shortcut=$type.GetMethod('HasPrimaryDesktopShortcut',$flags)
  $version=$type.GetMethod('ValidatedCandidateDisplayVersion',$flags)
- if(-not $shortcut -or -not $version){throw 'ACTUAL_SETUP_PROBE_METHOD_NOT_FOUND'}
+ $registration=$type.GetMethod('ValidateInstalledRegistration',$flags)
+ $actualRegistration=$type.GetMethod('HasRegisteredStableInstallation',$flags)
+ if(-not $shortcut -or -not $version -or -not $registration -or -not $actualRegistration){
+  throw 'ACTUAL_SETUP_PROBE_METHOD_NOT_FOUND'
+ }
+ $stableRoot=Join-Path $work 'StableRoot'
+ function Test-RegistrationSample([string]$name,[string]$publisher,
+  [string]$registryVersion,[string]$registryRoot,[string]$diskVersion,
+  [bool]$gui,[bool]$updater){
+  $call=New-Object 'System.Object[]' 8
+  $call[0]=[string]$name
+  $call[1]=[string]$publisher
+  $call[2]=[string]$registryVersion
+  $call[3]=[string]$registryRoot
+  $call[4]=[string]$stableRoot
+  $call[5]=[string]$diskVersion
+  $call[6]=[bool]$gui
+  $call[7]=[bool]$updater
+  try{return [bool]$registration.Invoke($null,$call)}
+  catch{
+   if($_.Exception.InnerException -and
+    $_.Exception.InnerException.Message -ceq 'RC1_REGISTERED_INSTALL_INCONSISTENT'){return $false}
+   throw
+  }
+ }
+ Check (Test-RegistrationSample 'RDC Relay' 'UMAS' '1.5.18' $stableRoot '1.5.18' $true $true) 'previous publisher UMAS and verified stable 1.5.18 registration recognized'
+ Check (Test-RegistrationSample 'RDC Relay' 'RUBASS' '1.6.0' $stableRoot '1.6.0' $true $true) 'future RUBASS publisher and matching version recognized'
+ Check (-not (Test-RegistrationSample 'RDC Relay' 'OTHER' '1.5.18' $stableRoot '1.5.18' $true $true)) 'unrecognized publisher denied'
+ Check (-not (Test-RegistrationSample 'Other' 'RUBASS' '1.5.18' $stableRoot '1.5.18' $true $true)) 'foreign product denied'
+ Check (-not (Test-RegistrationSample 'RDC Relay' 'UMAS' '1.5.18' $stableRoot '1.6.0' $true $true)) 'registration/disk version mismatch denied'
+ Check (-not (Test-RegistrationSample 'RDC Relay' 'UMAS' '1.5.18' (Join-Path $work 'Other') '1.5.18' $true $true)) 'wrong registration install path denied'
+ Check (-not (Test-RegistrationSample 'RDC Relay' 'UMAS' '1.5.18' $stableRoot '1.5.18' $false $true)) 'missing stable GUI denied'
+ Check (-not (Test-RegistrationSample 'RDC Relay' 'UMAS' '1.5.18' $stableRoot '1.5.18' $true $false)) 'missing stable updater denied'
  $desktopArgs=New-Object 'System.Object[]' 1
  $desktopArgs[0]=[string]$desktop
  Check (-not [bool]$shortcut.Invoke($null,$desktopArgs)) 'genuine Setup returns FIRST INSTALL when primary shortcut absent'
