@@ -41,11 +41,17 @@ $observerTimer=$null
 $quotaTimer=$null
 $quotaPollProcess=$null
 $quotaLastAccount=''
+$quotaAutoTried=@{}
 function Test-Rc1QuotaDisplayEnabled([string]$path) {
  try {
-  if([string]::IsNullOrWhiteSpace($path) -or -not [IO.File]::Exists($path)){return $false}
+  if([string]::IsNullOrWhiteSpace($path)){return $false}
+  # No preference is the historical behavior: quota display and refresh ON.
+  if(-not [IO.File]::Exists($path)){return $true}
   $file=Get-Item -LiteralPath $path -Force -ErrorAction Stop
-  if($file.Length -ne 10 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $false}
+  if(($file.Length -ne 10 -and $file.Length -ne 11) -or
+     ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $false}
+  # 'enabled-v1' is accepted for migration from the uninstalled G101 trial.
+  # Explicit 'disabled-v1', malformed files and IO errors fail closed.
   return [IO.File]::ReadAllText($path,[Text.Encoding]::UTF8) -ceq 'enabled-v1'
  }catch{return $false}
 }
@@ -139,11 +145,14 @@ try{
   $quotaTimer=New-Object Windows.Forms.Timer
   $quotaTimer.Interval=15000
   $quotaTimer.Add_Tick({
-   # The Owner menu controls this independent, persisted opt-in. Disabled
-   # is fail-closed and must never cause MCP traffic or browser consent.
+   # Automatic quota sync and consent remain ON unless explicitly disabled
+   # from the Account menu. Opt-out vetoes both network and browser activity.
    if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){
     $quotaLastAccount=''
     $quotaNextPollUtc=[DateTime]::MinValue
+    # When the owner re-enables, the original one-shot account consent can
+    # start again if no usable quota grant was established.
+    $quotaAutoTried=@{}
     return
    }
    # Only a confirmed Host-owned Ready account may request who_am_i.
@@ -160,12 +169,31 @@ try{
    if([DateTime]::UtcNow -lt $quotaNextPollUtc){return}
    if($quotaPollProcess -and -not $quotaPollProcess.HasExited){return}
    if($quotaPollProcess){$quotaPollProcess.Dispose();$quotaPollProcess=$null}
-   # Never open the browser from a background timer. OAuth is started only
-   # on an explicit checked Account-menu action when its token is missing.
+   # Preserve original background behavior: once the owned account is Ready,
+   # reuse a valid grant or open the provider's browser for consent once per
+   # account per Host run. The checkbox only vetoes this entire workflow.
+   $quotaCache=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'remote-usage-cache.json'
+   $quotaVault=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'quota-oauth-user.dpapi'
+   $quotaCachedAccount=''
+   if([IO.File]::Exists($quotaCache)){
+    try{
+     $quotaData=[IO.File]::ReadAllText($quotaCache,[Text.Encoding]::UTF8)|ConvertFrom-Json
+     if([string]$quotaData.source -cne 'official-remote-who-am-i'){return}
+     $quotaCachedAccount=[string]$quotaData.accountEmail
+    }catch{return} # transient read error must not trigger browser consent
+   }
+   $mode='-Poll'
+   if(( -not [IO.File]::Exists($quotaVault) -or
+        -not [string]::Equals($quotaCachedAccount,$activeAccount,[StringComparison]::OrdinalIgnoreCase)) -and
+      -not $quotaAutoTried.ContainsKey($activeAccount.ToLowerInvariant())){
+    # Same original one-time browser authorization for a confirmed account.
+    $quotaAutoTried[$activeAccount.ToLowerInvariant()]=$true
+    $mode='-Authorize'
+   }
    $quotaNextPollUtc=[DateTime]::UtcNow.AddMinutes(30)
    try{
     $quotaPollProcess=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
-     '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Poll'
+     '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),$mode
     ) -WindowStyle Hidden -PassThru -ErrorAction Stop
    }catch{} # Host and Remote remain usable if quota authorization fails.
   })

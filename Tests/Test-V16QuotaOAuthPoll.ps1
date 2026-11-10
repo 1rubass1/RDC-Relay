@@ -98,15 +98,16 @@ Check ($runtime.Contains('public string ActiveManagedAccount') -and
  $runtime.Contains('!managedProcess.Running') -and
  $hostCode.Contains('$activeAccount=[string]$owner.ActiveManagedAccount')) 'automatic quota polling gated by actual ready Host-owned identity'
 Check ($hostCode.Contains('if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath))') -and
- $hostCode.Contains("'-Poll'") -and
- -not $hostCode.Contains("'-Authorize'") -and
- $hostCode.Contains('$activeAccount=[string]$owner.ActiveManagedAccount')) 'Host polls only after opt-in and never launches browser automatically'
+ $hostCode.Contains("$"+'mode='+ "'-Poll'") -and
+ $hostCode.Contains("$"+'mode='+ "'-Authorize'") -and
+ $hostCode.Contains('$quotaAutoTried.ContainsKey') -and
+ $hostCode.Contains('$activeAccount=[string]$owner.ActiveManagedAccount')) 'default ON restores original one-shot managed-account OAuth and 30-minute polls; explicit OFF blocks both'
 Check (-not $hostCode.Contains("'remote --logout'") -and
  -not $hostCode.Contains('StopManagedRemote(')) 'automatic quota never logs out or controls Remote'
-Check ($window.Contains('rc1-quota-client.ps1') -and $window.Contains("'-Authorize'") -and
- $window.Contains('$quotaAuthItem.CheckOnClick=[bool]$OwnerGui') -and
+Check ($window.Contains('$quotaAuthItem.CheckOnClick=[bool]$OwnerGui') -and
  $window.Contains("$"+'quotaAuthItem.Text='+"'Выводить остаток вызовов'") -and
- $gui.Contains('$quotaAuthItem.Enabled=$script:ownerManagedMode')) 'checked Account-menu opt-in explicitly authorizes absent independent OAuth token'
+ $gui.Contains('$quotaAuthItem.Enabled=$script:ownerManagedMode') -and
+ $gui.Contains('$quotaAuthItem.Checked=[bool](Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath)')) 'Account checkbox restores default automatic behavior and persists explicit opt-out'
 Check ($gui.Contains('Остаток вызовов: 0%') -and $gui.Contains('[Drawing.Color]::LightCoral')) '0% rendered red'
 Write-Output ('RC1_QUOTA_OAUTH_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}

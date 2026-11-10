@@ -80,7 +80,7 @@ Check ($layout.Contains('$script:ownerVersionIntroTimer.Interval=25') -and
  Check (-not $owner.Contains("('Remote PID '") -and -not $owner.Contains("Set-RuntimeDisplay 'Remote PID")) 'PID label omits word Remote'
  Check ($layout.Contains("$"+'quotaAuthItem.Add_Click({') -and
  $layout.Contains("$"+'quotaAuthItem.Visible=[bool]$OwnerGui') -and
- $owner.Contains('quotaAuthItem.Enabled=$script:ownerManagedMode')) 'OAuth authorization requires explicit owner Account click'
+ $owner.Contains('quotaAuthItem.Enabled=$script:ownerManagedMode')) 'Owner quota checkbox remains in Account menu; Host auto consent is managed-only'
  Check ($owner.Contains('Остаток вызовов: 0%') -and $owner.Contains('[Drawing.Color]::LightCoral')) 'genuine zero remaining appears in red'
  Check ($owner.Contains('Get-Rc1QuotaStatus $script:ownerQuotaPath') -and
  $owner.Contains('AddSeconds(15)')) 'quota file polled without remote OAuth or UI thread network calls'

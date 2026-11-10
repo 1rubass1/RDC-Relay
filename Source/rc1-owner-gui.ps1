@@ -108,13 +108,18 @@ function Convert-Rc1OwnerStartupInstructions([string]$header) {
  }
  return [string]::Join("`n",$display.ToArray())
 }
-# User-only opt-in for the independent official quota client. No OAuth secret is
-# stored here; deleting this exact marker disables future automatic polling.
+# User-only opt-out of the existing automatic quota client. No OAuth secret
+# is stored here; absence of a marker means the historical default: ON.
 function Test-Rc1QuotaDisplayEnabled([string]$path) {
  try {
-  if([string]::IsNullOrWhiteSpace($path) -or -not [IO.File]::Exists($path)){return $false}
+  if([string]::IsNullOrWhiteSpace($path)){return $false}
+  # No preference is the historical behavior: quota display and refresh ON.
+  if(-not [IO.File]::Exists($path)){return $true}
   $file=Get-Item -LiteralPath $path -Force -ErrorAction Stop
-  if($file.Length -ne 10 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $false}
+  if(($file.Length -ne 10 -and $file.Length -ne 11) -or
+     ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $false}
+  # 'enabled-v1' is accepted for migration from the uninstalled G101 trial.
+  # Explicit 'disabled-v1', malformed files and IO errors fail closed.
   return [IO.File]::ReadAllText($path,[Text.Encoding]::UTF8) -ceq 'enabled-v1'
  }catch{return $false}
 }
@@ -122,9 +127,13 @@ function Set-Rc1QuotaDisplayEnabled([string]$path,[bool]$enabled) {
  if([string]::IsNullOrWhiteSpace($path)){throw 'RC1_QUOTA_SETTING_PATH_REQUIRED'}
  $dir=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($path))
  if(-not $dir){throw 'RC1_QUOTA_SETTING_PARENT_REQUIRED'}
- if(-not $enabled){
-  if([IO.File]::Exists($path)){[IO.File]::Delete($path)}
-  if([IO.File]::Exists($path)){throw 'RC1_QUOTA_SETTING_DISABLE_FAILED'}
+ # The historical behavior is ON; only an explicit opt-out is stored.
+ if($enabled){
+  if([IO.File]::Exists($path)){
+   if(([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'RC1_QUOTA_SETTING_REPARSE_DENIED'}
+   [IO.File]::Delete($path)
+  }
+  if([IO.File]::Exists($path)){throw 'RC1_QUOTA_SETTING_ENABLE_FAILED'}
   return
  }
  if(-not [IO.Directory]::Exists($dir)){[void][IO.Directory]::CreateDirectory($dir)}
@@ -132,12 +141,14 @@ function Set-Rc1QuotaDisplayEnabled([string]$path,[bool]$enabled) {
  $temp=Join-Path $dir ('quota-display-'+[Guid]::NewGuid().ToString('N')+'.tmp')
  $backup=Join-Path $dir ('quota-display-'+[Guid]::NewGuid().ToString('N')+'.bak')
  try {
-  [IO.File]::WriteAllText($temp,'enabled-v1',(New-Object Text.UTF8Encoding($false)))
+  [IO.File]::WriteAllText($temp,'disabled-v1',(New-Object Text.UTF8Encoding($false)))
   if([IO.File]::Exists($path)){
    if(([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'RC1_QUOTA_SETTING_REPARSE_DENIED'}
    [IO.File]::Replace($temp,$path,$backup)
   }else{[IO.File]::Move($temp,$path)}
-  if(-not (Test-Rc1QuotaDisplayEnabled $path)){throw 'RC1_QUOTA_SETTING_VERIFY_FAILED'}
+  if([IO.File]::ReadAllText($path,[Text.Encoding]::UTF8) -cne 'disabled-v1'){
+   throw 'RC1_QUOTA_SETTING_VERIFY_FAILED'
+  }
  }finally{
   if([IO.File]::Exists($temp)){[IO.File]::Delete($temp)}
   if([IO.File]::Exists($backup)){[IO.File]::Delete($backup)}

@@ -5763,24 +5763,9 @@ $quotaAuthItem.Add_Click({
     $script:ownerLastQuotaText=''
     $quotaLabel.Text='Остаток вызовов: --%'
     $quotaLabel.ForeColor=[Drawing.Color]::Silver
-    if(-not $enabled){return}
-    # Existing independent DPAPI grant can be refreshed by the Tray Host.
-    # Only the explicit user click may open a new OAuth browser tab.
-    $vault=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'quota-oauth-user.dpapi'
-    if([IO.File]::Exists($vault)){return}
-    $quotaScript=Join-Path $root 'rc1-quota-client.ps1'
-    if(-not [IO.File]::Exists($quotaScript)){return}
-    try{
-        Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
-          '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Authorize'
-        ) -WindowStyle Hidden -ErrorAction Stop | Out-Null
-    }catch{
-        # Fail closed instead of claiming automatic statistics are enabled.
-        try{Set-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath $false}catch{}
-        $quotaAuthItem.Checked=[bool](Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath)
-        [void][Windows.Forms.MessageBox]::Show('Не удалось открыть подключение статистики.',
-            'RDC Relay',[Windows.Forms.MessageBoxButtons]::OK,[Windows.Forms.MessageBoxIcon]::Warning)
-    }
+    # The Tray Host retains its original automatic per-account OAuth and
+    # 30-minute quota poll. Do not launch a second browser client from GUI:
+    # on reenable the Host's next 15-second tick resumes that workflow.
 })
 $accountButton.Add_Click({
     $accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))

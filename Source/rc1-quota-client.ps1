@@ -16,9 +16,14 @@ $statusFile=Join-Path $state 'remote-usage-status.json'
 $quotaDisplayPath=Join-Path $state 'quota-display.opt-in'
 function Test-Rc1QuotaDisplayEnabled([string]$path) {
  try {
-  if([string]::IsNullOrWhiteSpace($path) -or -not [IO.File]::Exists($path)){return $false}
+  if([string]::IsNullOrWhiteSpace($path)){return $false}
+  # No preference is the historical behavior: quota display and refresh ON.
+  if(-not [IO.File]::Exists($path)){return $true}
   $file=Get-Item -LiteralPath $path -Force -ErrorAction Stop
-  if($file.Length -ne 10 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $false}
+  if(($file.Length -ne 10 -and $file.Length -ne 11) -or
+     ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $false}
+  # 'enabled-v1' is accepted for migration from the uninstalled G101 trial.
+  # Explicit 'disabled-v1', malformed files and IO errors fail closed.
   return [IO.File]::ReadAllText($path,[Text.Encoding]::UTF8) -ceq 'enabled-v1'
  }catch{return $false}
 }
