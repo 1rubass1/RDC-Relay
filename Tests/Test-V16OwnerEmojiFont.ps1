@@ -17,9 +17,9 @@ try {
   $source.Contains('$script:ownerEmojiEnabled=[bool]$OwnerGui')) 'Consolas body and Owner-only emoji overlay preset'
  Check ($source.Contains('$headerLog.Font = New-Object Drawing.Font($script:ownerTextFontFamily,9)') -and
   $source.Contains('$log.Font = New-Object Drawing.Font($script:ownerTextFontFamily,10)')) 'both controls retain 9/10pt fixed-width font'
- Check ($source.Contains('$emojiFont=New-Object Drawing.Font($script:ownerEmojiFontFamily,10)') -and
-  $source.Contains('$linePitch=[Math]::Max($linePitch,$emojiPitch)') -and
-  $source.Contains('return [Math]::Max(0,(8*$linePitch)+17-$baselineHeight)')) 'Owner journal sizes to tallest inline emoji'
+ Check ($source.Contains('$script:ownerJournalLinePitch=[int]$linePitch') -and
+  $source.Contains('return [Math]::Max(0,(8*$linePitch)+17-$baselineHeight)') -and
+  -not $source.Contains('$linePitch=[Math]::Max($linePitch,$emojiPitch)')) 'Owner journal uses actual compact Consolas pitch, no G98 17px worst-case accumulation'
  Check ($source.Contains('if($OwnerGui){Apply-OwnerEmojiFont $headerLog}') -and
   $source.Contains('if($OwnerGui){Apply-OwnerEmojiFont $log}')) 'overlay applied after colorization to both panes'
  $def=$ast.Find({param($n)

@@ -69,7 +69,7 @@ try{
   $activityRowReserve -ge 1 -and
   $newBottomGap -eq 0 -and $activityPaneMinHeightPreferred -eq (8*$ownerPitch+17)) 'Owner minimum fits six events plus top and bottom blank rows after font change'
  Check ((($paneMinHeightPreferred-17+$activityRowReserve) % $ownerPitch) -eq 0) 'inner viewport aligns to text line pitch without double-counting existing space'
- Check (($line -ne 15 -or $ownerPitch -ne 17) -or ($activityRowReserve -eq 28 -and $activityPaneMinHeightPreferred -eq 153)) 'STARMER mixed 15px body/17px emoji pitch reserves six events at 153px'
+ Check (($line -ne 15 -or $ownerPitch -ne 15) -or ($activityRowReserve -eq 12 -and $activityPaneMinHeightPreferred -eq 137)) 'STARMER mixed glyphs use actual compact 15px row pitch, six events at 137px'
  $headerProbe=New-Object Windows.Forms.RichTextBox
  $headerFont=New-Object Drawing.Font($script:ownerTextFontFamily,9)
  try {
@@ -106,7 +106,7 @@ try{
  Check ($headerPaneMinHeightPreferred -lt 125 -and
   $activityPaneMinHeightPreferred -eq (8*$ownerPitch+17)) 'Owner pane clamp follows mixed glyph metrics'
  $minWindowHeight=78+38+$headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred+7+48
- Check (($headerPitch -ne 14 -or $ownerPitch -ne 17) -or ($minWindowHeight -eq 417)) 'full Owner window minimum accounts for mono banner plus emoji events'
+ Check (($headerPitch -ne 14 -or $ownerPitch -ne 15) -or ($minWindowHeight -eq 401)) 'full Owner window minimum uses actual compact journal pitch'
  $minPaneHeight=$headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred
  $contentHost.Height=$minPaneHeight
  Check ((Get-EffectivePaneMinHeight) -eq $activityPaneMinHeightPreferred -and

@@ -3482,9 +3482,11 @@ function Get-Rc1HeaderBannerMinimum {
 }
 $headerPaneMinHeightPreferred=if($OwnerGui){Get-Rc1HeaderBannerMinimum}else{$paneMinHeightPreferred}
 function Get-Rc1ActivityRowReserve([int]$baselineHeight) {
-    # Measure the actual RichEdit line advance for the selected font.
-    # Owner needs six events plus two blank rows; the legacy fallback keeps
-    # its existing-slack calculation. The scrollbar reserves another 17px.
+    # Measure the actual compact RichEdit row pitch, not the unconstrained
+    # Segoe Emoji font height. RdcLogBox.ApplyCompactLineSpacing() explicitly
+    # fixes paragraph advance to the Consolas body font; isolated mixed-run
+    # RichEdit tests confirm inline emoji still advance by the body pitch.
+    # Owner reserves six events plus two blank rows and 17px for scrollbars.
     $probe=New-Object Windows.Forms.RichTextBox
     $font=New-Object Drawing.Font($script:ownerTextFontFamily,10)
     try {
@@ -3495,17 +3497,6 @@ function Get-Rc1ActivityRowReserve([int]$baselineHeight) {
         [void]$probe.Handle
         $linePitch=$probe.GetPositionFromCharIndex(3).Y -
                    $probe.GetPositionFromCharIndex(0).Y
-        if($OwnerGui -and $script:ownerEmojiEnabled){
-            # Inline emoji may increase row height even with Consolas body text.
-            # Measure the taller font as an upper bound for event capacity.
-            $emojiFont=New-Object Drawing.Font($script:ownerEmojiFontFamily,10)
-            try {
-                $probe.Font=$emojiFont
-                $emojiPitch=$probe.GetPositionFromCharIndex(3).Y -
-                            $probe.GetPositionFromCharIndex(0).Y
-                $linePitch=[Math]::Max($linePitch,$emojiPitch)
-            } finally { $emojiFont.Dispose() }
-        }
         if($linePitch -lt 8 -or $linePitch -gt 50){throw 'RC1_INVALID_LOG_LINE_PITCH'}
         # Both minimum-pane and journal-capacity calculations use the same
         # measured RichEdit line pitch.
@@ -3513,7 +3504,7 @@ function Get-Rc1ActivityRowReserve([int]$baselineHeight) {
         if($OwnerGui){
             $script:ownerJournalLinePitch=[int]$linePitch
             # Six visible events plus one empty row above and below.
-            # Non-Consolas fonts may need more than a single row of reserve.
+            # Use exactly the body pitch also used by the live line formatter.
             return [Math]::Max(0,(8*$linePitch)+17-$baselineHeight)
         }
         return $(if($existingSlack -eq 0){$linePitch}else{$linePitch-$existingSlack})

@@ -31,7 +31,7 @@ $reserve=Get-Rc1ActivityRowReserve 125
 $linePitch=[int]$script:ownerJournalLinePitch
 $minOwner=125+$reserve
 $log=[pscustomobject]@{IsDisposed=$false;ClientSize=(New-Object Drawing.Size(800,($minOwner-17)))}
-Check ($minOwner -eq (8*$linePitch+17) -and $linePitch -eq 17) 'on STARMER mixed Consolas/Emoji, 153px minimum yields 17px safe pitch and six events'
+Check ($minOwner -eq (8*$linePitch+17) -and $linePitch -eq 15) 'on STARMER mixed Consolas/Emoji compact rows use 15px pitch and minimum 137px'
 Check ((Get-Rc1JournalVisibleRowCapacity) -eq 6) 'minimum fits exactly six event lines plus top and bottom row'
 $log.ClientSize=New-Object Drawing.Size(800,($minOwner-17+3*$linePitch))
 Check ((Get-Rc1JournalVisibleRowCapacity) -eq 9) 'three row-pitches of growth show three more entries'
