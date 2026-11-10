@@ -5805,15 +5805,111 @@ function Complete-RuntimeInitialization {
     Start-Remote
 }
 
+# Owner-only modals reuse the Account Switch dialog's dark WinForms
+# typography, surface colors, spacing and confirmation button geometry.
+# They never change the Host or Remote lifecycle by themselves.
+function New-RdcOwnerStopDialog {
+    $dialog=New-Object Windows.Forms.Form
+    $dialog.Name='rc1-stop-remote-confirmation'
+    $dialog.Text='Остановка Remote'
+    $dialog.FormBorderStyle=[Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.StartPosition=[Windows.Forms.FormStartPosition]::CenterParent
+    $dialog.ShowInTaskbar=$false
+    $dialog.MaximizeBox=$false
+    $dialog.MinimizeBox=$false
+    $dialog.AutoScaleMode=[Windows.Forms.AutoScaleMode]::Font
+    $dialog.Font=[Drawing.Font]::new('Segoe UI',10)
+    $dialog.ClientSize=[Drawing.Size]::new(480,168)
+    $dialog.BackColor=[Drawing.Color]::FromArgb(29,32,36)
+    $dialog.ForeColor=[Drawing.Color]::Gainsboro
+
+    $layout=New-Object Windows.Forms.TableLayoutPanel
+    $layout.Name='rc1-stop-remote-layout'
+    $layout.Dock=[Windows.Forms.DockStyle]::Fill
+    $layout.Padding=[Windows.Forms.Padding]::new(24,20,24,16)
+    $layout.ColumnCount=1
+    $layout.RowCount=2
+    [void]$layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,52))
+
+    $messageRow=New-Object Windows.Forms.TableLayoutPanel
+    $messageRow.Name='rc1-stop-remote-warning-row'
+    $messageRow.Dock=[Windows.Forms.DockStyle]::Top
+    $messageRow.AutoSize=$true
+    $messageRow.ColumnCount=2
+    $messageRow.RowCount=1
+    $messageRow.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    [void]$messageRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute,44))
+    [void]$messageRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    $warning=New-Object Windows.Forms.PictureBox
+    $warning.Name='rc1-stop-remote-warning-icon'
+    $warning.Image=([Drawing.SystemIcons]::Warning).ToBitmap()
+    $warning.Size=[Drawing.Size]::new(32,32)
+    $warning.SizeMode=[Windows.Forms.PictureBoxSizeMode]::CenterImage
+    $warning.Margin=[Windows.Forms.Padding]::new(0,0,12,0)
+    $warning.TabStop=$false
+    $warning.AccessibleDescription='Стандартный значок предупреждения.'
+    $message=New-Object Windows.Forms.Label
+    $message.Name='rc1-stop-remote-question'
+    $message.Text='Остановить Remote?'
+    $message.Font=[Drawing.Font]::new($dialog.Font,[Drawing.FontStyle]::Bold)
+    $message.AutoSize=$true
+    $message.MaximumSize=[Drawing.Size]::new(385,0)
+    $message.Dock=[Windows.Forms.DockStyle]::Top
+    $message.Margin=[Windows.Forms.Padding]::new(0,3,0,0)
+    $message.ForeColor=$dialog.ForeColor
+    [void]$messageRow.Controls.Add($warning,0,0)
+    [void]$messageRow.Controls.Add($message,1,0)
+    [void]$layout.Controls.Add($messageRow,0,0)
+
+    $buttons=New-Object Windows.Forms.FlowLayoutPanel
+    $buttons.Name='rc1-stop-remote-buttons'
+    $buttons.Dock=[Windows.Forms.DockStyle]::Fill
+    $buttons.FlowDirection=[Windows.Forms.FlowDirection]::RightToLeft
+    $buttons.WrapContents=$false
+    $buttons.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
+    $buttons.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    $no=New-Object Windows.Forms.Button
+    $no.Name='rc1-stop-remote-no'
+    $no.Text='Нет'
+    $no.Size=[Drawing.Size]::new(96,34)
+    $no.DialogResult=[Windows.Forms.DialogResult]::No
+    $no.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $no.ForeColor=$dialog.ForeColor
+    $no.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $no.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
+    $no.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
+    $yes=New-Object Windows.Forms.Button
+    $yes.Name='rc1-stop-remote-yes'
+    $yes.Text='Да'
+    $yes.Size=[Drawing.Size]::new(96,34)
+    $yes.DialogResult=[Windows.Forms.DialogResult]::Yes
+    $yes.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $yes.ForeColor=$dialog.ForeColor
+    $yes.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $yes.FlatAppearance.BorderColor=[Drawing.Color]::LightCoral
+    $yes.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
+    [void]$buttons.Controls.Add($no)
+    [void]$buttons.Controls.Add($yes)
+    [void]$layout.Controls.Add($buttons,0,1)
+    $dialog.Controls.Add($layout)
+    $dialog.AcceptButton=$no
+    $dialog.CancelButton=$no
+    $dialog.ActiveControl=$no
+    return $dialog
+}
+function Show-RdcOwnerStopConfirmation {
+    $confirmation=New-RdcOwnerStopDialog
+    try { return $confirmation.ShowDialog($form) }
+    finally { $confirmation.Dispose() }
+}
+
 $finish.Add_Click({
     if ($OwnerGui) {
         if (-not $script:ownerManagedMode) { return }
         if ($script:ownerCanStop) {
-            $answer=[Windows.Forms.MessageBox]::Show(
-                'Остановить только Remote, созданный этим RC1 Host?',
-                'RDC Relay 1.6.0 RC1',
-                [Windows.Forms.MessageBoxButtons]::YesNo,
-                [Windows.Forms.MessageBoxIcon]::Question)
+            $answer=Show-RdcOwnerStopConfirmation
             if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
             $script:ownerQueuedAction='STOP'
         } elseif ($script:ownerCanStart) { $script:ownerQueuedAction='START' }
@@ -6068,6 +6164,92 @@ $helpButton.Add_Click({
     $helpMenu.Show($helpButton,(New-Object Drawing.Point(10,$helpButton.Height)))
 })
 
+# Keep all existing mode-specific Help content, but present it in an
+# Owner-only dark scrollable dialog instead of a light system MessageBox.
+function New-RdcOwnerHelpDialog([string]$content) {
+    $dialog=New-Object Windows.Forms.Form
+    $dialog.Name='rc1-help-dialog'
+    $dialog.Text='RDC Relay — справка'
+    $dialog.FormBorderStyle=[Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.StartPosition=[Windows.Forms.FormStartPosition]::CenterParent
+    $dialog.ShowInTaskbar=$false
+    $dialog.MaximizeBox=$false
+    $dialog.MinimizeBox=$false
+    $dialog.AutoScaleMode=[Windows.Forms.AutoScaleMode]::Font
+    $dialog.Font=[Drawing.Font]::new('Segoe UI',10)
+    $dialog.ClientSize=[Drawing.Size]::new(660,480)
+    $dialog.BackColor=[Drawing.Color]::FromArgb(29,32,36)
+    $dialog.ForeColor=[Drawing.Color]::Gainsboro
+
+    $layout=New-Object Windows.Forms.TableLayoutPanel
+    $layout.Name='rc1-help-layout'
+    $layout.Dock=[Windows.Forms.DockStyle]::Fill
+    $layout.Padding=[Windows.Forms.Padding]::new(24,20,24,16)
+    $layout.ColumnCount=1
+    $layout.RowCount=3
+    [void]$layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,44))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,52))
+
+    $heading=New-Object Windows.Forms.Label
+    $heading.Name='rc1-help-heading'
+    $heading.Text='Справка / О программе'
+    $heading.Font=[Drawing.Font]::new('Segoe UI',12,[Drawing.FontStyle]::Bold)
+    $heading.ForeColor=$dialog.ForeColor
+    $heading.AutoSize=$true
+    $heading.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    [void]$layout.Controls.Add($heading,0,0)
+
+    $body=New-Object Windows.Forms.RichTextBox
+    $body.Name='rc1-help-content'
+    $body.Text=$content
+    $body.ReadOnly=$true
+    $body.TabStop=$true
+    $body.AccessibleName='Справка RDC Relay'
+    $body.ScrollBars=[Windows.Forms.RichTextBoxScrollBars]::Vertical
+    $body.WordWrap=$true
+    $body.DetectUrls=$false
+    $body.ShortcutsEnabled=$true
+    $body.BorderStyle=[Windows.Forms.BorderStyle]::None
+    $body.Dock=[Windows.Forms.DockStyle]::Fill
+    $body.BackColor=[Drawing.Color]::FromArgb(38,41,46)
+    $body.ForeColor=$dialog.ForeColor
+    $body.Font=$dialog.Font
+    $body.Margin=[Windows.Forms.Padding]::new(0,0,0,8)
+    [void]$layout.Controls.Add($body,0,1)
+
+    $buttons=New-Object Windows.Forms.FlowLayoutPanel
+    $buttons.Name='rc1-help-buttons'
+    $buttons.Dock=[Windows.Forms.DockStyle]::Fill
+    $buttons.FlowDirection=[Windows.Forms.FlowDirection]::RightToLeft
+    $buttons.WrapContents=$false
+    $buttons.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
+    $buttons.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    $close=New-Object Windows.Forms.Button
+    $close.Name='rc1-help-close'
+    $close.Text='Закрыть'
+    $close.Size=[Drawing.Size]::new(96,34)
+    $close.DialogResult=[Windows.Forms.DialogResult]::OK
+    $close.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $close.ForeColor=$dialog.ForeColor
+    $close.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $close.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
+    $close.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
+    [void]$buttons.Controls.Add($close)
+    [void]$layout.Controls.Add($buttons,0,2)
+    $dialog.Controls.Add($layout)
+    $dialog.AcceptButton=$close
+    $dialog.CancelButton=$close
+    $dialog.ActiveControl=$close
+    return $dialog
+}
+function Show-RdcOwnerHelp([string]$content) {
+    $helpDialog=New-RdcOwnerHelpDialog $content
+    try { return $helpDialog.ShowDialog($form) }
+    finally { $helpDialog.Dispose() }
+}
+
 $aboutItem.Add_Click({
     $helpText =
         'RDC Relay v' + $appVersion + $nl + $nl +
@@ -6111,12 +6293,16 @@ $aboutItem.Add_Click({
         $helpPid=if([int]$script:ownerRemotePid -gt 0){[string][int]$script:ownerRemotePid}else{'—'}
         $helpText += $nl + $nl + 'PID Remote: ' + $helpPid
     }
-    [Windows.Forms.MessageBox]::Show(
-        $helpText,
-        'RDC Relay — справка',
-        [Windows.Forms.MessageBoxButtons]::OK,
-        [Windows.Forms.MessageBoxIcon]::Information
-    ) | Out-Null
+    if ($OwnerGui) {
+        [void](Show-RdcOwnerHelp $helpText)
+    }else{
+        [Windows.Forms.MessageBox]::Show(
+            $helpText,
+            'RDC Relay — справка',
+            [Windows.Forms.MessageBoxButtons]::OK,
+            [Windows.Forms.MessageBoxIcon]::Information
+        ) | Out-Null
+    }
 })
 
 $openLogItem.Add_Click({
