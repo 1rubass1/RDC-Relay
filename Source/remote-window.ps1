@@ -5852,14 +5852,107 @@ $quotaAuthItem.Add_Click({
 $accountButton.Add_Click({
     $accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))
 })
+# Owner-only confirmation: separate labels are required for one bold leading
+# instruction. A stock MessageBox cannot style a single paragraph. The modal
+# itself performs NO account/Remote action; only an explicit Yes enables the
+# existing authenticated Host request.
+function New-RdcOwnerAccountSwitchDialog {
+    $dialog=New-Object Windows.Forms.Form
+    $dialog.Text='Смена аккаунта Desktop Commander'
+    $dialog.Name='rc1-account-switch-confirmation'
+    $dialog.FormBorderStyle=[Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.StartPosition=[Windows.Forms.FormStartPosition]::CenterParent
+    $dialog.ShowInTaskbar=$false
+    $dialog.MaximizeBox=$false
+    $dialog.MinimizeBox=$false
+    $dialog.AutoScaleMode=[Windows.Forms.AutoScaleMode]::Font
+    $dialog.Font=[Drawing.Font]::new('Segoe UI',10)
+    $dialog.ClientSize=[Drawing.Size]::new(600,325)
+    $dialog.BackColor=[Drawing.Color]::FromArgb(29,32,36)
+    $dialog.ForeColor=[Drawing.Color]::Gainsboro
+
+    $layout=New-Object Windows.Forms.TableLayoutPanel
+    $layout.Dock=[Windows.Forms.DockStyle]::Fill
+    $layout.Padding=[Windows.Forms.Padding]::new(24,20,24,16)
+    $layout.ColumnCount=1
+    $layout.RowCount=6
+    [void]$layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    for($i=0;$i -lt 4;$i++){
+        [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::AutoSize))
+    }
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,52))
+
+    $paragraphs=@(
+        'Сначала откройте сайт Desktop Commander и войдите в аккаунт, на который хотите переключиться.',
+        'Смена аккаунта разорвёт текущее соединение и отзовёт авторизацию этого устройства.',
+        'После выхода из аккаунта RDC Relay запустит новый Remote и начнёт процедуру авторизации устройства.',
+        'Продолжить смену аккаунта?'
+    )
+    for($i=0;$i -lt $paragraphs.Count;$i++){
+        $label=New-Object Windows.Forms.Label
+        $label.Name='rc1-account-switch-paragraph-'+[string]($i+1)
+        $label.Text=$paragraphs[$i]
+        $label.AutoSize=$true
+        $label.MaximumSize=[Drawing.Size]::new(546,0)
+        $label.Dock=[Windows.Forms.DockStyle]::Top
+        $label.ForeColor=$dialog.ForeColor
+        $label.Margin=[Windows.Forms.Padding]::new(0,0,0,$(if($i -lt 3){14}else{0}))
+        if($i -eq 0){
+            $label.Font=[Drawing.Font]::new($dialog.Font,[Drawing.FontStyle]::Bold)
+        }
+        $layout.Controls.Add($label,0,$i)
+    }
+
+    $buttons=New-Object Windows.Forms.FlowLayoutPanel
+    $buttons.Name='rc1-account-switch-buttons'
+    $buttons.Dock=[Windows.Forms.DockStyle]::Fill
+    $buttons.FlowDirection=[Windows.Forms.FlowDirection]::RightToLeft
+    $buttons.WrapContents=$false
+    $buttons.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
+    $buttons.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    $no=New-Object Windows.Forms.Button
+    $no.Name='rc1-account-switch-no'
+    $no.Text='Нет'
+    $no.Size=[Drawing.Size]::new(96,34)
+    $no.DialogResult=[Windows.Forms.DialogResult]::No
+    $no.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $no.ForeColor=$dialog.ForeColor
+    $no.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $no.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
+    $no.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
+    $yes=New-Object Windows.Forms.Button
+    $yes.Name='rc1-account-switch-yes'
+    $yes.Text='Да'
+    $yes.Size=[Drawing.Size]::new(96,34)
+    $yes.DialogResult=[Windows.Forms.DialogResult]::Yes
+    $yes.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $yes.ForeColor=$dialog.ForeColor
+    $yes.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $yes.FlatAppearance.BorderColor=[Drawing.Color]::LightCoral
+    $yes.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
+    [void]$buttons.Controls.Add($no)
+    [void]$buttons.Controls.Add($yes)
+    $layout.Controls.Add($buttons,0,5)
+    $dialog.Controls.Add($layout)
+    # Destructive account logout must never be the implicit Enter/Esc choice.
+    $dialog.AcceptButton=$no
+    $dialog.CancelButton=$no
+    $dialog.ActiveControl=$no
+    return $dialog
+}
+function Show-RdcOwnerAccountSwitchConfirmation {
+    $confirmation=New-RdcOwnerAccountSwitchDialog
+    try{
+        return $confirmation.ShowDialog($form)
+    }finally{
+        $confirmation.Dispose()
+    }
+}
 $switchAccountItem.Add_Click({
     if ($OwnerGui) {
         if (-not $script:ownerManagedMode -or -not $script:ownerCanSwitchAccount) { return }
-        $message = 'Смена аккаунта разорвёт текущее удалённое соединение и отзовёт авторизацию этого устройства.' + $nl + $nl +
-            'После выхода из аккаунта RDC Relay запустит новый Remote и предложит авторизоваться в браузере.' + $nl + $nl +
-            'Войдите в тот же аккаунт Desktop Commander, который подключён в ChatGPT.' + $nl + $nl + 'Продолжить?'
-        $answer = [Windows.Forms.MessageBox]::Show($message,'Сменить аккаунт Desktop Commander',
-            [Windows.Forms.MessageBoxButtons]::YesNo,[Windows.Forms.MessageBoxIcon]::Warning)
+        $answer=Show-RdcOwnerAccountSwitchConfirmation
         if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
         $script:ownerCanSwitchAccount=$false
         $switchAccountItem.Enabled=$false
