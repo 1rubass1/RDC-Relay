@@ -41,7 +41,15 @@ $observerTimer=$null
 $quotaTimer=$null
 $quotaPollProcess=$null
 $quotaLastAccount=''
-$quotaAutoTried=@{}
+function Test-Rc1QuotaDisplayEnabled([string]$path) {
+ try {
+  if([string]::IsNullOrWhiteSpace($path) -or -not [IO.File]::Exists($path)){return $false}
+  $file=Get-Item -LiteralPath $path -Force -ErrorAction Stop
+  if($file.Length -ne 10 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $false}
+  return [IO.File]::ReadAllText($path,[Text.Encoding]::UTF8) -ceq 'enabled-v1'
+ }catch{return $false}
+}
+$quotaDisplayPath=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'quota-display.opt-in'
 try{
  if($ObserveExisting -or $Full){
   . (Join-Path $root 'rc1-remote-observer.ps1')
@@ -131,9 +139,14 @@ try{
   $quotaTimer=New-Object Windows.Forms.Timer
   $quotaTimer.Interval=15000
   $quotaTimer.Add_Tick({
-   # Quota credentials are independent of Remote device credentials.
-   # Automatic browser consent is allowed only for confirmed Host-owned Ready
-   # account identity; never for fake or adopted Remote.
+   # The Owner menu controls this independent, persisted opt-in. Disabled
+   # is fail-closed and must never cause MCP traffic or browser consent.
+   if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){
+    $quotaLastAccount=''
+    $quotaNextPollUtc=[DateTime]::MinValue
+    return
+   }
+   # Only a confirmed Host-owned Ready account may request who_am_i.
    $activeAccount=[string]$owner.ActiveManagedAccount
    if(-not $activeAccount){
     $quotaLastAccount=''
@@ -147,27 +160,12 @@ try{
    if([DateTime]::UtcNow -lt $quotaNextPollUtc){return}
    if($quotaPollProcess -and -not $quotaPollProcess.HasExited){return}
    if($quotaPollProcess){$quotaPollProcess.Dispose();$quotaPollProcess=$null}
-   $quotaCache=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'remote-usage-cache.json'
-   $quotaCachedAccount=''
-   if([IO.File]::Exists($quotaCache)){
-    try{
-     $quotaData=[IO.File]::ReadAllText($quotaCache,[Text.Encoding]::UTF8)|ConvertFrom-Json
-     if([string]$quotaData.source -cne 'official-remote-who-am-i'){return}
-     $quotaCachedAccount=[string]$quotaData.accountEmail
-    }catch{return} # transient read error is never an OAuth consent trigger
-   }
-   $mode='-Poll'
-   if(-not [string]::Equals($quotaCachedAccount,$activeAccount,[StringComparison]::OrdinalIgnoreCase) -and
-      -not $quotaAutoTried.ContainsKey($activeAccount.ToLowerInvariant())){
-    # One browser launch per account per Host run. The provider may still
-    # require visible user consent or account selection; no token interception.
-    $quotaAutoTried[$activeAccount.ToLowerInvariant()]=$true
-    $mode='-Authorize'
-   }
+   # Never open the browser from a background timer. OAuth is started only
+   # on an explicit checked Account-menu action when its token is missing.
    $quotaNextPollUtc=[DateTime]::UtcNow.AddMinutes(30)
    try{
     $quotaPollProcess=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
-     '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),$mode
+     '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Poll'
     ) -WindowStyle Hidden -PassThru -ErrorAction Stop
    }catch{} # Host and Remote remain usable if quota authorization fails.
   })

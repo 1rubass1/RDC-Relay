@@ -13,6 +13,15 @@ $state=Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot'
 $vault=Join-Path $state 'quota-oauth-user.dpapi'
 $cache=Join-Path $state 'remote-usage-cache.json'
 $statusFile=Join-Path $state 'remote-usage-status.json'
+$quotaDisplayPath=Join-Path $state 'quota-display.opt-in'
+function Test-Rc1QuotaDisplayEnabled([string]$path) {
+ try {
+  if([string]::IsNullOrWhiteSpace($path) -or -not [IO.File]::Exists($path)){return $false}
+  $file=Get-Item -LiteralPath $path -Force -ErrorAction Stop
+  if($file.Length -ne 10 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $false}
+  return [IO.File]::ReadAllText($path,[Text.Encoding]::UTF8) -ceq 'enabled-v1'
+ }catch{return $false}
+}
 $script:quotaStage='startup'
 function Save-QuotaStatus([string]$result,[int]$httpStatus=0){
  # Diagnostic fields are fixed categories only; never record OAuth code,
@@ -182,6 +191,7 @@ function Invoke-QuotaAuthorize {
   # Browser is opened only on the explicit Account menu click.
   $authUrl=(Validate-OfficialEndpoint ([string]$metadata.authorization_endpoint))+'?'+$query
   $script:quotaStage='browser'
+  if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){throw 'RC1_QUOTA_DISABLED'}
   Start-Process -FilePath $authUrl
   $pending=$listener.GetContextAsync()
   if(-not $pending.Wait(180000)){throw 'RC1_QUOTA_AUTH_TIMEOUT'}
@@ -207,6 +217,7 @@ function Invoke-QuotaAuthorize {
   $script:quotaStage='token'
   $exchange=Add-ClientAuth $exchange $clientAuth.Method $clientAuth.Secret
   $token=Post-Token ([string]$metadata.token_endpoint) $exchange
+  if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){throw 'RC1_QUOTA_DISABLED'}
   [void](Store-Session ([string]$client.client_id) $token $clientAuth.Method $clientAuth.Secret)
   $script:quotaStage='vault'
   [void](Invoke-QuotaPoll)
@@ -251,6 +262,7 @@ function Parse-Quota($result){
  return @{Percent=$pct;Email=[string]$details.email}
 }
 function Invoke-QuotaPoll {
+ if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){return $false}
  $item=Read-Credentials
  if(-not $item){return $false}
  $metadata=Read-OAuthMetadata
@@ -281,10 +293,13 @@ function Invoke-QuotaPoll {
   observedAtUtc=([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture))
  }|ConvertTo-Json -Compress
  $script:quotaStage='cache'
+ # An in-flight poll must not publish a new value after opt-out.
+ if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){return $false}
  Write-PrivateFile $cache ([Text.Encoding]::UTF8.GetBytes($payload))
  return $true
 }
 try{
+ if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){Stop-Quota 'DISABLED'}
  if($Authorize){Invoke-QuotaAuthorize}
  elseif(-not (Invoke-QuotaPoll)){Stop-Quota 'NOT_AUTHORIZED'}
  $script:quotaStage='finished'

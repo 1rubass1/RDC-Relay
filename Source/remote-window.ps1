@@ -3629,7 +3629,8 @@ $verifyDeviceItem.Text = 'Подтвердить новое устройство
 [void]$accountMenu.Items.Add($devicesItem)
 if(-not $OwnerGui){[void]$accountMenu.Items.Add($verifyDeviceItem)}
 $quotaAuthItem=New-Object Windows.Forms.ToolStripMenuItem
-$quotaAuthItem.Text='Подключить статистику вызовов…'
+$quotaAuthItem.Text='Выводить остаток вызовов'
+$quotaAuthItem.CheckOnClick=[bool]$OwnerGui
 $quotaAuthItem.Visible=[bool]$OwnerGui
 $quotaAuthItem.Enabled=$false
 if($OwnerGui){[void]$accountMenu.Items.Add($quotaAuthItem)}
@@ -5746,17 +5747,40 @@ $finish.Add_Click({
     }
 })
 $quotaAuthItem.Add_Click({
-    # Explicit manual OAuth+PKCE fallback; trusted managed Host may also
-    # initiate browser consent for its confirmed Remote account.
-    # No device.json/token sharing or Remote process action.
-    if(-not $OwnerGui -or -not $script:ownerRealMode){return}
+    # Explicit user opt-in is durable and also gates the Tray Host's
+    # automatic who_am_i requests. OAuth is independent of Remote credentials.
+    if(-not $OwnerGui -or -not $script:ownerManagedMode){return}
+    $enabled=[bool]$quotaAuthItem.Checked
+    try{
+        Set-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath $enabled
+    }catch{
+        $quotaAuthItem.Checked=[bool](Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath)
+        [void][Windows.Forms.MessageBox]::Show('Не удалось сохранить настройку статистики вызовов.',
+            'RDC Relay',[Windows.Forms.MessageBoxButtons]::OK,[Windows.Forms.MessageBoxIcon]::Warning)
+        return
+    }
+    $script:ownerQuotaNextCheckUtc=[DateTime]::MinValue
+    $script:ownerLastQuotaText=''
+    $quotaLabel.Text='Остаток вызовов: --%'
+    $quotaLabel.ForeColor=[Drawing.Color]::Silver
+    if(-not $enabled){return}
+    # Existing independent DPAPI grant can be refreshed by the Tray Host.
+    # Only the explicit user click may open a new OAuth browser tab.
+    $vault=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'quota-oauth-user.dpapi'
+    if([IO.File]::Exists($vault)){return}
     $quotaScript=Join-Path $root 'rc1-quota-client.ps1'
     if(-not [IO.File]::Exists($quotaScript)){return}
     try{
         Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
-          '-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Authorize'
-        ) -WindowStyle Hidden | Out-Null
-    }catch{}
+          '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),'-Authorize'
+        ) -WindowStyle Hidden -ErrorAction Stop | Out-Null
+    }catch{
+        # Fail closed instead of claiming automatic statistics are enabled.
+        try{Set-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath $false}catch{}
+        $quotaAuthItem.Checked=[bool](Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath)
+        [void][Windows.Forms.MessageBox]::Show('Не удалось открыть подключение статистики.',
+            'RDC Relay',[Windows.Forms.MessageBoxButtons]::OK,[Windows.Forms.MessageBoxIcon]::Warning)
+    }
 })
 $accountButton.Add_Click({
     $accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))

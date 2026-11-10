@@ -108,6 +108,41 @@ function Convert-Rc1OwnerStartupInstructions([string]$header) {
  }
  return [string]::Join("`n",$display.ToArray())
 }
+# User-only opt-in for the independent official quota client. No OAuth secret is
+# stored here; deleting this exact marker disables future automatic polling.
+function Test-Rc1QuotaDisplayEnabled([string]$path) {
+ try {
+  if([string]::IsNullOrWhiteSpace($path) -or -not [IO.File]::Exists($path)){return $false}
+  $file=Get-Item -LiteralPath $path -Force -ErrorAction Stop
+  if($file.Length -ne 10 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $false}
+  return [IO.File]::ReadAllText($path,[Text.Encoding]::UTF8) -ceq 'enabled-v1'
+ }catch{return $false}
+}
+function Set-Rc1QuotaDisplayEnabled([string]$path,[bool]$enabled) {
+ if([string]::IsNullOrWhiteSpace($path)){throw 'RC1_QUOTA_SETTING_PATH_REQUIRED'}
+ $dir=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($path))
+ if(-not $dir){throw 'RC1_QUOTA_SETTING_PARENT_REQUIRED'}
+ if(-not $enabled){
+  if([IO.File]::Exists($path)){[IO.File]::Delete($path)}
+  if([IO.File]::Exists($path)){throw 'RC1_QUOTA_SETTING_DISABLE_FAILED'}
+  return
+ }
+ if(-not [IO.Directory]::Exists($dir)){[void][IO.Directory]::CreateDirectory($dir)}
+ if(([IO.File]::GetAttributes($dir) -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'RC1_QUOTA_SETTING_REPARSE_DENIED'}
+ $temp=Join-Path $dir ('quota-display-'+[Guid]::NewGuid().ToString('N')+'.tmp')
+ $backup=Join-Path $dir ('quota-display-'+[Guid]::NewGuid().ToString('N')+'.bak')
+ try {
+  [IO.File]::WriteAllText($temp,'enabled-v1',(New-Object Text.UTF8Encoding($false)))
+  if([IO.File]::Exists($path)){
+   if(([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'RC1_QUOTA_SETTING_REPARSE_DENIED'}
+   [IO.File]::Replace($temp,$path,$backup)
+  }else{[IO.File]::Move($temp,$path)}
+  if(-not (Test-Rc1QuotaDisplayEnabled $path)){throw 'RC1_QUOTA_SETTING_VERIFY_FAILED'}
+ }finally{
+  if([IO.File]::Exists($temp)){[IO.File]::Delete($temp)}
+  if([IO.File]::Exists($backup)){[IO.File]::Delete($backup)}
+ }
+}
 # A read-only, expiring private snapshot from an authorized official
 # Remote Desktop Commander who_am_i call. The Windows device-agent's OAuth
 # credentials are NOT reused: they are not the ChatGPT/hosted MCP client grant.
@@ -214,7 +249,7 @@ function Start-RdcOwnerGui {
  }
  $tip.SetToolTip($finish,$tipText)
  $accountButton.Enabled=$true
- $quotaAuthItem.Enabled=$script:ownerRealMode
+ $quotaAuthItem.Enabled=$script:ownerManagedMode
  $accountButton.AccessibleDescription='Аккаунт: переход к управлению устройствами без изменения Remote.'
  $script:ownerCanSwitchAccount=[bool]$initialCapabilities.switchAccount
  $switchAccountItem.Enabled=$script:ownerCanSwitchAccount
@@ -242,6 +277,8 @@ function Start-RdcOwnerGui {
  $script:ownerRemotePid=0
  $script:ownerLastUptimeText=''
  $script:ownerQuotaPath=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'remote-usage-cache.json'
+ $script:ownerQuotaEnabledPath=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'quota-display.opt-in'
+ $quotaAuthItem.Checked=[bool](Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath)
  $script:ownerQuotaNextCheckUtc=[DateTime]::MinValue
  $script:ownerLastQuotaText=''
  $script:ownerLastLogCursor=0
@@ -510,7 +547,11 @@ function Start-RdcOwnerGui {
   # no network requests on the WinForms UI thread). Expired means unknown.
   if([DateTime]::UtcNow -ge $script:ownerQuotaNextCheckUtc){
    $script:ownerQuotaNextCheckUtc=[DateTime]::UtcNow.AddSeconds(15)
-   $quotaText=Get-Rc1QuotaStatus $script:ownerQuotaPath ([string]$script:accountEmail) ([DateTime]::UtcNow)
+   $quotaDisplayEnabled=Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath
+   if($quotaAuthItem.Checked -ne $quotaDisplayEnabled){$quotaAuthItem.Checked=$quotaDisplayEnabled}
+   $quotaText=if($quotaDisplayEnabled){
+    Get-Rc1QuotaStatus $script:ownerQuotaPath ([string]$script:accountEmail) ([DateTime]::UtcNow)
+   }else{'Остаток вызовов: --%'}
    if($quotaText -cne $script:ownerLastQuotaText){
     $script:ownerLastQuotaText=$quotaText
     $quotaLabel.Text=$quotaText

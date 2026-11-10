@@ -73,14 +73,14 @@ Check ($layout.Contains('$script:ownerVersionIntroTimer.Interval=25') -and
  $layout.Contains('Закрытие окна закрывает только GUI') -and
  -not $layout.Contains('Host запускает Desktop Commander Remote 0.2.52 в отдельной проверяемой Windows Job.')) 'About explains lifecycle in plain language and shows current Remote PID last'
  Check ($layout.Contains('if(-not $OwnerGui){[void]$accountMenu.Items.Add($verifyDeviceItem)}') -and
- $layout.Contains('if($OwnerGui){[void]$accountMenu.Items.Add($quotaAuthItem)}')) 'RC1 hides redundant device verification but keeps manual quota link'
+ $layout.Contains('if($OwnerGui){[void]$accountMenu.Items.Add($quotaAuthItem)}')) 'RC1 hides redundant device verification and retains managed quota display toggle'
  $hostRuntime=[IO.File]::ReadAllText((Join-Path $source 'RdcOwnerRuntime.cs'),[Text.Encoding]::UTF8)
  Check ($hostRuntime.Contains('{"deviceVerificationLink",false}') -and
  -not $hostRuntime.Contains('if(destination=="DEVICE_VERIFICATION")')) 'RC1 Host refuses redundant device verification navigation'
  Check (-not $owner.Contains("('Remote PID '") -and -not $owner.Contains("Set-RuntimeDisplay 'Remote PID")) 'PID label omits word Remote'
  Check ($layout.Contains("$"+'quotaAuthItem.Add_Click({') -and
  $layout.Contains("$"+'quotaAuthItem.Visible=[bool]$OwnerGui') -and
- $owner.Contains('quotaAuthItem.Enabled=$script:ownerRealMode')) 'OAuth authorization requires explicit owner Account click'
+ $owner.Contains('quotaAuthItem.Enabled=$script:ownerManagedMode')) 'OAuth authorization requires explicit owner Account click'
  Check ($owner.Contains('Остаток вызовов: 0%') -and $owner.Contains('[Drawing.Color]::LightCoral')) 'genuine zero remaining appears in red'
  Check ($owner.Contains('Get-Rc1QuotaStatus $script:ownerQuotaPath') -and
  $owner.Contains('AddSeconds(15)')) 'quota file polled without remote OAuth or UI thread network calls'

@@ -96,14 +96,17 @@ $runtime=[IO.File]::ReadAllText((Join-Path $src 'RdcOwnerRuntime.cs'),[Text.Enco
 Check ($runtime.Contains('public string ActiveManagedAccount') -and
  $runtime.Contains('managedState!="Ready"') -and
  $runtime.Contains('!managedProcess.Running') -and
- $hostCode.Contains('$activeAccount=[string]$owner.ActiveManagedAccount')) 'automatic quota browser launch gated by actual ready Host-owned identity'
-Check ($hostCode.Contains("$"+'mode='+"'-Authorize'") -and
- $hostCode.Contains("$"+'quotaAutoTried.ContainsKey') -and
- $hostCode.Contains("$"+'quotaData.source -cne '+"'official-remote-who-am-i'") -and
- $hostCode.Contains('[StringComparison]::OrdinalIgnoreCase')) 'mismatch triggers one automatic browser attempt without repeated prompts'
+ $hostCode.Contains('$activeAccount=[string]$owner.ActiveManagedAccount')) 'automatic quota polling gated by actual ready Host-owned identity'
+Check ($hostCode.Contains('if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath))') -and
+ $hostCode.Contains("'-Poll'") -and
+ -not $hostCode.Contains("'-Authorize'") -and
+ $hostCode.Contains('$activeAccount=[string]$owner.ActiveManagedAccount')) 'Host polls only after opt-in and never launches browser automatically'
 Check (-not $hostCode.Contains("'remote --logout'") -and
  -not $hostCode.Contains('StopManagedRemote(')) 'automatic quota never logs out or controls Remote'
-Check ($window.Contains('rc1-quota-client.ps1') -and $window.Contains("'-Authorize'") -and $gui.Contains('$quotaAuthItem.Enabled=$script:ownerRealMode')) 'manual Account-menu OAuth fallback remains available'
+Check ($window.Contains('rc1-quota-client.ps1') -and $window.Contains("'-Authorize'") -and
+ $window.Contains('$quotaAuthItem.CheckOnClick=[bool]$OwnerGui') -and
+ $window.Contains("$"+'quotaAuthItem.Text='+"'Выводить остаток вызовов'") -and
+ $gui.Contains('$quotaAuthItem.Enabled=$script:ownerManagedMode')) 'checked Account-menu opt-in explicitly authorizes absent independent OAuth token'
 Check ($gui.Contains('Остаток вызовов: 0%') -and $gui.Contains('[Drawing.Color]::LightCoral')) '0% rendered red'
 Write-Output ('RC1_QUOTA_OAUTH_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}
