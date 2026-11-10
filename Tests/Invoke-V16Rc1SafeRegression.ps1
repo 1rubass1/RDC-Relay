@@ -14,6 +14,7 @@ $names=@(
  'Test-V16ManagedGuiStartupContract.ps1','Test-V16OwnerGuiRemoteRevision.ps1',
  'Test-V16OwnerLiveActivity.ps1','Test-V16OwnerCompactJournal.ps1',
  'Test-V16OwnerAdaptiveJournal.ps1','Test-V16OwnerQuotaFooter.ps1','Test-V16OwnerUpdateDemo.ps1',
+ 'Test-V16OwnerRealUpdateNotice.ps1',
  'Test-V16ActivityPaneMinimum.ps1','Test-V16OwnerEmojiFont.ps1',
  'Test-V16OwnerEmojiPalette.ps1',
  'Test-V16OwnerJournalBottomGap.ps1','Test-V16QuotaDisplayToggle.ps1',

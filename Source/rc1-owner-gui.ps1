@@ -554,6 +554,10 @@ function Start-RdcOwnerGui {
     }
    }finally{$script:ownerPending=$null;$script:ownerRequestedNavigation='';$script:ownerRequestedAction=''}
   }
+  # Passive, async public stable-manifest check (no update installation,
+  # candidate replacement or Remote process action). Owner keeps -Preview
+  # solely to suppress the legacy startup/process side effects.
+  if($script:enableUpdateNotice){Update-RdcUpdateNoticePolling}
   # Poll only the private, short-lived official snapshot (no credential IO,
   # no network requests on the WinForms UI thread). Expired means unknown.
   if([DateTime]::UtcNow -ge $script:ownerQuotaNextCheckUtc){

@@ -19,8 +19,9 @@ $appVersion = if($OwnerGui){'1.6.0 RC1'}else{'1.5.18'}
 # Flip to $false to remove the optional update notice and restore the original
 # startup auto-updater/footer with no other runtime or UI modifications.
 $script:enableUpdateNotice = -not $OwnerGui
-# Test-only RC1 Owner candidate: render an invented future version inside
-# the real footer. No release checks, installer or clickable update action.
+# Owner pilot: retain the accepted compact read-only update notice UI, but
+# NEVER offer an invented RC2. Only the official published stable manifest
+# may activate it. Candidate installation/auto-update remain blocked.
 $script:ownerUpdateDemoMode=[bool]($OwnerGui -and -not $SelfTest)
 if($script:ownerUpdateDemoMode){$script:enableUpdateNotice=$true}
 $script:updateInstallRequested = $false
@@ -7093,11 +7094,10 @@ if ($SelfTest) {
 }
 if ($OwnerGui) {
     # The exact ORIGINAL product WinForms controls are already constructed.
-    # Demo uses the same real footer renderer, not a second top-level overlay.
-    # It plays only in RC1 Owner pilot, and can never install an update.
-    if($script:ownerUpdateDemoMode -and $script:enableUpdateNotice){
-        $form.Add_Shown({ Start-RdcUpdateNoticePreview '1.6.0 RC2' })
-    }
+    # Owner footer starts IDLE. The Owner timer checks the published stable
+    # manifest asynchronously and shows the compact read-only notice ONLY
+    # for a confirmed newer stable version; never fabricate 1.6.0 RC2.
+    # The candidate updater/installer remains deliberately disabled.
     # Only the OwnerGui attach path runs the candidate remote-free IPC viewer.
     . (Join-Path $root 'rc1-owner-gui.ps1')
     Start-RdcOwnerGui

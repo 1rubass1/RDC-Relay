@@ -44,8 +44,9 @@ function NonBackgroundPixels([Drawing.Bitmap]$bmp){
 $source=[IO.File]::ReadAllText((Join-Path $root 'remote-window.ps1'),[Text.Encoding]::UTF8)
 $noticeSource=[IO.File]::ReadAllText((Join-Path $root 'update-notice.ps1'),[Text.Encoding]::UTF8)
 Check ($source.Contains('if($script:ownerUpdateDemoMode){$script:enableUpdateNotice=$true}') -and
- $source.Contains("$"+'form.Add_Shown({ Start-RdcUpdateNoticePreview '+"'1.6.0 RC2' })") -and
- $source.Contains('if($OwnerGui)')) 'RC1 Owner launches embedded animation after GUI is shown'
+ -not $source.Contains("$"+'form.Add_Shown({ Start-RdcUpdateNoticePreview '+"'1.6.0 RC2' })") -and
+ $source.Contains('The Owner timer checks the published stable') -and
+ $source.Contains('if($OwnerGui)')) 'Owner GUI starts idle and NEVER announces synthetic RC2 on Shown'
 Check ($noticeSource.Contains('if ($SelfTest -or $Preview -or $script:ownerUpdateDemoMode -or') -and
  $noticeSource.Contains('if ($SelfTest -or $Preview -or $script:ownerUpdateDemoMode -or') -and
  $noticeSource.Contains('public bool ButtonReady { get { return !visualPreviewOnly') -and

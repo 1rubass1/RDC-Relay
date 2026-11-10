@@ -13,7 +13,7 @@ public sealed class RdcUpdateNoticeStrip : Control {
     private readonly Font buttonFont = new Font("Segoe UI", 9.5f, FontStyle.Bold);
     private const int DefaultWidth = 440;
     private const int ExtraWidth = 150;
-    // RC1 pilot demo uses the actual footer's compact right-hand column.
+    // Owner RC1 uses the actual footer's compact right-hand column for read-only real update notices.
     // Both flags default to false, so stable/legacy updater stays unchanged.
     private bool compactOwner, visualPreviewOnly;
     public bool CompactOwner { get {return compactOwner;} set {compactOwner=value;Invalidate();} }
@@ -303,7 +303,7 @@ $script:rdcNoticeControl.Font = if($script:ownerUpdateDemoMode){$form.Font}else{
 if($script:ownerUpdateDemoMode){
     $bottom.ColumnStyles[1].Width=115
     $script:rdcNoticeControl.SetIdle($appVersion,'')
-    $tip.SetToolTip($script:rdcNoticeControl,'Демонстрация анимации обновления. Установка отключена.')
+    $tip.SetToolTip($script:rdcNoticeControl,'RDC Relay RC1: проверка опубликованной версии. Автоматическая установка отключена.')
 }else{$script:rdcNoticeControl.SetIdle($appVersion,$hint.Text)}
 $script:rdcNoticeControl.Visible = $true
 
@@ -333,6 +333,12 @@ function Show-RdcUpdateNotice([string]$Version) {
         $script:rdcNoticeControl.OfferedVersion -eq $Version) { return }
     $script:rdcNoticeAnimationTimer.Stop()
     $script:rdcNoticeControl.Begin($appVersion,$Version,$(if($script:ownerUpdateDemoMode){''}else{$hint.Text}))
+    if($OwnerGui){
+        # The candidate's update action is intentionally disabled. This text
+        # must not claim a fake RC2 or an executable installation path.
+        $script:rdcNoticeControl.AccessibleName='Доступна стабильная версия RDC Relay v'+$Version+'. Установка из RC1 отключена.'
+        $tip.SetToolTip($script:rdcNoticeControl,'Опубликована стабильная версия v'+$Version+'. RC1: автоматическая установка отключена.')
+    }
     $script:rdcNoticeActive = $true
     $script:rdcNoticeControl.TabStop = $false
     $script:rdcNoticeAnimationTimer.Start()
@@ -370,6 +376,23 @@ $script:rdcNoticeControl.Add_Click({
 function Get-RdcAvailableVersionFromManifest([string]$Raw) {
     $manifest = $Raw.TrimStart([char]0xFEFF) | ConvertFrom-Json
     $remote = [Version]([string]$manifest.version)
+    if($OwnerGui){
+        # RC1 is a prerelease: a truly published stable 1.6.0 is newer
+        # than 1.6.0 RC1 despite sharing its three numeric components.
+        # Only the actual stable release manifest can activate the notice.
+        if($appVersion -cnotmatch '^([0-9]+\.[0-9]+\.[0-9]+) RC[1-9][0-9]*$'){
+            throw 'RC1_OWNER_VERSION_NOT_PRERELEASE'
+        }
+        $localBase=[Version]$Matches[1]
+        $files=@($manifest.files)
+        if($files.Count -lt 2 -or
+           -not @($files|Where-Object{[string]$_.name -ceq 'remote-window.ps1'}).Count -or
+           -not @($files|Where-Object{[string]$_.name -ceq 'update.ps1'}).Count){
+            return $null
+        }
+        if($remote -ge $localBase){return [string]$manifest.version}
+        return $null
+    }
     $local = [Version]$appVersion
     if ($remote -gt $local) { return [string]$manifest.version }
     return $null
@@ -383,7 +406,9 @@ $script:rdcNoticeHttp = $null
 function Update-RdcUpdateNoticePolling {
     # -SkipUpdate skips the startup install, not passive future notifications.
     # The updater restarts a successfully upgraded GUI with -SkipUpdate.
-    if ($SelfTest -or $Preview -or $script:ownerUpdateDemoMode -or
+    # Owner runs with the legacy -Preview safety boundary. Permit ONLY this
+    # passive stable-version read, never the legacy install/startup route.
+    if ($SelfTest -or ($Preview -and -not $OwnerGui) -or
         -not $script:enableUpdateNotice) { return }
     $now = Get-Date
     if ($script:rdcNoticeCheckTask) {
