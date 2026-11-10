@@ -5953,7 +5953,7 @@ function New-RdcOwnerAccountSwitchDialog {
         # A web-navigation helper only: never log out Remote, change
         # credentials or close this confirmation on the site-button click.
         try{
-            Start-Process -FilePath 'https://mcp.desktopcommander.app/' -ErrorAction Stop | Out-Null
+            Start-Process -FilePath 'https://mcp.desktopcommander.app/settings' -ErrorAction Stop | Out-Null
         }catch{
             [void][Windows.Forms.MessageBox]::Show(
                 'Не удалось открыть сайт Desktop Commander.',

@@ -110,8 +110,8 @@ try{
    [Reflection.BindingFlags]'Instance,NonPublic')
   [void]$onClick.Invoke($site,[object[]]@([EventArgs]::Empty))
   Check ($script:siteClicks -eq 1 -and
-    $script:openedSite -ceq 'https://mcp.desktopcommander.app/' -and
-    $dialog.DialogResult -eq [Windows.Forms.DialogResult]::None) 'site button opens only verified official dashboard and leaves dialog awaiting Yes/No'
+    $script:openedSite -ceq 'https://mcp.desktopcommander.app/settings' -and
+    $dialog.DialogResult -eq [Windows.Forms.DialogResult]::None) 'site button opens exact official /settings path and leaves dialog awaiting Yes/No'
  }finally{Remove-Item function:Start-Process -ErrorAction SilentlyContinue}
 }finally{$dialog.Dispose()}
 $handlers=@($ast.FindAll({param($node)
