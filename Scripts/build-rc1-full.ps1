@@ -9,7 +9,9 @@ if((git -C $repo branch --show-current).Trim() -cne 'feature/v1.6-host-gui-owner
 }
 $src=Join-Path $repo 'Source'
 $marker=Get-Content -LiteralPath (Join-Path $src 'rc1-candidate.json') -Raw -Encoding UTF8|ConvertFrom-Json
-if($marker.candidate -cne '1.6.0 RC1' -or $marker.installable -ne $false -or
+. (Join-Path $PSScriptRoot 'rc1-version-contract.ps1')
+$candidateVersion=[string](Assert-Rc1CandidateVersionContract -SourceDirectory $src -InstallerDirectory (Join-Path $repo 'Installer'))
+if($candidateVersion -cne '1.6.0 RC1' -or $marker.installable -ne $false -or
  $marker.publishable -ne $false -or $marker.autoUpdateEnabled -ne $false){
  throw 'RC1_SOURCE_MUST_REMAIN_BLOCKED'
 }
@@ -57,7 +59,7 @@ foreach($name in $names){
 # Only this disposable candidate gets an installable marker. Repository's
 # source guard stays blocked; stable updater and public publication stay off.
 $pilot=[ordered]@{
- candidate='1.6.0 RC1';stableTarget='1.6.0';
+ candidate=$candidateVersion;stableTarget=[string]$marker.stableTarget;
  status='OWNER_FULL_RC1';installable=$true;publishable=$false;
  liveRemoteEnabled=$true;ownerMode='FULL_HOST_GUI_RC1';
  stableManifestEnabled=$false;autoUpdateEnabled=$false;
@@ -80,7 +82,7 @@ foreach($n in $required){
  $rows += [ordered]@{name=$n;sha256=(Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash}
 }
 $manifest=[ordered]@{
- candidate='1.6.0 RC1';kind='PRIVATE_FULL_RC1';
+ candidate=$candidateVersion;kind='PRIVATE_FULL_RC1';
  installable=$true;publishable=$false;ownerMode='FULL_HOST_GUI_RC1';
  files=$rows
 }

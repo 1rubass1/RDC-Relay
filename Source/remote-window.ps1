@@ -15,7 +15,13 @@ if(-not $SelfTest -and -not $Preview -and -not $OwnerGui -and
    [IO.File]::Exists((Join-Path $root 'rc1-candidate.json'))){
  throw 'RC1_DEFAULT_LEGACY_REMOTE_LAUNCH_BLOCKED'
 }
-$appVersion = if($OwnerGui){'1.6.0 RC1'}else{'1.5.18'}
+$appVersion = if($OwnerGui){'1.6.0 RC1'}else{
+    $versionFile=Join-Path $root 'version.txt'
+    if(-not [IO.File]::Exists($versionFile)){throw 'RDC_RELEASE_VERSION_FILE_MISSING'}
+    $installedVersion=[IO.File]::ReadAllText($versionFile,[Text.Encoding]::UTF8).Trim()
+    if($installedVersion -cnotmatch '^\d+\.\d+\.\d+$'){throw 'RDC_RELEASE_VERSION_INVALID'}
+    $installedVersion
+}
 # Flip to $false to remove the optional update notice and restore the original
 # startup auto-updater/footer with no other runtime or UI modifications.
 $script:enableUpdateNotice = -not $OwnerGui
@@ -293,7 +299,7 @@ function Ensure-InstalledAppRegistration {
 
         $key.SetValue('DisplayName','RDC Relay',[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('DisplayVersion',$appVersion,[Microsoft.Win32.RegistryValueKind]::String)
-        $key.SetValue('Publisher','UMAS',[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('Publisher','RUBASS',[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('InstallLocation',$root,[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('DisplayIcon',$iconPath,[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('URLInfoAbout','https://github.com/1rubass1/RDC-Relay',[Microsoft.Win32.RegistryValueKind]::String)

@@ -189,6 +189,15 @@ internal static class RdcRc1ManualUpgrade {
   }
   return true;
  }
+ // Shared read-only fresh-install gate for Setup and shortcut activation.
+ // Both must agree on the exact primary Desktop shortcut identity.
+ internal static bool HasPrimaryDesktopShortcut(string desktop){
+  if(String.IsNullOrEmpty(desktop))throw new InvalidOperationException("RC1_NO_DESKTOP");
+  CheckPath(desktop);
+  string link=Path.Combine(desktop,"RDC Relay.lnk");
+  CheckPath(link);
+  return File.Exists(link);
+ }
  // Switches the *main Desktop shortcut* only when its original target is the
  // known stable 1.5.18 shell or an already validated private RC1 launcher.
  // No process termination or adopted Remote lifecycle permission is implied.
@@ -202,7 +211,7 @@ internal static class RdcRc1ManualUpgrade {
   CheckPath(legacy);CheckPath(legacyVersion);
   string desktopLink=Path.Combine(desktop,"RDC Relay.lnk");
   CheckPath(desktopLink);
-  bool firstInstall=!File.Exists(desktopLink);
+  bool firstInstall=!HasPrimaryDesktopShortcut(desktop);
   bool switchedFromStable=false;
   bool previousRc1HostIdle=false;
   Type shellType=Type.GetTypeFromProgID("WScript.Shell");

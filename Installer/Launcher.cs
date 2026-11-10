@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 [assembly: AssemblyTitle("RDC Relay")]
 [assembly: AssemblyDescription("Portable launcher for RDC Relay")]
-[assembly: AssemblyCompany("UMAS")]
+[assembly: AssemblyCompany("RUBASS")]
 [assembly: AssemblyProduct("RDC Relay")]
 
 internal static class LauncherProgram

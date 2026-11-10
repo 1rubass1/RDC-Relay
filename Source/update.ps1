@@ -136,6 +136,7 @@ $logPath = Join-Path $InstallRoot 'update.log'
 $tempRoot = $null
 $backupRoot = $null
 $applied = $null
+$script:registrySnapshot = $null
 $payloadMutex = $null
 $ownsPayload = $false
 
@@ -156,6 +157,65 @@ function Write-UpdateState {
         }
         $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
     } catch {}
+}
+
+# The stable updater must synchronize Installed Apps *within* the update
+# transaction, rather than relying solely on the next GUI startup. The
+# previous values are held for rollback if any post-copy step fails.
+# Disposable/nondefault install roots do not touch real user registration.
+function Sync-RdcInstalledRegistration {
+    param([string]$NewVersion)
+    if ($NewVersion -cnotmatch '^\d+\.\d+\.\d+$') { throw 'RDC_UPDATE_VERSION_INVALID' }
+    $defaultRoot=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RemoteDesktopCommanderLauncher'
+    if (-not [string]::Equals([IO.Path]::GetFullPath($InstallRoot).TrimEnd([char]92),
+            [IO.Path]::GetFullPath($defaultRoot).TrimEnd([char]92),
+            [StringComparison]::OrdinalIgnoreCase)) { return }
+
+    $path='Software\Microsoft\Windows\CurrentVersion\Uninstall\RDC Relay'
+    $key=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($path,$true)
+    if(-not $key){throw 'RDC_UPDATE_REGISTRATION_MISSING'}
+    try {
+        if([string]$key.GetValue('DisplayName','') -cne 'RDC Relay' -or
+           [string]$key.GetValue('DisplayVersion','') -cne $CurrentVersion -or
+           -not ([string]::Equals([IO.Path]::GetFullPath([string]$key.GetValue('InstallLocation','')),
+                                 [IO.Path]::GetFullPath($InstallRoot),
+                                 [StringComparison]::OrdinalIgnoreCase))){
+            throw 'RDC_UPDATE_REGISTRATION_MISMATCH'
+        }
+        $snapshot=@{}
+        foreach($name in @('DisplayVersion','Publisher','UninstallString','QuietUninstallString')){
+            $value=$key.GetValue($name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $kind=$null
+            if($null -ne $value){$kind=$key.GetValueKind($name)}
+            $snapshot[$name]=[pscustomobject]@{Value=$value;Kind=$kind}
+        }
+        $script:registrySnapshot=$snapshot
+        $quote=[char]34
+        $powershell=Join-Path (Join-Path (Join-Path $env:WINDIR 'System32') 'WindowsPowerShell\v1.0') 'powershell.exe'
+        $updater=Join-Path $InstallRoot 'update.ps1'
+        $args='-NoProfile -ExecutionPolicy Bypass -File ' + $quote+$updater+$quote+
+              ' -InstallRoot '+$quote+$InstallRoot+$quote+
+              ' -CurrentVersion '+$quote+$NewVersion+$quote+' -Uninstall'
+        $uninstall=$quote+$powershell+$quote+' '+$args
+        $key.SetValue('DisplayVersion',$NewVersion,[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('Publisher','RUBASS',[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('UninstallString',$uninstall,[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('QuietUninstallString',$uninstall+' -Silent',[Microsoft.Win32.RegistryValueKind]::String)
+    }finally{$key.Dispose()}
+}
+function Restore-RdcInstalledRegistration {
+    if($null -eq $script:registrySnapshot){return}
+    $path='Software\Microsoft\Windows\CurrentVersion\Uninstall\RDC Relay'
+    $key=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($path,$true)
+    if(-not $key){throw 'RDC_UPDATE_REGISTRY_ROLLBACK_NO_KEY'}
+    try {
+        foreach($name in $script:registrySnapshot.Keys){
+            $prior=$script:registrySnapshot[$name]
+            if($null -eq $prior.Value){$key.DeleteValue($name,$false)}
+            else{$key.SetValue($name,$prior.Value,$prior.Kind)}
+        }
+        $script:registrySnapshot=$null
+    }finally{$key.Dispose()}
 }
 
 function Test-InstalledPayload {
@@ -286,6 +346,7 @@ try {
         else { [IO.File]::Move($source,$dest) }
     }
 
+    Sync-RdcInstalledRegistration -NewVersion ([string]$manifest.version)
     Write-UpdateState ([string]$manifest.version)
     Write-UpdateLog ('Applied v' + [string]$manifest.version + ' from commit ' + $commitSha + '.')
     exit 42
@@ -311,6 +372,8 @@ catch {
         }
     }
 
+    try { Restore-RdcInstalledRegistration }
+    catch { Write-UpdateLog ('REGISTRATION ROLLBACK FAILED: ' + $_.Exception.GetType().Name) }
     Write-UpdateLog ('Update failed: ' + $_.Exception.Message)
     exit 1
 }

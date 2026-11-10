@@ -38,6 +38,13 @@
 
 **Trace:** [Tray lifetime contract](docs/dev/architecture/TRAY-LIFECYCLE-DESIGN.md), [ownership safety plan](docs/dev/architecture/PROG-005-PROCESS-OWNERSHIP-PLAN.md), [board](COORDINATION/BOARD.md).
 
+## RDC-ADR-006 — Normal release identity, Installed Apps and developer Pilot boundary
+**Accepted direction:** 2026-11-11, owner. Public RDC Relay releases **must not** inherit private RC1 side-by-side installation shortcuts introduced for rapid developer testing and rollback. Treat the registered Windows application and validated installed payload as the authority for normal release installation. Desktop/Start Menu shortcuts are secondary integrity checks, never the sole proof of installation. On confirmed upgrade show only a short, target-versioned question; on clean install show no replacement warning. Setup, application header, embedded manifest, Installed Apps `DisplayVersion` and EXE version must agree. The registered and EXE publisher for new releases is **`RUBASS`** (six uppercase letters); accept historical `UMAS` as an existing install solely for safe upgrade.
+
+**Transaction gate:** the release installer must preserve files, exact registered uninstall metadata and shortcuts on handled failure and reject unrecognized/inconsistent installed state. Candidate/Owner Pilot must remain independently reversible and never rewrite current stable registration as part of developer experiments. Actual release remains blocked pending independently reviewed tests of real registration failure, rollback, restart/uninstall and power-loss recovery on a disposable Windows image. A passing mock or source-compiled test is not evidence of a completed release gate.
+
+**Implementation candidate / evidence:** [G111 release-install hardening](docs/dev/planning/V1-6-0-RC1-G111-RELEASE-INSTALL-HARDENING.md); independent Reviewer and OS trials remain mandatory.
+
 ## Pending architectural decisions
 - Whether ChatGPT custom MCP / Sites can securely access the owner's environment: actual entitlement and authenticated end-to-end route unproven.
 - Provider architecture and concrete auth/transport choices remain conditional on a controlled GO/NO-GO research gate, not endorsed by migration.

@@ -51,6 +51,9 @@ internal static class RdcRc1CandidateSetup {
   var manifest=ReadJson(Path.Combine(root,"owner-source-manifest.json"));
   if((string)manifest["candidate"]!="1.6.0 RC1")throw new InvalidOperationException("RC1_BAD_CANDIDATE");
   var candidate=ReadJson(Path.Combine(root,"Source","rc1-candidate.json"));
+  if(!String.Equals(Convert.ToString(candidate["candidate"]),
+      Convert.ToString(manifest["candidate"]),StringComparison.Ordinal))
+   throw new InvalidOperationException("RC1_MANIFEST_CANDIDATE_VERSION_MISMATCH");
   // The repository Source marker stays blocked; only a newly staged, hashed
   // owner-pilot payload explicitly enables the read-only observation mode.
   if(!Convert.ToBoolean(candidate["installable"]) ||
@@ -125,6 +128,22 @@ internal static class RdcRc1CandidateSetup {
   }
   Directory.Delete(staging,false);
  }
+ // The main Desktop shortcut is the same first-install boundary used by
+ // Rc1ManualUpgrade.ActivateDesktop: no shortcut means a fresh install.
+ // This read-only check must never inspect or stop a Remote process.
+ internal static bool HasPrimaryDesktopShortcut(string desktop){
+  return RdcRc1ManualUpgrade.HasPrimaryDesktopShortcut(desktop);
+ }
+ // Resolve the displayed version from the exact validated payload manifest,
+ // not a second independently maintained literal in the confirmation text.
+ internal static string ValidatedCandidateDisplayVersion(string source){
+  var manifest=ReadJson(Path.Combine(source,"owner-source-manifest.json"));
+  string version=Convert.ToString(manifest["candidate"]);
+  if(String.IsNullOrEmpty(version)||
+     !System.Text.RegularExpressions.Regex.IsMatch(version,@"^[0-9]+\.[0-9]+\.[0-9]+ RC[1-9][0-9]*$"))
+   throw new InvalidOperationException("RC1_DISPLAY_VERSION_INVALID");
+  return version;
+ }
  static void StartPrivateFull(string release){
   // Open only our pinned read-only GUI launcher. The launcher returns after
   // spawning the private Host; never wait for or signal persistent descendants.
@@ -172,27 +191,28 @@ internal static class RdcRc1CandidateSetup {
    if((privateSideBySide||args.Length>0) &&
       Environment.GetEnvironmentVariable("RDC_RC1_OWNER_G1_GO")!="YES")
     throw new InvalidOperationException("RC1_EXPLICIT_G1_GO_REQUIRED");
-   // A user launching downloaded Setup.exe by double click opts in through
-   // a visible RC1-specific prompt. Never silently switch the daily shortcut.
-   if(manualUpgrade&&args.Length==0){
-    var answer=System.Windows.Forms.MessageBox.Show(
-     "Установить RDC Relay 1.6.0 RC1 как основную оболочку?" + Environment.NewLine + Environment.NewLine +
-     "Файлы рабочей 1.5.18 останутся для отката. Существующий Remote не будет прерван. "+
-     "Пока старая оболочка или её Remote работают, RC1 останется только для чтения "+
-     "и не создаст дубликат. После штатного завершения обоих старых процессов "+
-     "новый Host автоматически подключит свою сессию. Смена аккаунта пока недоступна.",
-     "RDC Relay 1.6.0 RC1 — ручное обновление",
-     System.Windows.Forms.MessageBoxButtons.YesNo,System.Windows.Forms.MessageBoxIcon.Warning);
-    if(answer!=System.Windows.Forms.DialogResult.Yes)return 1;
-   }
+   // Validate the exact embedded payload before offering an upgrade.
+   // A first install has no previous primary Desktop shortcut: no upgrade
+   // warning in that case. The actual shortcut transaction still fails closed
+   // for unknown targets or any change between this check and activation.
    string source=Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
    if(manualUpgrade){extracted=ExtractEmbeddedCandidate();source=extracted;}
    ValidateSource(source);
    string local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
    if(String.IsNullOrEmpty(local))throw new InvalidOperationException("RC1_NO_APPDATA");
    if(manualUpgrade){
-    string release=RdcRc1ManualUpgrade.Prepare(source,local,Required);
     string desktop=Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+    if(args.Length==0 && HasPrimaryDesktopShortcut(desktop)){
+     string version=ValidatedCandidateDisplayVersion(source);
+     var answer=System.Windows.Forms.MessageBox.Show(
+      "Установить RDC Relay "+version+" как основную оболочку?",
+      "RDC Relay "+version+" — ручное обновление",
+      System.Windows.Forms.MessageBoxButtons.YesNo,
+      System.Windows.Forms.MessageBoxIcon.Warning,
+      System.Windows.Forms.MessageBoxDefaultButton.Button2);
+     if(answer!=System.Windows.Forms.DialogResult.Yes)return 1;
+    }
+    string release=RdcRc1ManualUpgrade.Prepare(source,local,Required);
     string result=RdcRc1ManualUpgrade.ActivateDesktop(release,local,desktop);
     Console.WriteLine("RC1_MANUAL_RELEASE="+release);
     Console.WriteLine("RC1_MANUAL_PRIMARY_SHORTCUT="+result);

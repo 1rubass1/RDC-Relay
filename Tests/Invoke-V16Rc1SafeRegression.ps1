@@ -22,6 +22,8 @@ $names=@(
  'Test-V16QuotaOAuthPoll.ps1',
  'Test-V16OwnerToolJournal.ps1','Test-V16OwnerAccountSwitch.ps1',
  'Test-V16OwnerAccountSwitchDialog.ps1',
+ 'Test-V16ReleaseInstallPolicy.ps1','Test-V16ReleaseSetupSandbox.ps1',
+ 'Test-V16ManualSetupPrompt.ps1',
  'Test-V16OwnerIdentityHeader.ps1','Test-V16BannerUptimeContract.ps1',
  'Test-V16FullOriginalStartupHeader.ps1',
  'Test-V16IdleHostHandoff.ps1',
