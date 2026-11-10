@@ -34,10 +34,16 @@ try{
  $layout=@($dialog.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
  Check ($null -ne $layout -and $layout.RowCount -eq 6 -and
   $layout.ColumnCount -eq 1) 'paragraphs retain intended vertical reading order'
- $labels=@()
- for($i=0;$i -lt 4;$i++){
+ $warningRow=$layout.GetControlFromPosition(0,0)
+ $icon=$warningRow.GetControlFromPosition(0,0)
+ $labels=@($warningRow.GetControlFromPosition(1,0))
+ for($i=1;$i -lt 4;$i++){
   $labels+=@($layout.GetControlFromPosition(0,$i))
  }
+ Check ($warningRow.Name -ceq 'rc1-account-switch-warning-row' -and
+  $warningRow.ColumnCount -eq 2 -and $icon.Name -ceq 'rc1-account-switch-warning-icon' -and
+  $icon.Image.Width -eq 32 -and $icon.Image.Height -eq 32 -and
+  -not $icon.TabStop) 'actual standard Windows warning triangle sits in first row only'
  $same=$true
  for($i=0;$i -lt 4;$i++){
   if($labels[$i].Text -cne $exact[$i]){$same=$false}
@@ -50,9 +56,16 @@ try{
   $dialog.ForeColor.ToArgb() -eq ([Drawing.Color]::Gainsboro).ToArgb() -and
   $dialog.Font.Name -ceq 'Segoe UI') 'dialog follows existing Owner GUI dark colors and font'
  Check (($labels|Where-Object{$_.Text -match 'удалённое|Внимание|Перед началом|ChatGPT'}).Count -eq 0) 'removed old third block, remote adjective and unwanted headings'
- $buttons=@($layout.GetControlFromPosition(0,5).Controls)
+ $bottom=$layout.GetControlFromPosition(0,5)
+ $site=$bottom.GetControlFromPosition(0,0)
+ $right=$bottom.GetControlFromPosition(1,0)
+ $buttons=@($right.Controls)
  $no=@($buttons|Where-Object{$_.Name -ceq 'rc1-account-switch-no'})|Select-Object -First 1
  $yes=@($buttons|Where-Object{$_.Name -ceq 'rc1-account-switch-yes'})|Select-Object -First 1
+ Check ($bottom.Name -ceq 'rc1-account-switch-bottom-row' -and
+  $bottom.ColumnCount -eq 2 -and $site.Name -ceq 'rc1-account-switch-signout-website' -and
+  $site.Text -ceq 'Выйти из аккаунта' -and $site.Width -eq (2 * $no.Width) -and
+  $site.DialogResult -eq [Windows.Forms.DialogResult]::None) 'web account helper is double-width in left half and never accepts switch'
  Check ($buttons.Count -eq 2 -and $no.Text -ceq 'Нет' -and
   $yes.Text -ceq 'Да') 'explicit yes/no controls and no additional action'
  Check ($no.DialogResult -eq [Windows.Forms.DialogResult]::No -and
@@ -60,12 +73,46 @@ try{
   $dialog.AcceptButton -eq $no -and $dialog.CancelButton -eq $no) 'Enter and Escape default to safe No, Yes only by explicit choice'
  $dialog.PerformLayout()
  $layout.PerformLayout()
- $layoutOk=$true
- for($i=0;$i -lt 4;$i++){
-  if($labels[$i].Height -le 0 -or $labels[$i].Right -gt $layout.ClientSize.Width -or
-   ($i -gt 0 -and $labels[$i].Top -le $labels[$i-1].Top)){$layoutOk=$false}
+ $warningRow.PerformLayout()
+ $bottom.PerformLayout()
+ $right.PerformLayout()
+ $layoutOk=($labels|Where-Object{$_.Height -le 0}).Count -eq 0
+ for($i=1;$i -lt 4;$i++){
+  if($labels[$i].Right -gt $layout.ClientSize.Width -or
+   ($i -gt 1 -and $labels[$i].Top -le $labels[$i-1].Top)){$layoutOk=$false}
  }
- Check $layoutOk 'measured paragraph labels flow vertically inside client bounds'
+ Check $layoutOk 'measured paragraphs remain inside client bounds'
+ $firstX=$warningRow.Left+$labels[0].Left
+ $otherX=$labels[1].Left
+ Check ($firstX -gt ($otherX+32) -and $icon.Left -lt $labels[0].Left -and
+   $labels[1].Left -eq $labels[2].Left -and $labels[2].Left -eq $labels[3].Left) 'only bold paragraph indented; remaining three start at same original left edge'
+ $siteLeft=$bottom.Left+$site.Left
+ $noRight=$bottom.Left+$right.Left+$no.Right
+ $leftGap=$siteLeft
+ $rightGap=$layout.ClientSize.Width-$noRight
+ Check ([Math]::Abs($leftGap-$rightGap) -le 3 -and
+  $site.Top -ge 0 -and $no.Top -ge 0) ('site and No buttons have symmetric row edge insets: left='+$leftGap+' right='+$rightGap)
+ Check ($site.Top -eq ($right.Top+$no.Top) -and
+  $site.Bottom -le $bottom.Height -and
+  $no.Bottom -le $right.Height) 'all three buttons share exact baseline with no clipping'
+ $script:siteClicks=0
+ $script:openedSite=''
+ function Start-Process {
+  [CmdletBinding()]
+  param([string]$FilePath)
+  $script:siteClicks++
+  $script:openedSite=$FilePath
+ }
+ try{
+  # An unshown WinForms Button suppresses PerformClick (CanSelect=false).
+  # Raise its genuine protected OnClick event, with the browser mocked.
+  $onClick=[Windows.Forms.Button].GetMethod('OnClick',
+   [Reflection.BindingFlags]'Instance,NonPublic')
+  [void]$onClick.Invoke($site,[object[]]@([EventArgs]::Empty))
+  Check ($script:siteClicks -eq 1 -and
+    $script:openedSite -ceq 'https://mcp.desktopcommander.app/' -and
+    $dialog.DialogResult -eq [Windows.Forms.DialogResult]::None) 'site button opens only verified official dashboard and leaves dialog awaiting Yes/No'
+ }finally{Remove-Item function:Start-Process -ErrorAction SilentlyContinue}
 }finally{$dialog.Dispose()}
 $handlers=@($ast.FindAll({param($node)
  $node -is [Management.Automation.Language.ScriptBlockExpressionAst] -and

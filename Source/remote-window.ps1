@@ -5894,16 +5894,73 @@ function New-RdcOwnerAccountSwitchDialog {
         $label.Name='rc1-account-switch-paragraph-'+[string]($i+1)
         $label.Text=$paragraphs[$i]
         $label.AutoSize=$true
-        $label.MaximumSize=[Drawing.Size]::new(546,0)
+        $label.MaximumSize=[Drawing.Size]::new($(if($i -eq 0){502}else{546}),0)
         $label.Dock=[Windows.Forms.DockStyle]::Top
         $label.ForeColor=$dialog.ForeColor
-        $label.Margin=[Windows.Forms.Padding]::new(0,0,0,$(if($i -lt 3){14}else{0}))
+        $label.Margin=[Windows.Forms.Padding]::new(0,0,0,$(if($i -lt 3 -and $i -ne 0){14}else{0}))
         if($i -eq 0){
             $label.Font=[Drawing.Font]::new($dialog.Font,[Drawing.FontStyle]::Bold)
+            # Only the bold opening instruction is indented. The other
+            # paragraphs retain their exact original left coordinate.
+            $lead=New-Object Windows.Forms.TableLayoutPanel
+            $lead.Name='rc1-account-switch-warning-row'
+            $lead.Dock=[Windows.Forms.DockStyle]::Top
+            $lead.AutoSize=$true
+            $lead.ColumnCount=2
+            $lead.RowCount=1
+            $lead.Margin=[Windows.Forms.Padding]::new(0,0,0,14)
+            [void]$lead.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute,44))
+            [void]$lead.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+            $warning=New-Object Windows.Forms.PictureBox
+            $warning.Name='rc1-account-switch-warning-icon'
+            $warning.Image=([Drawing.SystemIcons]::Warning).ToBitmap()
+            $warning.Size=[Drawing.Size]::new(32,32)
+            $warning.SizeMode=[Windows.Forms.PictureBoxSizeMode]::CenterImage
+            $warning.Margin=[Windows.Forms.Padding]::new(0,0,12,0)
+            $warning.TabStop=$false
+            $warning.AccessibleDescription='Стандартный значок предупреждения.'
+            [void]$lead.Controls.Add($warning,0,0)
+            [void]$lead.Controls.Add($label,1,0)
+            $layout.Controls.Add($lead,0,$i)
+        }else{
+            $layout.Controls.Add($label,0,$i)
         }
-        $layout.Controls.Add($label,0,$i)
     }
 
+    # Two zones in the original bottom row: site helper at far left,
+    # unchanged Yes/No pair aligned at far right with symmetric edge insets.
+    $buttonRow=New-Object Windows.Forms.TableLayoutPanel
+    $buttonRow.Name='rc1-account-switch-bottom-row'
+    $buttonRow.Dock=[Windows.Forms.DockStyle]::Fill
+    $buttonRow.ColumnCount=2
+    $buttonRow.RowCount=1
+    $buttonRow.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    [void]$buttonRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,50))
+    [void]$buttonRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,50))
+    $site=New-Object Windows.Forms.Button
+    $site.Name='rc1-account-switch-signout-website'
+    $site.Text='Выйти из аккаунта'
+    $site.Size=[Drawing.Size]::new(192,34)
+    $site.Anchor=([Windows.Forms.AnchorStyles]::Top -bor [Windows.Forms.AnchorStyles]::Left)
+    $site.Margin=[Windows.Forms.Padding]::new(0,8,0,0)
+    $site.DialogResult=[Windows.Forms.DialogResult]::None
+    $site.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $site.ForeColor=$dialog.ForeColor
+    $site.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $site.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
+    $site.AccessibleDescription='Открывает официальный кабинет Desktop Commander. Выход из аккаунта выполняется вручную на сайте.'
+    $site.Add_Click({
+        # A web-navigation helper only: never log out Remote, change
+        # credentials or close this confirmation on the site-button click.
+        try{
+            Start-Process -FilePath 'https://mcp.desktopcommander.app/' -ErrorAction Stop | Out-Null
+        }catch{
+            [void][Windows.Forms.MessageBox]::Show(
+                'Не удалось открыть сайт Desktop Commander.',
+                'RDC Relay',[Windows.Forms.MessageBoxButtons]::OK,
+                [Windows.Forms.MessageBoxIcon]::Warning)
+        }
+    })
     $buttons=New-Object Windows.Forms.FlowLayoutPanel
     $buttons.Name='rc1-account-switch-buttons'
     $buttons.Dock=[Windows.Forms.DockStyle]::Fill
@@ -5933,7 +5990,9 @@ function New-RdcOwnerAccountSwitchDialog {
     $yes.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
     [void]$buttons.Controls.Add($no)
     [void]$buttons.Controls.Add($yes)
-    $layout.Controls.Add($buttons,0,5)
+    [void]$buttonRow.Controls.Add($site,0,0)
+    [void]$buttonRow.Controls.Add($buttons,1,0)
+    $layout.Controls.Add($buttonRow,0,5)
     $dialog.Controls.Add($layout)
     # Destructive account logout must never be the implicit Enter/Esc choice.
     $dialog.AcceptButton=$no
