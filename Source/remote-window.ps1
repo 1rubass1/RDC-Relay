@@ -3733,6 +3733,11 @@ $accentWait = [Drawing.Color]::Khaki
 $accentNetwork = [Drawing.Color]::LightSkyBlue
 $accentStorage = [Drawing.Color]::LightSteelBlue
 $accentPresence = [Drawing.Color]::Plum
+# RC1 Owner: semantic emoji colors follow their actual message meaning.
+# Keep legacy 1.5.18 highlight colors unchanged.
+$accentSuccess=if($OwnerGui){$statusGreen}else{$accentPurple}
+$accentStop=if($OwnerGui){[Drawing.Color]::LightCoral}else{$accentOrange}
+$accentGreeting=if($OwnerGui){[Drawing.Color]::Gainsboro}else{$accentPresence}
 $stateOnline = [Drawing.Color]::LimeGreen
 $stateOffline = [Drawing.Color]::Tomato
 $commandAccent = [Drawing.Color]::Gold
@@ -4938,13 +4943,13 @@ function Render-CompactLog {
             Color-HeaderSemantics $headerLog $headerLog.TextLength
             Color-LogToken $headerLog '🔧' $accentOrange
             Color-LogToken $headerLog '🚀' $accentOrange
-            if($OwnerGui){Color-LogToken $headerLog '⏹' $accentOrange}
-            Color-LogToken $headerLog '✅' $accentPurple
+            if($OwnerGui){Color-LogToken $headerLog '⏹' $accentStop}
+            Color-LogToken $headerLog '✅' $accentSuccess
             Color-LogToken $headerLog '🔌' $statusGreen
             Color-LogToken $headerLog '⏳' $accentWait
             Color-LogToken $headerLog '🌐' $accentNetwork
             Color-LogToken $headerLog '💾' $accentStorage
-            Color-LogToken $headerLog '👋' $accentPresence
+            Color-LogToken $headerLog '👋' $accentGreeting
             if($OwnerGui){Apply-OwnerEmojiFont $headerLog}
 
             if ($headerHadSelection) {
@@ -5037,13 +5042,13 @@ function Render-CompactLog {
         }
         Color-LogToken $log '🔧' $accentOrange
         Color-LogToken $log '🚀' $accentOrange
-        Color-LogToken $log '✅' $accentPurple
+        Color-LogToken $log '✅' $accentSuccess
         Color-LogToken $log '❌' ([Drawing.Color]::LightCoral)
         Color-LogToken $log '🔌' $statusGreen
         Color-LogToken $log '⏳' $accentWait
         Color-LogToken $log '🌐' $accentNetwork
         Color-LogToken $log '💾' $accentStorage
-        Color-LogToken $log '👋' $accentPresence
+        Color-LogToken $log '👋' $accentGreeting
         if($OwnerGui){Apply-OwnerEmojiFont $log}
 
         if ($hadUserSelection) {
@@ -6701,13 +6706,13 @@ if ($SelfTest) {
     $checkPos=$log.Text.IndexOf('✅',[StringComparison]::Ordinal)
     if($checkPos -lt 0){throw 'Check marker missing'}
     $log.Select($checkPos,'✅'.Length)
-    if($log.SelectionColor.ToArgb() -ne $accentPurple.ToArgb()){throw 'Check marker color mismatch'}
+    if($log.SelectionColor.ToArgb() -ne $accentSuccess.ToArgb()){throw 'Check marker color mismatch'}
     foreach($probe in @(
         @('🔌',$statusGreen,'Plug marker color mismatch'),
         @('⏳',$accentWait,'Wait marker color mismatch'),
         @('🌐',$accentNetwork,'Network marker color mismatch'),
         @('💾',$accentStorage,'Storage marker color mismatch'),
-        @('👋',$accentPresence,'Presence marker color mismatch'),
+        @('👋',$accentGreeting,'Presence marker color mismatch'),
         @('🚀',$accentOrange,'Launch marker color mismatch')
     )){
         $p=$headerLog.Text.IndexOf([string]$probe[0],[StringComparison]::Ordinal)

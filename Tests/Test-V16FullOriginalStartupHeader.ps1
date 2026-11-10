@@ -70,7 +70,7 @@ Check (-not $renderedNext.Contains('Keep this Terminal running.') -and
  $renderedNext.Contains('  Help: npx @wonderwhy-er/desktop-commander@latest remote --help')) 'Owner closes Next with Stop action and retains original Commands section'
 Check ($renderedNext.Contains("⏹ Click Stop to disconnect Remote.`n🔧 Commands") -and
  ([regex]::Matches($renderedNext,[regex]::Escape('Click Stop to disconnect Remote.'))).Count -eq 1 -and
- $new.Contains("if("+ '$OwnerGui' +"){Color-LogToken "+ '$headerLog' +" '⏹' "+ '$accentOrange' +"}")) 'Next final line sits immediately before Commands and uses matching accent icon'
+ $new.Contains("if("+ '$OwnerGui' +"){Color-LogToken "+ '$headerLog' +" '⏹' "+ '$accentStop' +"}")) 'Next final line sits immediately before Commands and uses matching accent icon'
 Check ($originalNext.Contains('Keep this Terminal running.') -and
  $originalNext.Contains('Press Ctrl+C to disconnect.') -and
  $runtime.Contains('Press Ctrl\+C to disconnect\.') -and
