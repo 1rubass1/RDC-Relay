@@ -3603,11 +3603,12 @@ $windowHeight = [Math]::Min($baseWindowHeight,$startupWorkArea.Height)
 $form.Size = New-Object Drawing.Size($windowWidth,$windowHeight)
 $preferredMinimumHeight = 78 + 38 + $headerPaneMinHeightPreferred + $activityPaneMinHeightPreferred + 7 + 48
 if($OwnerGui){
-    # Bottom-edge resize must be able to collapse both scrollable text panes.
-    # The only floor is the fixed header/footer, 7px divider and one pixel
-    # per text viewport, plus the actual Windows frame (not an extra row).
+    # Stop bottom-edge resizing exactly where both text panes reach their
+    # measured minima. Header minimum ALREADY contains the 7px divider;
+    # account only for the actual Windows non-client frame (no extra row).
     $windowFrameHeight=[Math]::Max(0,$form.Height-$form.ClientSize.Height)
-    $minimumWindowHeight=[Math]::Min($windowHeight,78+38+7+2+$windowFrameHeight)
+    $minimumWindowHeight=78+38+$headerPaneMinHeightPreferred+
+        $activityPaneMinHeightPreferred+$windowFrameHeight
 }else{
     $minimumWindowHeight=[Math]::Min($windowHeight,$preferredMinimumHeight)
 }
@@ -4106,38 +4107,16 @@ function Stop-LogResizeInteraction {
     $logHost.Invalidate($true)
     try { $log.RefreshViewport() } catch {}
 }
-function Get-Rc1CompressedActivityHeight([int]$available){
-    # Below the preferred two-pane sum, both logs shrink together when the
-    # *window bottom edge* moves, including through the former one-row slack.
-    # Reserve 7px for the divider and 1px for the upper viewport; leave at
-    # least 1px to the lower viewport. WinForms owns the unavoidable frame.
-    $available=[Math]::Max(9,$available)
-    $preferredSum=[Math]::Max(1,$headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred)
-    $scaled=[int][Math]::Round($available*
-        ([double]$activityPaneMinHeightPreferred/$preferredSum))
-    return [Math]::Max(1,[Math]::Min($available-8,$scaled))
-}
 function Get-EffectivePaneMinHeight {
     $available=[Math]::Max(1,$contentHost.ClientSize.Height)
-    if($OwnerGui -and $available -lt
-        ($headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred)){
-        return 1
-    }
-    # At normal heights, retain the previously approved six-line banner and
-    # journal baseline when dragging the *central splitter* manually.
+    # Keep the six-line Owner logo (or legacy 125px header) visible.
+    # On constrained displays allow both panes to degrade symmetrically.
     $headerReserve=[Math]::Min($headerPaneMinHeightPreferred,
         [Math]::Max(48,[int][Math]::Floor($available/2)))
     return [Math]::Min($activityPaneMinHeightPreferred,
         [Math]::Max(48,$available-$headerReserve))
 }
 function Get-ClampedActivityPaneHeight([double]$requestedHeight) {
-    $available=[Math]::Max(1,$contentHost.ClientSize.Height)
-    if($OwnerGui -and $available -lt
-        ($headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred)){
-        # Manual splitter drag remains possible even in compact mode.
-        return [Math]::Max(1,[Math]::Min(
-            [Math]::Max(1,$available-8),$requestedHeight))
-    }
     $paneMinHeight=Get-EffectivePaneMinHeight
     $headerMinHeight=[Math]::Min($headerPaneMinHeightPreferred,
         [Math]::Max(48,$contentHost.ClientSize.Height-$paneMinHeight))
@@ -4176,12 +4155,7 @@ $logHost.Add_Resize({
     if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
 })
 $contentHost.Add_Resize({
-    if($OwnerGui -and $contentHost.ClientSize.Height -lt
-        ($headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred)){
-        Set-ActivityPaneHeight (Get-Rc1CompressedActivityHeight $contentHost.ClientSize.Height)
-    }else{
-        Set-ActivityPaneHeight $contentHost.RowStyles[1].Height
-    }
+    Set-ActivityPaneHeight $contentHost.RowStyles[1].Height
 })
 $scrollCorner.Add_MouseDown({
     $script:uiInteracting = $true
@@ -4320,14 +4294,7 @@ $form.Controls.Add($bottom)
 $form.Controls.Add($top)
 $form.Controls.Add($dividerDragPreview)
 $form.PerformLayout()
-if($OwnerGui -and $contentHost.ClientSize.Height -lt
-    ($headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred)){
-    # Small-screen initial launch must use the same proportional fit as
-    # dragging the window bottom edge, not the 1px manual-drag minimum.
-    Set-ActivityPaneHeight (Get-Rc1CompressedActivityHeight $contentHost.ClientSize.Height)
-}else{
-    Set-ActivityPaneHeight (Get-EffectivePaneMinHeight)
-}
+Set-ActivityPaneHeight (Get-EffectivePaneMinHeight)
 $dividerDragPreview.BringToFront()
 
 function Get-TabStopControls {

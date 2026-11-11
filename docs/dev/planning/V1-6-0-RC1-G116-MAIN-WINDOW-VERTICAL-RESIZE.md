@@ -1,5 +1,7 @@
 # G116 — Owner main-window bottom-edge compression without artificial one-row slack
 
+> **SUPERSEDED / OWNER REJECTED 2026-11-11:** G116 removed the text-pane minima and allowed unusable near-zero text blocks. Do not deploy it. The correct Owner requirement and tested replacement are in [G117 — full text-pane floor](V1-6-0-RC1-G117-OWNER-WINDOW-TEXT-PANE-FLOOR.md).
+
 **Date:** 2026-11-11. **Status:** Programmer implementation candidate, staged for owner visual and independent Reviewer. **NOT A PUBLIC RELEASE.**
 
 ## Owner request and diagnosis
