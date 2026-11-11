@@ -459,7 +459,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
        (DateTime.UtcNow-guiSpawnUtc).TotalSeconds>=7){
      guiWindowWarned=true;
      gui.Refresh();
-     if(gui.MainWindowHandle==IntPtr.Zero)
+     if(RdcOwnerActivate.FindOwnedWindow(childPid)==IntPtr.Zero)
       NotifyGuiOpenIssue("window not ready",
        "Окно RDC Relay пока не появилось. Повторите открытие через трей; Remote не затронут.");
     }
@@ -512,7 +512,9 @@ public sealed class RdcOwnerRuntime : IDisposable {
         "Невозможно подтвердить окно RDC Relay. Remote не затронут.");
       return;
      }
-     string result=RdcOwnerActivate.OpenOwned(gui.MainWindowHandle,childPid);
+     IntPtr target=gui.MainWindowHandle;
+     if(target==IntPtr.Zero)target=RdcOwnerActivate.FindOwnedWindow(childPid);
+     string result=RdcOwnerActivate.OpenOwned(target,childPid);
      if(result=="ATTENTION"){
       NotifyGuiOpenIssue("foreground denied",
        "Окно RDC Relay уже открыто. Выберите его через Alt+Tab или панель задач.");
@@ -1313,6 +1315,27 @@ public static class RdcOwnerActivate {
  public static extern IntPtr GetForegroundWindow();
  [System.Runtime.InteropServices.DllImport("user32.dll")]
  public static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
+ [System.Runtime.InteropServices.DllImport("user32.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+ public static extern int GetWindowText(IntPtr h,System.Text.StringBuilder text,int count);
+ public delegate bool EnumWindowCallback(IntPtr h,IntPtr data);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern bool EnumWindows(EnumWindowCallback callback,IntPtr data);
+ // Process.MainWindowHandle is zero for a legitimate hidden WinForms form.
+ // Find the exact owned top-level RDC Relay window; never enumerate by name
+ // alone or activate another process's window.
+ public static IntPtr FindOwnedWindow(int expectedPid) {
+  if(expectedPid<=0)return IntPtr.Zero;
+  IntPtr result=IntPtr.Zero;
+  EnumWindows(delegate(IntPtr h,IntPtr data){
+   uint pid=0;
+   if(GetWindowThreadProcessId(h,out pid)==0||pid!=(uint)expectedPid)return true;
+   var title=new System.Text.StringBuilder(160);
+   GetWindowText(h,title,title.Capacity);
+   if(!title.ToString().StartsWith("RDC Relay",StringComparison.OrdinalIgnoreCase))return true;
+   result=h;return false;
+  },IntPtr.Zero);
+  return result;
+ }
  [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
  public struct FlashInfo {
   public uint cbSize;public IntPtr hwnd;public uint dwFlags,dwCount,dwTimeout;
