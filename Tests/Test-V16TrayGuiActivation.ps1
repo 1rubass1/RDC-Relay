@@ -26,9 +26,25 @@ Check (-not $src.Contains('AttachThreadInput') -and
  -not $src.Contains('keybd_event') -and
  -not $src.Contains('SWP_TOPMOST') -and
  -not $src.Contains('SendKeys.Send')) 'no foreground theft, synthetic input, or persistent TopMost'
-Check ($src.Contains('guiWindowWarned') -and
- $src.Contains('TotalSeconds>=7') -and
- $src.Contains('TotalSeconds<8')) 'missing startup HWND and duplicate tray notice are bounded'
+Check ($src.Contains('guiWindowWarned=true; // one check per GUI generation') -and
+ $src.Contains('TotalSeconds>=RdcOwnerGuiStartupNotice.GraceSeconds') -and
+ $src.Contains('if(RdcOwnerGuiStartupNotice.IsDue(guiSpawnUtc,DateTime.UtcNow,guiWindowWarned,false))') -and
+ $src.Contains('if(RdcOwnerGuiStartupNotice.IsDue(guiSpawnUtc,DateTime.UtcNow,guiWindowWarned,hasOwnedWindow))') -and
+ $src.Contains('TotalSeconds<8')) 'both startup probe and tray retry share an eight-second one-shot no-window warning gate'
+$noticeStart=$src.IndexOf('public static class RdcOwnerGuiStartupNotice {',[StringComparison]::Ordinal)
+$noticeEnd=$src.IndexOf('public sealed class RdcOwnerRuntime : IDisposable {',$noticeStart,[StringComparison]::Ordinal)
+if($noticeStart -lt 0 -or $noticeEnd -le $noticeStart){throw 'GUI_STARTUP_NOTICE_HELPER_MISSING'}
+$noticeCode="using System;"+[Environment]::NewLine+$src.Substring($noticeStart,$noticeEnd-$noticeStart)
+Add-Type -TypeDefinition $noticeCode
+$now=[DateTime]::UtcNow
+Check ([RdcOwnerGuiStartupNotice]::GraceSeconds -eq 8 -and
+ -not [RdcOwnerGuiStartupNotice]::IsDue($now,$now,$false,$false) -and
+ -not [RdcOwnerGuiStartupNotice]::IsDue($now,$now.AddMilliseconds(7999),$false,$false)) 'no premature warning on initial spawn or repeated tray click before 8 seconds'
+Check ([RdcOwnerGuiStartupNotice]::IsDue($now,$now.AddSeconds(8),$false,$false) -and
+ [RdcOwnerGuiStartupNotice]::IsDue($now,$now.AddSeconds(12),$false,$false)) 'missing HWND after 8 seconds qualifies for warning'
+Check (-not [RdcOwnerGuiStartupNotice]::IsDue($now,$now.AddSeconds(8),$true,$false) -and
+ -not [RdcOwnerGuiStartupNotice]::IsDue($now,$now.AddSeconds(8),$false,$true) -and
+ -not [RdcOwnerGuiStartupNotice]::IsDue([DateTime]::MinValue,$now,$false,$false)) 'one-shot and visible/unknown GUI state never trigger false warning'
 Check ($src.Contains('OpenGui();') -and
  $src.Contains('tray.DoubleClick+=(s,e)=>OpenGui();') -and
  $src.Contains('open.Click+=(s,e)=>OpenGui();') -and

@@ -116,6 +116,15 @@ public sealed class RdcOwnerToolJournal {
   return marker;
  }
 }
+// One grace interval for both tray activation and the asynchronous startup probe.
+// A second OpenGui request during warm-up must never trigger an early warning.
+public static class RdcOwnerGuiStartupNotice {
+ public const int GraceSeconds=8;
+ public static bool IsDue(DateTime spawnedUtc,DateTime nowUtc,bool alreadyWarned,bool ownedWindowPresent){
+  return !alreadyWarned && !ownedWindowPresent && spawnedUtc!=DateTime.MinValue &&
+   (nowUtc-spawnedUtc).TotalSeconds>=GraceSeconds;
+ }
+}
 public sealed class RdcOwnerRuntime : IDisposable {
  readonly object gate=new object();
  readonly string sourceRoot, guiScript, stateRoot, ticketFile, instance, generation, trialRoot;
@@ -489,12 +498,13 @@ public sealed class RdcOwnerRuntime : IDisposable {
     // A live process without a window can no longer be reported as
     // successfully opened forever. Do not kill it or launch a duplicate.
     if(!guiWindowWarned && guiSpawnUtc!=DateTime.MinValue &&
-       (DateTime.UtcNow-guiSpawnUtc).TotalSeconds>=7){
-     guiWindowWarned=true;
+       (DateTime.UtcNow-guiSpawnUtc).TotalSeconds>=RdcOwnerGuiStartupNotice.GraceSeconds){
      gui.Refresh();
-     if(RdcOwnerActivate.FindOwnedWindow(childPid)==IntPtr.Zero)
+     bool hasOwnedWindow=RdcOwnerActivate.FindOwnedWindow(childPid)!=IntPtr.Zero;
+     if(RdcOwnerGuiStartupNotice.IsDue(guiSpawnUtc,DateTime.UtcNow,guiWindowWarned,hasOwnedWindow))
       NotifyGuiOpenIssue("window not ready",
        "Окно RDC Relay пока не появилось. Повторите открытие через трей; Remote не затронут.");
+     guiWindowWarned=true; // one check per GUI generation, even if already visible
     }
     return;
    }
@@ -552,8 +562,13 @@ public sealed class RdcOwnerRuntime : IDisposable {
       NotifyGuiOpenIssue("foreground denied",
        "Окно RDC Relay уже открыто. Выберите его через Alt+Tab или панель задач.");
      }else if(result=="NO_WINDOW"){
-      NotifyGuiOpenIssue("open pending: no window",
-       "Окно RDC Relay ещё не появилось. Попробуйте открыть его через трей ещё раз.");
+      // Window creation is asynchronous. A tray or launcher retry during the
+      // first eight seconds is not a failed GUI open and needs no balloon.
+      if(RdcOwnerGuiStartupNotice.IsDue(guiSpawnUtc,DateTime.UtcNow,guiWindowWarned,false)){
+       guiWindowWarned=true;
+       NotifyGuiOpenIssue("open pending: no window",
+        "Окно RDC Relay ещё не появилось. Попробуйте открыть его через трей ещё раз.");
+      }
      }else if(result=="NOT_OWNED"){
       guiState="UNVERIFIED";
       NotifyGuiOpenIssue("open denied: unverified window",
