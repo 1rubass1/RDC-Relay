@@ -88,6 +88,57 @@ $inputs=@('RdcOwnerWire.cs','RdcOwnerProcess.cs','RdcOwnerTicketStore.cs',
 & $csc /nologo /target:library ('/out:'+$dll) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Management.dll $inputs
 if($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists($dll)){throw 'G122_TRAY_FINAL_CSHARP_COMPILE_FAILED'}
 Add-Type -Path $dll
+# Seam-matched visual state changes must be clock-driven; the real Host state
+# and tooltip are never delayed, and fault/disconnect are never queued.
+$green=[IO.File]::ReadAllBytes((Join-Path $kit 'ICO\connecting-a.ico'))
+$ready=[IO.File]::ReadAllBytes((Join-Path $kit 'ICO\ready.ico'))
+Check ([Linq.Enumerable]::SequenceEqual([byte[]]$green,[byte[]]$ready)) 'connecting green-bottom A and Ready icons are byte-identical'
+$gate=New-Object RdcOwnerTrayPhaseGate
+Check ($gate.Update('connecting',$true,0) -and $gate.Visible -eq 'connecting' -and
+ $gate.WaitingUntilMs -eq -1) 'initial Connecting state is visible immediately'
+Check (-not $gate.Update('ready',$true,720) -and $gate.Visible -eq 'connecting' -and
+ $gate.Latest -eq 'ready' -and $gate.WaitingUntilMs -eq 1600) 'Ready at color-blend frame waits for full green-bottom 1600ms seam'
+Check (-not $gate.Update('ready',$true,1400) -and $gate.WaitingUntilMs -eq 1600 -and
+ -not $gate.Advance($true,1599) -and $gate.Visible -eq 'connecting') 'repeated Ready snapshots do not reset the deadline or cut the last fade'
+Check ($gate.Advance($true,1600) -and $gate.Visible -eq 'ready' -and
+ $gate.WaitingUntilMs -eq -1 -and
+ [RdcOwnerTrayVisual]::Frame('connecting',$true,1600) -eq 'connecting-a' -and
+ [RdcOwnerTrayVisual]::Frame('ready',$true,0) -eq 'ready') '40ms timer releases at exact pixel-identical A to Ready boundary'
+$late=New-Object RdcOwnerTrayPhaseGate
+[void]$late.Update('connecting',$true,0)
+Check (-not $late.Update('ready',$true,1710) -and
+ $late.WaitingUntilMs -eq 3200 -and
+ -not $late.Advance($true,3199) -and $late.Advance($true,3200)) 'late Ready signal waits for end of current, not already-ended, cycle'
+$auth=New-Object RdcOwnerTrayPhaseGate
+[void]$auth.Update('connecting',$true,0)
+Check (-not $auth.Update('auth',$true,760) -and
+ $auth.WaitingUntilMs -eq 1600 -and $auth.Advance($true,1600) -and
+ $auth.Visible -eq 'auth') 'Connecting to Authorization completes cycle before changing visual family'
+Check (-not $auth.Update('ready',$true,920) -and
+ $auth.WaitingUntilMs -eq 1600 -and $auth.Advance($true,1600) -and
+ $auth.Visible -eq 'ready') 'Authorization to Ready also finishes full cycle'
+$cancel=New-Object RdcOwnerTrayPhaseGate
+[void]$cancel.Update('connecting',$true,0)
+[void]$cancel.Update('ready',$true,900)
+Check (-not $cancel.Update('connecting',$true,950) -and
+ $cancel.WaitingUntilMs -eq -1 -and $cancel.Visible -eq 'connecting' -and
+ -not $cancel.Advance($true,1600)) 'reverted Connecting cancels outdated pending Ready'
+[void]$cancel.Update('ready',$true,1800)
+Check ($cancel.Update('fault',$true,1900) -and $cancel.Visible -eq 'fault' -and
+ $cancel.WaitingUntilMs -eq -1) 'Fault immediately preempts any pending visual transition'
+[void]$cancel.Update('connecting',$true,2000)
+[void]$cancel.Update('ready',$true,2100)
+Check ($cancel.Update('offline',$true,2150) -and $cancel.Visible -eq 'offline' -and
+ $cancel.WaitingUntilMs -eq -1) 'Disconnect is never delayed'
+$reduced=New-Object RdcOwnerTrayPhaseGate
+[void]$reduced.Update('connecting',$false,0)
+Check ($reduced.Update('ready',$false,760) -and $reduced.Visible -eq 'ready') 'Windows reduced-motion mode switches to Ready without waiting'
+[void]$reduced.Update('connecting',$true,900)
+[void]$reduced.Update('ready',$true,940)
+Check ($reduced.Advance($false,960) -and $reduced.Visible -eq 'ready') 'disabling animations releases a pending transition immediately'
+Check ($code.Contains('phaseGate.Update(next,animate,phase.ElapsedMilliseconds)') -and
+ $code.Contains('phaseGate.Advance(animate,phase.ElapsedMilliseconds)') -and
+ $code.Contains('ShortStatus(next)')) 'production uses phase gate on both 250ms snapshots and 40ms frames, tooltip is immediate'
 Check ([RdcOwnerTrayVisual]::Semantic('Ready','working') -eq 'working' -and
  [RdcOwnerTrayVisual]::Semantic('Ready','hold') -eq 'ready' -and
  [RdcOwnerTrayVisual]::Semantic('Ready','idle') -eq 'ready') 'working animation only for Ready+working; idle and hold are static'

@@ -1421,6 +1421,46 @@ public static class RdcOwnerActivate {
  }
 }
 
+// Pure visual-only phase gate. Never delays the authoritative Remote snapshot,
+// Host IPC state, disconnect/fault handling, or GUI behavior.
+// Animated connecting/authorization transitions finish the current 1600ms
+// cycle; connecting-a and ready are pixel-identical in the approved ICO kit.
+public sealed class RdcOwnerTrayPhaseGate {
+ const int SwapCycleMs=1600;
+ public string Visible {get;private set;}
+ public string Latest {get;private set;}
+ public long WaitingUntilMs {get;private set;}
+ public RdcOwnerTrayPhaseGate(){
+  Visible="";Latest="";WaitingUntilMs=-1;
+ }
+ static bool CanFinishCycle(string from,string to){
+  return (from=="connecting" && (to=="auth"||to=="ready"||to=="working")) ||
+         (from=="auth" && (to=="ready"||to=="working"));
+ }
+ // Returns true only when the visible state changes and its phase must reset.
+ public bool Update(string latest,bool motion,long elapsedMs){
+  Latest=String.IsNullOrEmpty(latest)?"offline":latest;
+  if(Visible==Latest){WaitingUntilMs=-1;return false;}
+  if(motion && CanFinishCycle(Visible,Latest)){
+   if(WaitingUntilMs<0){
+    // The next *complete* A frame, never the current half-cycle or a
+    // fixed delay. No timer or sleeps; the existing 40ms UI tick releases it.
+    WaitingUntilMs=((Math.Max(0L,elapsedMs)/SwapCycleMs)+1)*SwapCycleMs;
+   }
+   return false;
+  }
+  // Fault, disconnect, reconnect and all other urgent state changes preempt.
+  WaitingUntilMs=-1;
+  Visible=Latest;
+  return true;
+ }
+ public bool Advance(bool motion,long elapsedMs){
+  if(WaitingUntilMs<0 || (motion && elapsedMs<WaitingUntilMs))return false;
+  WaitingUntilMs=-1;
+  Visible=Latest;
+  return true;
+ }
+}
 // Multi-size PNG-backed Windows icons derived only from the owner-approved tray
 // 04 package. One cached Icon per frame: no Bitmap or HICON allocation on ticks.
 public sealed class RdcOwnerTrayVisual : IDisposable {
@@ -1428,9 +1468,10 @@ public sealed class RdcOwnerTrayVisual : IDisposable {
  readonly Dictionary<string,Icon> icons=new Dictionary<string,Icon>(StringComparer.Ordinal);
  readonly List<MemoryStream> streams=new List<MemoryStream>();
  readonly Stopwatch phase=Stopwatch.StartNew();
+ readonly RdcOwnerTrayPhaseGate phaseGate=new RdcOwnerTrayPhaseGate();
  DateTime nextMotionQueryUtc=DateTime.MinValue;
  bool animate=true,disposed=false;
- string semantic="",shownFrame="",shownTip="";
+ string shownFrame="",shownTip="";
  const int WorkPulseMs=1800, SwapMs=800;
  // Exact owner-approved tray 04-final manifest order, including 36 pulse frames.
  static readonly string[] keys=BuildKeys();
@@ -1552,24 +1593,28 @@ public sealed class RdcOwnerTrayVisual : IDisposable {
   string activity=snapshot.ContainsKey("toolActivity")?
    Convert.ToString(snapshot["toolActivity"]):"idle";
   string next=Semantic(connection,activity);
-  if(next!=semantic){semantic=next;phase.Restart();}
+  if(phaseGate.Update(next,animate,phase.ElapsedMilliseconds))phase.Restart();
   Advance();
   // No rapid text/tooltip churn while drawing animated frames.
   bool fake=snapshot.ContainsKey("fake")&&Convert.ToBoolean(snapshot["fake"]);
-  string tip="RDC Relay RC1 | "+(fake?"Тест | ":"")+ShortStatus(semantic);
+  // Show the actual state immediately while decorative frames finish.
+  string tip="RDC Relay RC1 | "+(fake?"Тест | ":"")+ShortStatus(next);
   if(tip!=shownTip){
    tray.Text=tip.Length<=63?tip:tip.Substring(0,63);
    shownTip=tip;
   }
  }
  public void Advance(){
-  if(disposed || String.IsNullOrEmpty(semantic))return;
+  if(disposed || String.IsNullOrEmpty(phaseGate.Visible))return;
   if(DateTime.UtcNow>=nextMotionQueryUtc){
    bool nextMotion=MotionEnabled();
    if(nextMotion!=animate){animate=nextMotion;phase.Restart();}
    nextMotionQueryUtc=DateTime.UtcNow.AddSeconds(5);
   }
-  string frame=Frame(semantic,animate,phase.ElapsedMilliseconds);
+  // The Host state was already updated on the last snapshot. Only the
+  // decorative frame is deferred, releasing exactly at the A-frame seam.
+  if(phaseGate.Advance(animate,phase.ElapsedMilliseconds))phase.Restart();
+  string frame=Frame(phaseGate.Visible,animate,phase.ElapsedMilliseconds);
   if(frame!=shownFrame){
    Icon icon;
    if(!icons.TryGetValue(frame,out icon))throw new InvalidDataException("RC1_TRAY_FRAME_MISSING");
