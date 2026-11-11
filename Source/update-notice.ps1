@@ -13,6 +13,11 @@ public sealed class RdcUpdateNoticeStrip : Control {
     private readonly Font buttonFont = new Font("Segoe UI", 9.5f, FontStyle.Bold);
     private const int DefaultWidth = 440;
     private const int ExtraWidth = 150;
+    // Owner RC1 uses the actual footer's compact right-hand column for read-only real update notices.
+    // Both flags default to false, so stable/legacy updater stays unchanged.
+    private bool compactOwner, visualPreviewOnly;
+    public bool CompactOwner { get {return compactOwner;} set {compactOwner=value;Invalidate();} }
+    public bool VisualPreviewOnly { get {return visualPreviewOnly;} set {visualPreviewOnly=value;TabStop=false;Invalidate();} }
     // 300 ms connected move, 280 ms arrow reveal, then 230 ms button fade.
     // Only the -Preview replays the sequence; production plays it once.
     private const double MoveDuration = 0.30;
@@ -64,8 +69,10 @@ public sealed class RdcUpdateNoticeStrip : Control {
         hovered = false;
         pressed = false;
         forceFinish = false;
-        AccessibleRole = AccessibleRole.PushButton;
-        AccessibleName = "Установить RDC Relay v" + offered;
+        AccessibleRole = visualPreviewOnly ? AccessibleRole.StaticText : AccessibleRole.PushButton;
+        AccessibleName = visualPreviewOnly ?
+            "Демонстрация обновления RDC Relay v" + offered :
+            "Установить RDC Relay v" + offered;
         watch.Restart();
         Invalidate();
     }
@@ -87,8 +94,12 @@ public sealed class RdcUpdateNoticeStrip : Control {
     public bool Installing { get { return installing; } set { installing=value; Invalidate(); } }
     public string OfferedVersion { get { return offered; } }
     public bool AnimationComplete { get { return active && Elapsed >= 0.75; } }
-    public bool ButtonReady { get { return active && Elapsed >= 0.73 && !installing; } }
-    public int SuggestedWidth { get { return active ? DefaultWidth + (int)Math.Round(ExtraWidth*Ease(Elapsed/MoveDuration)) : DefaultWidth; } }
+    public bool ButtonReady { get { return !visualPreviewOnly && active && Elapsed >= 0.73 && !installing; } }
+    public int SuggestedWidth { get {
+        int baseWidth=compactOwner?115:DefaultWidth;
+        int expansion=compactOwner?180:ExtraWidth;
+        return active ? baseWidth + (int)Math.Round(expansion*Ease(Elapsed/MoveDuration)) : baseWidth;
+    } }
     public void FinishAnimationForTest() { forceFinish=true; Invalidate(); }
     private double Elapsed { get { return forceFinish ? 1.0 : watch.Elapsed.TotalSeconds; } }
     private static double Clamp(double x) { return Math.Max(0.0,Math.Min(1.0,x)); }
@@ -129,6 +140,16 @@ public sealed class RdcUpdateNoticeStrip : Control {
         int buttonX=sepX-7-buttonWidth;
         int arrowXFinal=buttonX-7-19;
         int targetVersionX=arrowXFinal-7-oldWidth;
+        if(compactOwner){
+            // The Owner footer has no old terminal hint or orange bullet.
+            // Keep the idle version flush right, then shift it toward the
+            // arrow/button using a 115 -> 295px expanding column.
+            sepX=Width;
+            originalVersionX=Width-6-oldWidth;
+            buttonX=Width-6-buttonWidth;
+            arrowXFinal=buttonX-7-19;
+            targetVersionX=arrowXFinal-7-oldWidth;
+        }
         double elapsed=active ? Elapsed : 0.0;
         double move=Ease(elapsed/MoveDuration);
         double arrow=Ease((elapsed-ArrowStart)/ArrowDuration);
@@ -137,14 +158,16 @@ public sealed class RdcUpdateNoticeStrip : Control {
             (int)Math.Round((originalVersionX-targetVersionX)*move);
         int arrowX=sepX-8-(int)Math.Round((sepX-8-arrowXFinal)*arrow);
         int y=0;
-        Color muted=Color.FromArgb(128,128,128);
+        Color muted=compactOwner ? Color.Silver : Color.FromArgb(128,128,128);
         Color orange=Color.FromArgb(191,118,67);
 
-        // Fixed anchor: original close hint and orange bullet never move.
-        TextRenderer.DrawText(g,note,Font,new Rectangle(hintX,y,hintWidth,Height),
-            muted,tf);
-        TextRenderer.DrawText(g,"•",Font,new Rectangle(sepX,y,sepWidth,Height),
-            orange,tf);
+        // Legacy fixed anchor stays identical. Owner has no close hint/bullet.
+        if(!compactOwner){
+            TextRenderer.DrawText(g,note,Font,new Rectangle(hintX,y,hintWidth,Height),
+                muted,tf);
+            TextRenderer.DrawText(g,"•",Font,new Rectangle(sepX,y,sepWidth,Height),
+                orange,tf);
+        }
         TextRenderer.DrawText(g,oldText,Font,
             new Rectangle(versionX,y,oldWidth,Height),muted,tf);
 
@@ -165,8 +188,12 @@ public sealed class RdcUpdateNoticeStrip : Control {
             g.Restore(save);
         }
 
-        // 2px clear margins above and below; no outline clips at control edge.
-        buttonBounds=new Rectangle(buttonX,Math.Max(2,(Height-21)/2),buttonWidth,21);
+        // Keep text in its original 21px slot; the Owner-only button outline
+        // extends one pixel upward without moving or resizing the label.
+        // Legacy button geometry remains unchanged.
+        Rectangle textBounds=new Rectangle(buttonX,Math.Max(2,(Height-21)/2),buttonWidth,21);
+        buttonBounds=compactOwner ? new Rectangle(textBounds.X,textBounds.Y-1,
+            textBounds.Width,textBounds.Height+1) : textBounds;
         if (buttonAlpha > 0.001) {
             int alpha=(int)(255*buttonAlpha);
             // Neutral gray surface with a substantial gold border and
@@ -189,7 +216,7 @@ public sealed class RdcUpdateNoticeStrip : Control {
             using (StringFormat centered=new StringFormat()) {
                 centered.Alignment=StringAlignment.Center;
                 centered.LineAlignment=StringAlignment.Center;
-                g.DrawString(newText,buttonFont,ink,(RectangleF)buttonBounds,centered);
+                g.DrawString(newText,buttonFont,ink,(RectangleF)textBounds,centered);
             }
             if (Focused && ButtonReady && ShowFocusCues) {
                 ControlPaint.DrawFocusRectangle(g,Rectangle.Inflate(buttonBounds,-3,-3));
@@ -257,7 +284,9 @@ $script:rdcNoticeActive = $false
 $script:rdcNoticeInstalling = $false
 $script:rdcNoticeControl = New-Object RdcUpdateNoticeStrip
 $script:rdcNoticeControl.BackColor = $form.BackColor
-$script:rdcNoticeControl.Font = $hint.Font # match informational text size exactly
+$script:rdcNoticeControl.CompactOwner=[bool]$script:ownerUpdateDemoMode
+$script:rdcNoticeControl.VisualPreviewOnly=[bool]$script:ownerUpdateDemoMode
+$script:rdcNoticeControl.Font = if($script:ownerUpdateDemoMode){$form.Font}else{$hint.Font}
 # The bottom TableLayoutPanel uses an auto-preferred 100px row even though
 # its visible footer is 25px high. Drawing in that 100px vertical center was
 # clipped completely. Dock only across the top of the visible inner footer.
@@ -270,8 +299,12 @@ $script:rdcNoticeControl.TabStop = $false
 # The legacy footer remains untouched when the feature flag is disabled.
 $bottom.Controls.Remove($hintHost)
 $bottom.Controls.Add($script:rdcNoticeControl,1,0)
-$script:rdcNoticeControl.Font = $hint.Font
-$script:rdcNoticeControl.SetIdle($appVersion,$hint.Text)
+$script:rdcNoticeControl.Font = if($script:ownerUpdateDemoMode){$form.Font}else{$hint.Font}
+if($script:ownerUpdateDemoMode){
+    $bottom.ColumnStyles[1].Width=115
+    $script:rdcNoticeControl.SetIdle($appVersion,'')
+    $tip.SetToolTip($script:rdcNoticeControl,'RDC Relay RC1: проверка опубликованной версии. Автоматическая установка отключена.')
+}else{$script:rdcNoticeControl.SetIdle($appVersion,$hint.Text)}
 $script:rdcNoticeControl.Visible = $true
 
 $script:rdcNoticeAnimationTimer = New-Object Windows.Forms.Timer
@@ -288,7 +321,7 @@ $script:rdcNoticeAnimationTimer.Add_Tick({
     }
     $script:rdcNoticeControl.Invalidate()
     if ($script:rdcNoticeControl.AnimationComplete) {
-        $script:rdcNoticeControl.TabStop = $true
+        $script:rdcNoticeControl.TabStop = -not $script:ownerUpdateDemoMode
         $script:rdcNoticeAnimationTimer.Stop()
     }
 })
@@ -299,7 +332,13 @@ function Show-RdcUpdateNotice([string]$Version) {
     if ($script:rdcNoticeActive -and
         $script:rdcNoticeControl.OfferedVersion -eq $Version) { return }
     $script:rdcNoticeAnimationTimer.Stop()
-    $script:rdcNoticeControl.Begin($appVersion,$Version,$hint.Text)
+    $script:rdcNoticeControl.Begin($appVersion,$Version,$(if($script:ownerUpdateDemoMode){''}else{$hint.Text}))
+    if($OwnerGui){
+        # The candidate's update action is intentionally disabled. This text
+        # must not claim a fake RC2 or an executable installation path.
+        $script:rdcNoticeControl.AccessibleName='Доступна стабильная версия RDC Relay v'+$Version+'. Установка из RC1 отключена.'
+        $tip.SetToolTip($script:rdcNoticeControl,'Опубликована стабильная версия v'+$Version+'. RC1: автоматическая установка отключена.')
+    }
     $script:rdcNoticeActive = $true
     $script:rdcNoticeControl.TabStop = $false
     $script:rdcNoticeAnimationTimer.Start()
@@ -311,7 +350,7 @@ function Hide-RdcUpdateNotice {
     $script:rdcNoticeActive = $false
     $script:rdcNoticeInstalling = $false
     $script:rdcNoticeControl.End()
-    $bottom.ColumnStyles[1].Width = 440
+    $bottom.ColumnStyles[1].Width = $(if($script:ownerUpdateDemoMode){115}else{440})
     $bottom.PerformLayout()
 }
 function Complete-RdcUpdateNoticeInstall([int]$ExitCode) {
@@ -324,8 +363,9 @@ function Complete-RdcUpdateNoticeInstall([int]$ExitCode) {
 }
 
 $script:rdcNoticeControl.Add_Click({
-    if ($SelfTest -or $Preview -or $script:initializing -or
-        $script:remoteOperation -or $script:rdcNoticeInstalling) { return }
+    if ($SelfTest -or $Preview -or $script:ownerUpdateDemoMode -or
+        $script:initializing -or $script:remoteOperation -or
+        $script:rdcNoticeInstalling) { return }
     if (-not $script:rdcNoticeControl.ButtonReady) { return }
     $script:rdcNoticeInstalling = $true
     $script:rdcNoticeControl.Installing = $true
@@ -336,6 +376,23 @@ $script:rdcNoticeControl.Add_Click({
 function Get-RdcAvailableVersionFromManifest([string]$Raw) {
     $manifest = $Raw.TrimStart([char]0xFEFF) | ConvertFrom-Json
     $remote = [Version]([string]$manifest.version)
+    if($OwnerGui){
+        # RC1 is a prerelease: a truly published stable 1.6.0 is newer
+        # than 1.6.0 RC1 despite sharing its three numeric components.
+        # Only the actual stable release manifest can activate the notice.
+        if($appVersion -cnotmatch '^([0-9]+\.[0-9]+\.[0-9]+) RC[1-9][0-9]*$'){
+            throw 'RC1_OWNER_VERSION_NOT_PRERELEASE'
+        }
+        $localBase=[Version]$Matches[1]
+        $files=@($manifest.files)
+        if($files.Count -lt 2 -or
+           -not @($files|Where-Object{[string]$_.name -ceq 'remote-window.ps1'}).Count -or
+           -not @($files|Where-Object{[string]$_.name -ceq 'update.ps1'}).Count){
+            return $null
+        }
+        if($remote -ge $localBase){return [string]$manifest.version}
+        return $null
+    }
     $local = [Version]$appVersion
     if ($remote -gt $local) { return [string]$manifest.version }
     return $null
@@ -349,7 +406,10 @@ $script:rdcNoticeHttp = $null
 function Update-RdcUpdateNoticePolling {
     # -SkipUpdate skips the startup install, not passive future notifications.
     # The updater restarts a successfully upgraded GUI with -SkipUpdate.
-    if ($SelfTest -or $Preview -or -not $script:enableUpdateNotice) { return }
+    # Owner runs with the legacy -Preview safety boundary. Permit ONLY this
+    # passive stable-version read, never the legacy install/startup route.
+    if ($SelfTest -or ($Preview -and -not $OwnerGui) -or
+        -not $script:enableUpdateNotice) { return }
     $now = Get-Date
     if ($script:rdcNoticeCheckTask) {
         if (-not $script:rdcNoticeCheckTask.IsCompleted) { return }
@@ -403,29 +463,24 @@ function Update-RdcUpdateNoticePolling {
     }
 }
 
-# -Preview only: keep the original footer on screen long enough to be seen
-# before playing the 3-stage reveal, then reset and replay every ~7 seconds.
-# In production this timer does not exist; a real update animates just once.
+# Owner RC1 demo: reveal the preview exactly ONCE per GUI launch, then
+# leave the static expanded notice visible. It never offers installation.
+# The real (non-preview) update notice already animates once per version.
 function Start-RdcUpdateNoticePreview([string]$Version) {
-    if (-not $Preview -or -not $script:enableUpdateNotice) { return }
-    if ($script:rdcNoticePreviewTimer) { return }
+    if ((-not $Preview -and -not $script:ownerUpdateDemoMode) -or
+        -not $script:enableUpdateNotice) { return }
+    if ($script:rdcNoticePreviewShown -or $script:rdcNoticePreviewTimer) { return }
     $script:rdcNoticePreviewVersion = $Version
-    $script:rdcNoticePreviewShown = $false
     $script:rdcNoticePreviewNextAt = (Get-Date).AddSeconds(1.8)
     $script:rdcNoticePreviewTimer = New-Object Windows.Forms.Timer
     $script:rdcNoticePreviewTimer.Interval = 100
     $script:rdcNoticePreviewTimer.Add_Tick({
-        $now = Get-Date
-        if ($now -lt $script:rdcNoticePreviewNextAt) { return }
-        if ($script:rdcNoticePreviewShown) {
-            Hide-RdcUpdateNotice
-            $script:rdcNoticePreviewShown = $false
-            $script:rdcNoticePreviewNextAt = $now.AddSeconds(1.4)
-        } else {
-            Show-RdcUpdateNotice $script:rdcNoticePreviewVersion
-            $script:rdcNoticePreviewShown = $true
-            $script:rdcNoticePreviewNextAt = $now.AddSeconds(5.8)
-        }
+        if ((Get-Date) -lt $script:rdcNoticePreviewNextAt) { return }
+        $script:rdcNoticePreviewShown = $true
+        $script:rdcNoticePreviewTimer.Stop()
+        $script:rdcNoticePreviewTimer.Dispose()
+        $script:rdcNoticePreviewTimer = $null
+        Show-RdcUpdateNotice $script:rdcNoticePreviewVersion
     })
     $script:rdcNoticePreviewTimer.Start()
 }

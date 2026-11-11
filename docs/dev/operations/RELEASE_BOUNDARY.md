@@ -21,6 +21,13 @@ Run the dev-only [Check-ReleaseBoundary.ps1](../tools/Check-ReleaseBoundary.ps1)
 3. Run task-appropriate unit, UI, route and integration regressions on the identified candidate build; record PASS/FAIL/NOT CHECKED.
 4. Preserve transactional rollback; human visual approval for subjective changes and user authorization before production/stable/tag publishing.
 
+## Local RC1 installer housekeeping on STARMER
+
+- After a new candidate passes isolated build/manifest checks and its Desktop Setup/Portable SHA-256 hashes are verified, keep **only the newest pair** as loose Desktop RC1 installer files. Keep the stable `RDC.Relay.Setup.v1.5.18.exe` rollback separately and unmodified.
+- Move the immediately superseded RC1 pair to `Desktop/RemoteDesktopCommander/Old_Installers_YYYY-MM-DD/Gxx_Superseded_<description>/` after checking source and destination hashes and refusing destination collisions. Historical installer-only archives can be cleared **only with explicit owner authorization**, preferably to Windows Recycle Bin so accidental removals remain recoverable. Do not silently delete historical archives.
+- The `Desktop/RemoteDesktopCommander/1.6.0-RC1/` installed app, its backups and `releases/` may hold active rollback/transaction state. Never treat these as stale installers. Also exclude `RDC-RC1-Logger/`, the original launcher's files/backups, user credentials, and all historical TEMP directories from installer cleanup.
+- The 2026-11-08 G96 cleanup was owner-authorized: 69 known EXE/ZIP files in two `Old_Installers_2026-10-28`/`2026-10-29` archives were sent to Recycle Bin (no reparse points or other file types); the current 2026-10-29 archive was recreated with only the verified G95 predecessor Setup/Portable. The G96 pair and stable 1.5.18 remained on Desktop, verified byte-for-byte by SHA-256. No installed application, live Remote, diagnostic logger, or credentials were changed.
+
 ## Secrets: public repository warning
 **Public GitHub `development` branches are public, not secret storage.** Do not commit real tunnel IDs, private endpoint hostnames, active access URLs, personal identifiers, OAuth/API keys, tokens, credential files, private logs or unredacted diagnostic archives. Keep secrets only in protected local storage and exclude them from ALL Git branches, not merely the release. Imported test IDs were redacted; exact originals are backed up only locally on STARMER.
 

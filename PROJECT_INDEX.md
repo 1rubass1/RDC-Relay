@@ -23,6 +23,7 @@
 | Verified transport experiments | [Results matrix](docs/dev/research/RESULTS_MATRIX.md), [research archive](docs/dev/research/) |
 | Editable GUI concept and geometry | [Design reference](docs/dev/design/README.md) |
 | Dev branch / release / credential separation | [Release boundary](docs/dev/operations/RELEASE_BOUNDARY.md) |
+| v1.6.0 owner pilot / blocked RC1 G0 | [Owner pilot gates](docs/dev/planning/V1-6-0-OWNER-PILOT.md), [G0 implementation status & rollback](docs/dev/planning/V1-6-0-RC1-INTEGRATION-STATUS.md), [planned, not executed disposable OS trial](docs/dev/planning/V1-6-0-RC1-OS-TRIAL-PLAN.md) |
 | Pre-Playbook archived chronology and provenance | [Migration manifest](docs/dev/history/MIGRATION_MANIFEST.md), [historical worklog](docs/dev/history/WORKLOG_LEGACY.md) |
 | Released functionality and user instructions | [Product README](README.md), [CHANGELOG](CHANGELOG.md) |
 

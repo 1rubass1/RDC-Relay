@@ -1,10 +1,35 @@
-﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview)
+﻿param([switch]$SelfTest,[switch]$SkipUpdate,[switch]$Preview,[switch]$OwnerGui,[string]$OwnerTicketPath='',[string]$OwnerTrialRoot='')
 $ErrorActionPreference = 'Stop'
+if($OwnerGui){
+ if($SelfTest -or $Preview -or [string]::IsNullOrWhiteSpace($OwnerTicketPath)){
+  throw 'RC1_OWNER_GUI_REQUIRES_PRIVATE_TICKET'
+ }
+ # Suppresses legacy process/startup/update/user registry side effects.
+ # A separate Host owns all lifecycle operations in this branch.
+ $Preview=$true
+}
 $root = $PSScriptRoot
-$appVersion = '1.5.18'
+# Branch-only RC1 source marker blocks accidental legacy GUI execution against
+# a real Remote from the candidate checkout or a staged owner payload.
+if(-not $SelfTest -and -not $Preview -and -not $OwnerGui -and
+   [IO.File]::Exists((Join-Path $root 'rc1-candidate.json'))){
+ throw 'RC1_DEFAULT_LEGACY_REMOTE_LAUNCH_BLOCKED'
+}
+$appVersion = if($OwnerGui){'1.6.0 RC1'}else{
+    $versionFile=Join-Path $root 'version.txt'
+    if(-not [IO.File]::Exists($versionFile)){throw 'RDC_RELEASE_VERSION_FILE_MISSING'}
+    $installedVersion=[IO.File]::ReadAllText($versionFile,[Text.Encoding]::UTF8).Trim()
+    if($installedVersion -cnotmatch '^\d+\.\d+\.\d+$'){throw 'RDC_RELEASE_VERSION_INVALID'}
+    $installedVersion
+}
 # Flip to $false to remove the optional update notice and restore the original
 # startup auto-updater/footer with no other runtime or UI modifications.
-$script:enableUpdateNotice = $true
+$script:enableUpdateNotice = -not $OwnerGui
+# Owner pilot: retain the accepted compact read-only update notice UI, but
+# NEVER offer an invented RC2. Only the official published stable manifest
+# may activate it. Candidate installation/auto-update remain blocked.
+$script:ownerUpdateDemoMode=[bool]($OwnerGui -and -not $SelfTest)
+if($script:ownerUpdateDemoMode){$script:enableUpdateNotice=$true}
 $script:updateInstallRequested = $false
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
@@ -36,7 +61,8 @@ public static class RdcShellIdentity {
 }
 
 try {
-    [void][RdcShellIdentity]::SetCurrentProcessExplicitAppUserModelID('RDCRelay.App')
+    $ownerAppId=if($OwnerGui){'RDCRelay.OwnerPilot.1_6_RC1'}else{'RDCRelay.App'}
+    [void][RdcShellIdentity]::SetCurrentProcessExplicitAppUserModelID($ownerAppId)
 } catch {}
 
 
@@ -273,7 +299,7 @@ function Ensure-InstalledAppRegistration {
 
         $key.SetValue('DisplayName','RDC Relay',[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('DisplayVersion',$appVersion,[Microsoft.Win32.RegistryValueKind]::String)
-        $key.SetValue('Publisher','UMAS',[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('Publisher','RUBASS',[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('InstallLocation',$root,[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('DisplayIcon',$iconPath,[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('URLInfoAbout','https://github.com/1rubass1/RDC-Relay',[Microsoft.Win32.RegistryValueKind]::String)
@@ -306,7 +332,7 @@ function Resolve-NpxPath {
 }
 
 $windowMutex = $null
-if (-not $SelfTest) {
+if (-not $SelfTest -and -not $OwnerGui) {
     $sha = [Security.Cryptography.SHA256]::Create()
     $key = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($PSScriptRoot.ToLowerInvariant()))).Replace('-','')
     $sha.Dispose()
@@ -436,6 +462,80 @@ public class RdcMenuColorTable : ProfessionalColorTable {
     public override Color MenuItemPressedGradientBegin { get { return Color.FromArgb(128,74,55,103); } }
     public override Color MenuItemPressedGradientMiddle { get { return Color.FromArgb(128,74,55,103); } }
     public override Color MenuItemPressedGradientEnd { get { return Color.FromArgb(128,74,55,103); } }
+}
+
+// Owner-only checkbox affordance: the orange image-margin is shared by all
+// Account commands, so show an actual high-contrast square for the quota toggle.
+// ToolStripMenuItem still owns Checked/CheckOnClick, keyboard and accessibility.
+public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
+    private const string QuotaItemName = "rc1-quota-display-toggle";
+
+    public RdcOwnerAccountMenuRenderer(ProfessionalColorTable colors) : base(colors) { }
+
+    // Owner Account only: remove the orange image-column fill without
+    // changing the shared color table (used by the Help and legacy menus).
+    // Use the actual menu BackColor so the glyph gutter joins the text area.
+    protected override void OnRenderImageMargin(ToolStripRenderEventArgs e) {
+        using (Brush brush = new SolidBrush(e.ToolStrip.BackColor))
+            e.Graphics.FillRectangle(brush, e.AffectedBounds);
+    }
+
+    public static Rectangle QuotaBoxBounds(ToolStripItem item) {
+        const int side = 16;
+        return new Rectangle(6, Math.Max(0, (item.Height - side) / 2), side, side);
+    }
+
+    public static void PaintQuotaBox(Graphics g, ToolStripMenuItem item) {
+        Rectangle rect = QuotaBoxBounds(item);
+        if (rect.Right > item.Width || rect.Bottom > item.Height) return;
+
+        SmoothingMode oldSmoothing = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        try {
+            // Let Windows supply actual contrast colors when High Contrast is on.
+            bool highContrast = SystemInformation.HighContrast;
+            Color fill = highContrast
+                ? (item.Checked ? SystemColors.Highlight : SystemColors.Window)
+                : (item.Enabled
+                  ? (item.Checked ? Color.FromArgb(63, 46, 82) : Color.FromArgb(37, 40, 47))
+                  : Color.FromArgb(66, 66, 70));
+            Color outline = highContrast
+                ? (item.Checked ? SystemColors.HighlightText : SystemColors.WindowText)
+                : (!item.Enabled ? Color.FromArgb(148, 148, 148)
+                  : (item.Selected ? Color.White
+                  : (item.Checked ? Color.FromArgb(255, 224, 160) : Color.FromArgb(238, 238, 238))));
+            using (Brush brush = new SolidBrush(fill))
+                g.FillRectangle(brush, rect);
+            using (Pen border = new Pen(outline, 1.35f))
+                g.DrawRectangle(border, rect.X + 0.65f, rect.Y + 0.65f,
+                                rect.Width - 1.3f, rect.Height - 1.3f);
+            if (item.Checked) {
+                Color tick = highContrast ? SystemColors.HighlightText
+                    : (item.Enabled ? Color.White : Color.FromArgb(195, 195, 195));
+                using (Pen pen = new Pen(tick, 2.15f)) {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    pen.LineJoin = LineJoin.Round;
+                    g.DrawLines(pen, new PointF[] {
+                        new PointF(rect.X + 3.5f, rect.Y + 8.0f),
+                        new PointF(rect.X + 6.6f, rect.Y + 11.2f),
+                        new PointF(rect.X + 12.3f, rect.Y + 4.9f)
+                    });
+                }
+            }
+        } finally { g.SmoothingMode = oldSmoothing; }
+    }
+
+    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e) {
+        base.OnRenderMenuItemBackground(e);
+        ToolStripMenuItem item = e.Item as ToolStripMenuItem;
+        if (item != null && item.Name == QuotaItemName) PaintQuotaBox(e.Graphics, item);
+    }
+
+    protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) {
+        if (e.Item != null && e.Item.Name == QuotaItemName) return;
+        base.OnRenderItemCheck(e);
+    }
 }
 
 public class RdcCircleButton : Control {
@@ -1601,6 +1701,33 @@ public class RdcLogBox : RichTextBox {
 
     public void ApplyCompactLineSpacing() {
         ApplyExactLineSpacing(0,TextLength,1.0f);
+    }
+
+    // RC1 header only: tighten adjacent Unicode box-drawing paragraphs.
+    // Regular text, status colors and emoji must keep natural font metrics:
+    // the old global 1px reduction clips taller fallback glyphs (notably
+    // the green connection icons) and can paint stray colored fragments.
+    // The six-line Desktop Commander banner is tightened separately by
+    // StyleStartupBanner(), preserving its seamless full-block artwork.
+    public void ApplyCompactHeaderLineArtSpacing() {
+        if (!IsHandleCreated || TextLength == 0) return;
+        string all = Text;
+        int start = 0;
+        while (start < all.Length) {
+            int eol = all.IndexOf('\n',start);
+            if (eol < 0) eol = all.Length;
+            int contentStart = start;
+            while (contentStart < eol && (all[contentStart] == ' ' ||
+                   all[contentStart] == '\t' || all[contentStart] == '\r'))
+                contentStart++;
+            if (contentStart < eol) {
+                char c = all[contentStart];
+                if (c >= '\u2500' && c <= '\u259F')
+                    ApplyExactLineSpacing(start,eol-start,1.0f);
+            }
+            if (eol == all.Length) break;
+            start = eol + 1;
+        }
     }
 
     public static string ReadChunk(TextReader reader, int maxChars) {
@@ -3407,14 +3534,84 @@ $form = New-Object Windows.Forms.Form
 $form.Text = 'RDC Relay'
 $baseWindowWidth = 1074
 $baseWindowHeight = 900
-$paneMinHeightPreferred = 125
+$paneMinHeightPreferred = 125 # Legacy and activity baseline are unchanged.
+# G98: keep fixed-width line art and text; only emoji spans use a fallback font.
+# A future Help/Journal preference can toggle this Owner-only text preset.
+$script:ownerTextFontFamily='Consolas'
+$script:ownerEmojiFontFamily='Segoe UI Emoji'
+$script:ownerEmojiEnabled=[bool]$OwnerGui
+function Get-Rc1HeaderBannerMinimum {
+    # The pinned Remote header's Desktop Commander banner occupies six
+    # compact rows. Keep all six visible when the owner header is collapsed.
+    # Include its 7px draggable divider and a tiny 2px bottom breathing room.
+    $probe=New-Object Windows.Forms.RichTextBox
+    $font=New-Object Drawing.Font($script:ownerTextFontFamily,9)
+    try{
+        $probe.Font=$font
+        $probe.BorderStyle=[Windows.Forms.BorderStyle]::None
+        $probe.WordWrap=$false
+        $probe.Text="Ag`nAg"
+        [void]$probe.Handle
+        $linePitch=$probe.GetPositionFromCharIndex(3).Y -
+                   $probe.GetPositionFromCharIndex(0).Y
+        if($linePitch -lt 8 -or $linePitch -gt 50){throw 'RC1_INVALID_HEADER_LINE_PITCH'}
+        return [Math]::Max(64,(6*$linePitch)+7+2)
+    }finally{
+        $probe.Dispose()
+        $font.Dispose()
+    }
+}
+$headerPaneMinHeightPreferred=if($OwnerGui){Get-Rc1HeaderBannerMinimum}else{$paneMinHeightPreferred}
+function Get-Rc1ActivityRowReserve([int]$baselineHeight) {
+    # Measure the actual compact RichEdit row pitch, not the unconstrained
+    # Segoe Emoji font height. RdcLogBox.ApplyCompactLineSpacing() explicitly
+    # fixes paragraph advance to the Consolas body font; isolated mixed-run
+    # RichEdit tests confirm inline emoji still advance by the body pitch.
+    # Owner reserves six events plus two blank rows and 17px for scrollbars.
+    $probe=New-Object Windows.Forms.RichTextBox
+    $font=New-Object Drawing.Font($script:ownerTextFontFamily,10)
+    try {
+        $probe.Font=$font
+        $probe.BorderStyle=[Windows.Forms.BorderStyle]::None
+        $probe.WordWrap=$false
+        $probe.Text="Ag`nAg"
+        [void]$probe.Handle
+        $linePitch=$probe.GetPositionFromCharIndex(3).Y -
+                   $probe.GetPositionFromCharIndex(0).Y
+        if($linePitch -lt 8 -or $linePitch -gt 50){throw 'RC1_INVALID_LOG_LINE_PITCH'}
+        # Both minimum-pane and journal-capacity calculations use the same
+        # measured RichEdit line pitch.
+        $existingSlack=([Math]::Max(1,$baselineHeight-17) % $linePitch)
+        if($OwnerGui){
+            $script:ownerJournalLinePitch=[int]$linePitch
+            # Six visible events plus one empty row above and below.
+            # Use exactly the body pitch also used by the live line formatter.
+            return [Math]::Max(0,(8*$linePitch)+17-$baselineHeight)
+        }
+        return $(if($existingSlack -eq 0){$linePitch}else{$linePitch-$existingSlack})
+    }finally{
+        $probe.Dispose()
+        $font.Dispose()
+    }
+}
+$activityRowReserve=if($OwnerGui){Get-Rc1ActivityRowReserve $paneMinHeightPreferred}else{0}
+$activityPaneMinHeightPreferred=$paneMinHeightPreferred+$activityRowReserve
 $startupScreen = [Windows.Forms.Screen]::FromPoint([Windows.Forms.Cursor]::Position)
 $startupWorkArea = $startupScreen.WorkingArea
 $windowWidth = [Math]::Min($baseWindowWidth,$startupWorkArea.Width)
 $windowHeight = [Math]::Min($baseWindowHeight,$startupWorkArea.Height)
 $form.Size = New-Object Drawing.Size($windowWidth,$windowHeight)
-$preferredMinimumHeight = 78 + 38 + (2 * $paneMinHeightPreferred) + 7 + 48
-$minimumWindowHeight = [Math]::Min($windowHeight,$preferredMinimumHeight)
+$preferredMinimumHeight = 78 + 38 + $headerPaneMinHeightPreferred + $activityPaneMinHeightPreferred + 7 + 48
+if($OwnerGui){
+    # Stop bottom-edge resizing exactly where both text panes reach their
+    # measured minima. Header minimum ALREADY contains the 7px divider;
+    # account only for the actual Windows non-client frame (no extra row).
+    $windowFrameHeight=[Math]::Max(0,$form.Height-$form.ClientSize.Height)
+    $minimumWindowHeight=78+38+$headerPaneMinHeightPreferred+
+        $activityPaneMinHeightPreferred+$windowFrameHeight
+}else{
+    $minimumWindowHeight=[Math]::Min($windowHeight,$preferredMinimumHeight)
+}
 $form.MinimumSize = New-Object Drawing.Size($windowWidth,$minimumWindowHeight)
 $form.MaximumSize = New-Object Drawing.Size($windowWidth,10000)
 $form.FormBorderStyle = [Windows.Forms.FormBorderStyle]::Sizable
@@ -3507,7 +3704,7 @@ $menuRenderer = New-Object Windows.Forms.ToolStripProfessionalRenderer -Argument
 $accountMenu = New-Object Windows.Forms.ContextMenuStrip
 $accountMenu.BackColor = [Drawing.Color]::FromArgb(38,41,46)
 $accountMenu.ForeColor = [Drawing.Color]::Gainsboro
-$accountMenu.Renderer = $menuRenderer
+$accountMenu.Renderer = if($OwnerGui){New-Object RdcOwnerAccountMenuRenderer -ArgumentList $menuColors}else{$menuRenderer}
 $switchAccountItem = New-Object Windows.Forms.ToolStripMenuItem
 $switchAccountItem.Text = 'Сменить аккаунт…'
 $reconnectItem = New-Object Windows.Forms.ToolStripMenuItem
@@ -3520,7 +3717,15 @@ $verifyDeviceItem.Text = 'Подтвердить новое устройство
 [void]$accountMenu.Items.Add($reconnectItem)
 [void]$accountMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
 [void]$accountMenu.Items.Add($devicesItem)
-[void]$accountMenu.Items.Add($verifyDeviceItem)
+if(-not $OwnerGui){[void]$accountMenu.Items.Add($verifyDeviceItem)}
+$quotaAuthItem=New-Object Windows.Forms.ToolStripMenuItem
+$quotaAuthItem.Text='Выводить остаток вызовов'
+$quotaAuthItem.Name='rc1-quota-display-toggle'
+$quotaAuthItem.AccessibleDescription='Флажок: включить или выключить автоматическое отображение остатка вызовов.'
+$quotaAuthItem.CheckOnClick=[bool]$OwnerGui
+$quotaAuthItem.Visible=[bool]$OwnerGui
+$quotaAuthItem.Enabled=$false
+if($OwnerGui){[void]$accountMenu.Items.Add($quotaAuthItem)}
 
 $top.Controls.Add($statusDot,0,0)
 $top.SetRowSpan($statusDot,2)
@@ -3536,7 +3741,7 @@ $bottom.Padding = New-Object Windows.Forms.Padding(12,7,12,6)
 $bottom.ColumnCount = 2
 $bottom.RowCount = 1
 [void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent,100)))
-[void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,440)))
+[void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,$(if($OwnerGui){110}else{440}))))
 $accentOrange = [Drawing.Color]::FromArgb(191,118,67)
 $accentPurple = [Drawing.Color]::FromArgb(74,55,103)
 $statusGreen = [Drawing.Color]::LightGreen
@@ -3544,6 +3749,11 @@ $accentWait = [Drawing.Color]::Khaki
 $accentNetwork = [Drawing.Color]::LightSkyBlue
 $accentStorage = [Drawing.Color]::LightSteelBlue
 $accentPresence = [Drawing.Color]::Plum
+# RC1 Owner: semantic emoji colors follow their actual message meaning.
+# Keep legacy 1.5.18 highlight colors unchanged.
+$accentSuccess=if($OwnerGui){$statusGreen}else{$accentPurple}
+$accentStop=if($OwnerGui){[Drawing.Color]::LightCoral}else{$accentOrange}
+$accentGreeting=if($OwnerGui){[Drawing.Color]::Gainsboro}else{$accentPresence}
 $stateOnline = [Drawing.Color]::LimeGreen
 $stateOffline = [Drawing.Color]::Tomato
 $commandAccent = [Drawing.Color]::Gold
@@ -3585,9 +3795,20 @@ $runtimeRight.AutoSize = $true
 $runtimeRight.ForeColor = [Drawing.Color]::Silver
 $runtimeRight.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
 
+# Owner-only account quota label: no change to the stable 1.5.18 footer.
+$quotaLabel = New-Object Windows.Forms.Label
+$quotaLabel.AutoSize = $true
+$quotaLabel.Text = 'Остаток вызовов: --%'
+$quotaLabel.ForeColor = [Drawing.Color]::Silver
+$quotaLabel.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
+$quotaLabel.Visible = $OwnerGui
+
 $infoHost.Controls.Add($accountInfo)
+# Keep the stable 1.5.18 orange pipe separators between footer values,
+# including Owner's account | quota | uptime layout (PID lives in About).
 $infoHost.Controls.Add($accountSep)
-$infoHost.Controls.Add($runtimeLeft)
+if(-not $OwnerGui){$infoHost.Controls.Add($runtimeLeft)}
+if($OwnerGui){$infoHost.Controls.Add($quotaLabel)}
 $infoHost.Controls.Add($runtimeSep)
 $infoHost.Controls.Add($runtimeRight)
 
@@ -3600,7 +3821,7 @@ $hintHost.Padding = New-Object Windows.Forms.Padding(0)
 
 $hint = New-Object Windows.Forms.Label
 $hint.AutoSize = $true
-$hint.Text = 'Крестик закрывает окно вместе с remote-процессом.'
+$hint.Text = if($OwnerGui){''}else{'Крестик закрывает окно вместе с remote-процессом.'}
 $hint.ForeColor = [Drawing.Color]::Gray
 $hint.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
 
@@ -3608,21 +3829,51 @@ $hintSep = New-Object Windows.Forms.Label
 $hintSep.AutoSize = $true
 $hintSep.Text = '•'
 $hintSep.ForeColor = $accentOrange
-$hintSep.Margin = New-Object Windows.Forms.Padding(6,2,6,0)
+$hintSep.Margin = New-Object Windows.Forms.Padding(0,2,6,0)
 
 $hintVersion = New-Object Windows.Forms.Label
 $hintVersion.AutoSize = $true
 $hintVersion.Text = 'v' + $appVersion
-$hintVersion.Font = $hint.Font
-$hintVersion.ForeColor = [Drawing.Color]::Gray
-$hintVersion.Margin = New-Object Windows.Forms.Padding(0,2,0,0)
+$hintVersion.Font = if($OwnerGui){$form.Font}else{$hint.Font}
+$hintVersion.ForeColor = if($OwnerGui){$accountInfo.ForeColor}else{[Drawing.Color]::Gray}
+# Owner aligns the version with the account/quota/uptime text; the right
+# column remains independently right-anchored across window widths.
+$hintVersion.Margin = New-Object Windows.Forms.Padding(0,$(if($OwnerGui){2}else{6}),0,0)
 
-$hintHost.Controls.Add($hint)
-$hintHost.Controls.Add($hintSep)
+if(-not $OwnerGui){
+    $hintHost.Controls.Add($hint)
+    $hintHost.Controls.Add($hintSep)
+}
 $hintHost.Controls.Add($hintVersion)
+if($OwnerGui){$tip.SetToolTip($quotaLabel,'Последний подтверждённый остаток вызовов Remote Desktop Commander. Без нового ответа сервиса значение устаревает.')}
 
 $bottom.Controls.Add($infoHost,0,0)
 $bottom.Controls.Add($hintHost,1,0)
+# Owner-only subtle, non-layout animation of the version in the far corner.
+# No motion in high-contrast mode. The stable updater footer is unaffected.
+if($OwnerGui){
+    $script:ownerVersionIntroTimer=New-Object Windows.Forms.Timer
+    $script:ownerVersionIntroTimer.Interval=25
+    $script:ownerVersionIntroFrame=0
+    $hintVersion.ForeColor=$form.BackColor
+    $script:ownerVersionIntroTimer.Add_Tick({
+        $script:ownerVersionIntroFrame++
+        $t=[Math]::Min(1.0,([double]$script:ownerVersionIntroFrame/7.0))
+        $smooth=$t*$t*(3.0-2.0*$t)
+        $from=$form.BackColor
+        $to=$accountInfo.ForeColor
+        $r=[int][Math]::Round($from.R+($to.R-$from.R)*$smooth)
+        $g=[int][Math]::Round($from.G+($to.G-$from.G)*$smooth)
+        $b=[int][Math]::Round($from.B+($to.B-$from.B)*$smooth)
+        $hintVersion.ForeColor=[Drawing.Color]::FromArgb($r,$g,$b)
+        if($t -ge 1.0){$script:ownerVersionIntroTimer.Stop()}
+    })
+    $form.Add_Shown({
+        if([Windows.Forms.SystemInformation]::HighContrast){
+            $hintVersion.ForeColor=$accountInfo.ForeColor
+        }else{$script:ownerVersionIntroTimer.Start()}
+    })
+}
 $tip.SetToolTip($accountInfo,'Аккаунт Desktop Commander, к которому привязан этот компьютер')
 
 $contentHost = New-Object Windows.Forms.TableLayoutPanel
@@ -3632,7 +3883,7 @@ $contentHost.Margin = New-Object Windows.Forms.Padding(0)
 $contentHost.Padding = New-Object Windows.Forms.Padding(0)
 $contentHost.ColumnCount = 1
 $contentHost.RowCount = 2
-$activityDefaultHeight = $paneMinHeightPreferred
+$activityDefaultHeight = $activityPaneMinHeightPreferred
 [void]$contentHost.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent,100)))
 [void]$contentHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent,100)))
 [void]$contentHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,$activityDefaultHeight)))
@@ -3665,7 +3916,7 @@ $headerLog.ReadOnly = $true
 $headerLog.TabStop = $false
 $headerLog.BackColor = [Drawing.Color]::FromArgb(18,20,23)
 $headerLog.ForeColor = [Drawing.Color]::Gainsboro
-$headerLog.Font = New-Object Drawing.Font('Consolas',9)
+$headerLog.Font = New-Object Drawing.Font($script:ownerTextFontFamily,9)
 $headerLog.WordWrap = $true
 $headerLog.BorderStyle = 'None'
 $headerLog.ScrollBars = [Windows.Forms.RichTextBoxScrollBars]::None
@@ -3769,7 +4020,7 @@ $log.ReadOnly = $true
 $log.TabStop = $false
 $log.BackColor = [Drawing.Color]::FromArgb(18,20,23)
 $log.ForeColor = [Drawing.Color]::Gainsboro
-$log.Font = New-Object Drawing.Font('Consolas',10)
+$log.Font = New-Object Drawing.Font($script:ownerTextFontFamily,10)
 $log.WordWrap = $false
 $log.BorderStyle = 'None'
 $log.ScrollBars = [Windows.Forms.RichTextBoxScrollBars]::None
@@ -3857,13 +4108,20 @@ function Stop-LogResizeInteraction {
     try { $log.RefreshViewport() } catch {}
 }
 function Get-EffectivePaneMinHeight {
-    $available = [Math]::Max(1,$contentHost.ClientSize.Height)
-    $half = [Math]::Max(48,[int][Math]::Floor($available / 2))
-    return [Math]::Min($paneMinHeightPreferred,$half)
+    $available=[Math]::Max(1,$contentHost.ClientSize.Height)
+    # Keep the six-line Owner logo (or legacy 125px header) visible.
+    # On constrained displays allow both panes to degrade symmetrically.
+    $headerReserve=[Math]::Min($headerPaneMinHeightPreferred,
+        [Math]::Max(48,[int][Math]::Floor($available/2)))
+    return [Math]::Min($activityPaneMinHeightPreferred,
+        [Math]::Max(48,$available-$headerReserve))
 }
 function Get-ClampedActivityPaneHeight([double]$requestedHeight) {
-    $paneMinHeight = Get-EffectivePaneMinHeight
-    $maxHeight = [Math]::Max($paneMinHeight,($contentHost.ClientSize.Height - $paneMinHeight))
+    $paneMinHeight=Get-EffectivePaneMinHeight
+    $headerMinHeight=[Math]::Min($headerPaneMinHeightPreferred,
+        [Math]::Max(48,$contentHost.ClientSize.Height-$paneMinHeight))
+    $maxHeight=[Math]::Max($paneMinHeight,
+        ($contentHost.ClientSize.Height-$headerMinHeight))
     return [Math]::Max($paneMinHeight,[Math]::Min($maxHeight,$requestedHeight))
 }
 function Set-ActivityPaneHeight([double]$requestedHeight) {
@@ -3892,7 +4150,10 @@ function Position-DividerDragPreview([double]$paneHeight) {
     )
     $dividerDragPreview.UpdateDivider((Get-DividerPreviewY $paneHeight))
 }
-$logHost.Add_Resize({ Layout-LogScrollbars })
+$logHost.Add_Resize({
+    Layout-LogScrollbars
+    if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
+})
 $contentHost.Add_Resize({
     Set-ActivityPaneHeight $contentHost.RowStyles[1].Height
 })
@@ -3910,12 +4171,14 @@ $scrollCorner.Add_MouseUp({
     $script:uiInteracting = $false
     Layout-LogScrollbars
     Stop-LogResizeInteraction
+    if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
 })
 $scrollCorner.Add_MouseCaptureChanged({
     if (-not $scrollCorner.Capture) {
         $script:uiInteracting = $false
         Layout-LogScrollbars
         Stop-LogResizeInteraction
+        if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
     }
 })
 
@@ -3940,6 +4203,7 @@ function Complete-DividerDrag {
     } finally {
         Stop-LogResizeInteraction
     }
+    if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
 
     try { $gpuDivider.SetInteractiveMove($false) } catch {}
 
@@ -4172,8 +4436,10 @@ function Set-FinishButtonMode([bool]$running) {
 function Set-RuntimeDisplay([string]$left,[string]$right = '',[bool]$showSeparator = $false) {
     $runtimeLeft.Text = $left
     $runtimeRight.Text = $right
-    $runtimeSep.Visible = $showSeparator
     $runtimeRight.Visible = -not [string]::IsNullOrWhiteSpace($right)
+    # Owner uses the same separator for quota | uptime as legacy uses for
+    # PID | runtime. Hide it only when there is no right-hand value.
+    $runtimeSep.Visible = ($showSeparator -and $runtimeRight.Visible)
 }
 function Set-AccountDisplay([string]$email) {
     if ([string]::IsNullOrWhiteSpace($email)) {
@@ -4515,7 +4781,10 @@ function Add-CompletedEvent([string]$text) {
     $item = Limit-UiEvent $text
     if ([string]::IsNullOrWhiteSpace($item)) { return }
     [void]$script:eventBlocks.Add($item)
-    while ($script:eventBlocks.Count -gt 6) { $script:eventBlocks.RemoveAt(0) }
+    # Owner keeps bounded history independently from visible rows; resizing
+    # can reveal older events without querying Host or discarding newer data.
+    $retained=if($OwnerGui){64}else{6}
+    while ($script:eventBlocks.Count -gt $retained) { $script:eventBlocks.RemoveAt(0) }
 }
 function Commit-CurrentEvent {
     if (-not [string]::IsNullOrWhiteSpace($script:currentEvent)) {
@@ -4593,6 +4862,22 @@ function Color-LogToken([RdcLogBox]$target,[string]$token,[Drawing.Color]$color)
         $pos += $token.Length
     }
 }
+function Apply-OwnerEmojiFont([Windows.Forms.RichTextBox]$target) {
+    # In WinForms RichEdit the font for every character can be chosen without
+    # changing its value, color or the fixed-width surrounding paragraphs.
+    # Do not format U+2500..U+259F line art: that keeps the six-row logo intact.
+    if(-not $script:ownerEmojiEnabled -or -not $target -or $target.TextLength -eq 0){return}
+    $all=$target.Text
+    $emojiRuns=[Regex]::Matches($all,'(?:[\uD83C-\uDBFF][\uDC00-\uDFFF]|[\u2300-\u23FF\u2600-\u27BF])\uFE0F?')
+    if($emojiRuns.Count -eq 0){return}
+    $font=New-Object Drawing.Font($script:ownerEmojiFontFamily,$target.Font.Size)
+    try {
+        foreach($run in $emojiRuns){
+            $target.Select($run.Index,$run.Length)
+            $target.SelectionFont=$font
+        }
+    } finally { $font.Dispose() }
+}
 function Color-LogRegex([RdcLogBox]$target,[string]$pattern,[Drawing.Color]$color,[int]$limit=-1,[int]$group=0) {
     if (-not $target -or [string]::IsNullOrEmpty($pattern) -or $target.TextLength -eq 0) { return }
     $all = $target.Text
@@ -4617,10 +4902,32 @@ function Color-HeaderSemantics([RdcLogBox]$target,[int]$headerLimit) {
     Color-LogRegex $target '^\s*-\s*Device Name:\s*(.+)$' $headerValue $headerLimit 1
     Color-LogRegex $target '^\s*Device:\s*(.+)$' $headerValue $headerLimit 1
 }
+function Get-Rc1JournalVisibleRowCapacity {
+    if(-not $OwnerGui -or -not $script:ownerCompactJournal){return 6}
+    if(-not $log -or $log.IsDisposed){return 6}
+    $linePitch=[Math]::Max(1,[int]$script:ownerJournalLinePitch)
+    if($linePitch -le 1){return 6}
+    # The RichEdit viewport excludes the separate 17px horizontal scrollbar.
+    # Reserve one blank line above the first entry and one below the last.
+    $wholeLines=[int][Math]::Floor([Math]::Max(0,$log.ClientSize.Height)/$linePitch)
+    return [Math]::Max(1,[Math]::Min(64,$wholeLines-2))
+}
+function Refresh-Rc1JournalOnResize {
+    if(-not $OwnerGui -or -not $script:ownerCompactJournal -or
+       $script:uiInteracting -or $script:logRedrawFrozen -or
+       -not $script:eventBlocks){return}
+    $capacity=Get-Rc1JournalVisibleRowCapacity
+    if($capacity -ne $script:ownerLastJournalCapacity){Render-CompactLog}
+}
 function Render-CompactLog {
     if (-not $log -or $log.IsDisposed -or -not $headerLog -or $headerLog.IsDisposed) { return }
 
     $headerDisplay = if ([string]::IsNullOrWhiteSpace($script:startupBlock)) { '' } else { $script:startupBlock.TrimEnd() }
+    # Present desktop-GUI instructions, not upstream terminal-only shortcuts.
+    # Transform only the render copy; the original Host startup text is intact.
+    if($OwnerGui -and $headerDisplay){
+        $headerDisplay=Convert-Rc1OwnerStartupInstructions $headerDisplay
+    }
     if ($script:lastRenderedHeader -cne $headerDisplay) {
         $headerView = $null
         try { $headerView = $headerLog.GetViewPosition() } catch {}
@@ -4644,19 +4951,22 @@ function Render-CompactLog {
                     $accentOrange
                 )
             }
-            # Apply the same 1 px RichEdit paragraph tightening that removed the
-            # horizontal seams in the startup banner to the entire header text,
-            # including Unicode box-drawing blocks such as Next / Commands.
-            $headerLog.ApplyCompactLineSpacing()
+            # RC1: preserve compact banner and box borders but never compress
+            # ordinary paragraphs or green Unicode connection/status glyphs.
+            # The legacy 1.5.18 view keeps its original whole-header layout.
+            if($OwnerGui){$headerLog.ApplyCompactHeaderLineArtSpacing()}
+            else{$headerLog.ApplyCompactLineSpacing()}
             Color-HeaderSemantics $headerLog $headerLog.TextLength
             Color-LogToken $headerLog '🔧' $accentOrange
             Color-LogToken $headerLog '🚀' $accentOrange
-            Color-LogToken $headerLog '✅' $accentPurple
+            if($OwnerGui){Color-LogToken $headerLog '⏹' $accentStop}
+            Color-LogToken $headerLog '✅' $accentSuccess
             Color-LogToken $headerLog '🔌' $statusGreen
             Color-LogToken $headerLog '⏳' $accentWait
             Color-LogToken $headerLog '🌐' $accentNetwork
             Color-LogToken $headerLog '💾' $accentStorage
-            Color-LogToken $headerLog '👋' $accentPresence
+            Color-LogToken $headerLog '👋' $accentGreeting
+            if($OwnerGui){Apply-OwnerEmojiFont $headerLog}
 
             if ($headerHadSelection) {
                 $restoreHeaderStart = [Math]::Min($headerSelectionStart,$headerLog.TextLength)
@@ -4683,13 +4993,24 @@ function Render-CompactLog {
     $visible = @()
     foreach ($item in $script:eventBlocks) { $visible += [string]$item }
     if (-not [string]::IsNullOrWhiteSpace($script:currentEvent)) { $visible += [string]$script:currentEvent }
-    if ($visible.Count -gt 6) { $visible = $visible[($visible.Count-6)..($visible.Count-1)] }
+    $visibleLimit=Get-Rc1JournalVisibleRowCapacity
+    $script:ownerLastJournalCapacity=$visibleLimit
+    if ($visible.Count -gt $visibleLimit) {
+        $visible = $visible[($visible.Count-$visibleLimit)..($visible.Count-1)]
+    }
 
     $parts = New-Object System.Collections.Generic.List[string]
     foreach ($item in $visible) {
         if (-not [string]::IsNullOrWhiteSpace($item)) { [void]$parts.Add($item.TrimEnd()) }
     }
-    $display = [string]::Join(($nl+$nl),$parts)
+    # Owner RC1 journal uses a continuous aligned number/bar column.
+    # Keep original double-separated event layout in legacy 1.5.18 mode.
+    $eventSeparator = if($script:ownerCompactJournal){$nl}else{$nl+$nl}
+    $display = [string]::Join($eventSeparator,$parts)
+    # Owner RC1 only: keep one blank line above the activity text.
+    # No geometry changes to RichEdit, overlay scrollbars or splitter.
+    # Reconstructed from event blocks on every render, so it cannot accumulate.
+    if($script:ownerCompactJournal -and $display.Length -gt 0){$display=$nl+$display}
     if ($script:lastRenderedText -ceq $display) {
         # RichEdit can defer repaint/reflow after a hidden/redraw-frozen update.
         # Keep the viewport visually honest even when the logical text did not
@@ -4729,15 +5050,22 @@ function Render-CompactLog {
         # Keep line-art glyphs visually joined in every RdcLogBox, not only the
         # startup banner.
         $log.ApplyCompactLineSpacing()
+        if($script:ownerCompactJournal){
+            # Consistent monospaced six-digit gutter and a connected Unicode │.
+            # Event sequence is neutral body text, not highlighted metadata.
+            Color-LogRegex $log '^(\d{6,18})\s+│' $log.ForeColor -1 1
+            Color-LogRegex $log '^\d{6,18}\s+(│)' ([Drawing.Color]::Gainsboro) -1 1
+        }
         Color-LogToken $log '🔧' $accentOrange
         Color-LogToken $log '🚀' $accentOrange
-        Color-LogToken $log '✅' $accentPurple
+        Color-LogToken $log '✅' $accentSuccess
         Color-LogToken $log '❌' ([Drawing.Color]::LightCoral)
         Color-LogToken $log '🔌' $statusGreen
         Color-LogToken $log '⏳' $accentWait
         Color-LogToken $log '🌐' $accentNetwork
         Color-LogToken $log '💾' $accentStorage
-        Color-LogToken $log '👋' $accentPresence
+        Color-LogToken $log '👋' $accentGreeting
+        if($OwnerGui){Apply-OwnerEmojiFont $log}
 
         if ($hadUserSelection) {
             $restoreStart = [Math]::Min($oldSelectionStart,$log.TextLength)
@@ -4942,6 +5270,7 @@ function Add-RemoteChunk([string]$text) {
     Render-CompactLog
 }
 function Open-Reader {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     if ($script:reader -or -not (Test-Path $logPath)) { return }
     try {
         $stream = New-Object IO.FileStream(
@@ -5046,6 +5375,7 @@ function Move-ReaderToRecentTailIfBehind {
     } catch {}
 }
 function Read-LiveLog {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     Open-Reader
     if ($script:reader) {
         Move-ReaderToRecentTailIfBehind
@@ -5054,6 +5384,7 @@ function Read-LiveLog {
     }
 }
 function Find-ExistingRemote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     try {
         # Only attach to a launcher that writes to this installation's own log.
         # Do not adopt an arbitrary desktop-commander process started manually
@@ -5161,6 +5492,7 @@ function Start-NoWindowCmd([string]$commandLine) {
     return [Diagnostics.Process]::Start($psi)
 }
 function Start-Remote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     try {
         if ($script:proc -and -not $script:proc.HasExited) { return }
         $script:manualStopRequested = $false
@@ -5225,6 +5557,7 @@ function Start-Remote {
     }
 }
 function Stop-Remote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     if (-not $script:proc -or $script:proc.HasExited) { return }
     try {
         $freezePoint = $log.GetViewPosition()
@@ -5283,6 +5616,7 @@ function Set-RemoteActionsEnabled([bool]$enabled) {
 }
 
 function Begin-RemoteOperation([string]$action) {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     if ($script:remoteOperation -or $script:initializing) { return }
     $script:manualStopRequested = ($action -eq 'stop')
     $script:remoteOperation = [pscustomobject]@{
@@ -5337,6 +5671,7 @@ function Complete-RemoteOperation([string]$errorText = '') {
 }
 
 function Update-RemoteOperation {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $op = $script:remoteOperation
     if (-not $op) { return }
     try {
@@ -5398,6 +5733,7 @@ function Invoke-AutoReconnect {
 }
 
 function Restart-Remote {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $answer = [Windows.Forms.MessageBox]::Show(
         'RDC Relay будет кратковременно отключён и запущен снова под текущим аккаунтом.',
         'Переподключить RDC Relay', [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)
@@ -5410,6 +5746,7 @@ function Restart-Remote {
 }
 
 function Switch-RemoteAccount {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $message = 'Смена аккаунта разорвёт текущее удалённое соединение.' + $nl + $nl +
         'После выхода RDC Relay запустится снова и предложит авторизоваться в браузере.' + $nl + $nl +
         'Войдите в тот же аккаунт Desktop Commander, который подключён в ChatGPT.' + $nl + $nl + 'Продолжить?'
@@ -5420,6 +5757,7 @@ function Switch-RemoteAccount {
 }
 
 function Start-RuntimeInitialization {
+    if ($OwnerGui) { throw 'RC1_OWNER_GUI_ACTION_BLOCKED' }
     $script:initializing = $true
     Set-RemoteActionsEnabled $false
     $updaterPath = Join-Path $root 'update.ps1'
@@ -5476,7 +5814,116 @@ function Complete-RuntimeInitialization {
     Start-Remote
 }
 
+# Owner-only modals reuse the Account Switch dialog's dark WinForms
+# typography, surface colors, spacing and confirmation button geometry.
+# They never change the Host or Remote lifecycle by themselves.
+function New-RdcOwnerStopDialog {
+    $dialog=New-Object Windows.Forms.Form
+    $dialog.Name='rc1-stop-remote-confirmation'
+    $dialog.Text='Остановка Remote'
+    $dialog.FormBorderStyle=[Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.StartPosition=[Windows.Forms.FormStartPosition]::CenterParent
+    $dialog.ShowInTaskbar=$false
+    $dialog.MaximizeBox=$false
+    $dialog.MinimizeBox=$false
+    $dialog.AutoScaleMode=[Windows.Forms.AutoScaleMode]::Font
+    $dialog.Font=[Drawing.Font]::new('Segoe UI',10)
+    $dialog.ClientSize=[Drawing.Size]::new(480,168)
+    $dialog.BackColor=[Drawing.Color]::FromArgb(29,32,36)
+    $dialog.ForeColor=[Drawing.Color]::Gainsboro
+
+    $layout=New-Object Windows.Forms.TableLayoutPanel
+    $layout.Name='rc1-stop-remote-layout'
+    $layout.Dock=[Windows.Forms.DockStyle]::Fill
+    $layout.Padding=[Windows.Forms.Padding]::new(24,20,24,16)
+    $layout.ColumnCount=1
+    $layout.RowCount=2
+    [void]$layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,52))
+
+    $messageRow=New-Object Windows.Forms.TableLayoutPanel
+    $messageRow.Name='rc1-stop-remote-warning-row'
+    $messageRow.Dock=[Windows.Forms.DockStyle]::Top
+    $messageRow.AutoSize=$true
+    $messageRow.ColumnCount=2
+    $messageRow.RowCount=1
+    $messageRow.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    [void]$messageRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute,44))
+    [void]$messageRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    $warning=New-Object Windows.Forms.PictureBox
+    $warning.Name='rc1-stop-remote-warning-icon'
+    $warning.Image=([Drawing.SystemIcons]::Warning).ToBitmap()
+    $warning.Size=[Drawing.Size]::new(32,32)
+    $warning.SizeMode=[Windows.Forms.PictureBoxSizeMode]::CenterImage
+    $warning.Margin=[Windows.Forms.Padding]::new(0,0,12,0)
+    $warning.TabStop=$false
+    $warning.AccessibleDescription='Стандартный значок предупреждения.'
+    $message=New-Object Windows.Forms.Label
+    $message.Name='rc1-stop-remote-question'
+    $message.Text='Остановить Remote?'
+    $message.Font=[Drawing.Font]::new($dialog.Font,[Drawing.FontStyle]::Bold)
+    $message.AutoSize=$true
+    $message.MaximumSize=[Drawing.Size]::new(385,0)
+    $message.Dock=[Windows.Forms.DockStyle]::Top
+    $message.Margin=[Windows.Forms.Padding]::new(0,3,0,0)
+    $message.ForeColor=$dialog.ForeColor
+    [void]$messageRow.Controls.Add($warning,0,0)
+    [void]$messageRow.Controls.Add($message,1,0)
+    [void]$layout.Controls.Add($messageRow,0,0)
+
+    $buttons=New-Object Windows.Forms.FlowLayoutPanel
+    $buttons.Name='rc1-stop-remote-buttons'
+    $buttons.Dock=[Windows.Forms.DockStyle]::Fill
+    $buttons.FlowDirection=[Windows.Forms.FlowDirection]::RightToLeft
+    $buttons.WrapContents=$false
+    $buttons.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
+    $buttons.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    $no=New-Object Windows.Forms.Button
+    $no.Name='rc1-stop-remote-no'
+    $no.Text='Нет'
+    $no.Size=[Drawing.Size]::new(96,34)
+    $no.DialogResult=[Windows.Forms.DialogResult]::No
+    $no.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $no.ForeColor=$dialog.ForeColor
+    $no.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $no.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
+    $no.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
+    $yes=New-Object Windows.Forms.Button
+    $yes.Name='rc1-stop-remote-yes'
+    $yes.Text='Да'
+    $yes.Size=[Drawing.Size]::new(96,34)
+    $yes.DialogResult=[Windows.Forms.DialogResult]::Yes
+    $yes.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $yes.ForeColor=$dialog.ForeColor
+    $yes.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $yes.FlatAppearance.BorderColor=[Drawing.Color]::LightCoral
+    $yes.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
+    [void]$buttons.Controls.Add($no)
+    [void]$buttons.Controls.Add($yes)
+    [void]$layout.Controls.Add($buttons,0,1)
+    $dialog.Controls.Add($layout)
+    $dialog.AcceptButton=$no
+    $dialog.CancelButton=$no
+    $dialog.ActiveControl=$no
+    return $dialog
+}
+function Show-RdcOwnerStopConfirmation {
+    $confirmation=New-RdcOwnerStopDialog
+    try { return $confirmation.ShowDialog($form) }
+    finally { $confirmation.Dispose() }
+}
+
 $finish.Add_Click({
+    if ($OwnerGui) {
+        if (-not $script:ownerManagedMode) { return }
+        if ($script:ownerCanStop) {
+            $answer=Show-RdcOwnerStopConfirmation
+            if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
+            $script:ownerQueuedAction='STOP'
+        } elseif ($script:ownerCanStart) { $script:ownerQueuedAction='START' }
+        return
+    }
     if ($script:remoteOperation -or $script:initializing) { return }
     if ($script:proc -and -not $script:proc.HasExited) {
         Begin-RemoteOperation 'stop'
@@ -5492,15 +5939,245 @@ $finish.Add_Click({
         Set-FinishButtonMode $false
     }
 })
+$quotaAuthItem.Add_Click({
+    # Explicit user opt-in is durable and also gates the Tray Host's
+    # automatic who_am_i requests. OAuth is independent of Remote credentials.
+    if(-not $OwnerGui -or -not $script:ownerManagedMode){return}
+    $enabled=[bool]$quotaAuthItem.Checked
+    try{
+        Set-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath $enabled
+    }catch{
+        $quotaAuthItem.Checked=[bool](Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath)
+        [void][Windows.Forms.MessageBox]::Show('Не удалось сохранить настройку статистики вызовов.',
+            'RDC Relay',[Windows.Forms.MessageBoxButtons]::OK,[Windows.Forms.MessageBoxIcon]::Warning)
+        return
+    }
+    $script:ownerQuotaNextCheckUtc=[DateTime]::MinValue
+    $script:ownerLastQuotaText=''
+    $quotaLabel.Text='Остаток вызовов: --%'
+    $quotaLabel.ForeColor=[Drawing.Color]::Silver
+    # The Tray Host retains its original automatic per-account OAuth and
+    # 30-minute quota poll. Do not launch a second browser client from GUI:
+    # on reenable the Host's next 15-second tick resumes that workflow.
+})
 $accountButton.Add_Click({
     $accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))
 })
-$switchAccountItem.Add_Click({ Switch-RemoteAccount })
-$reconnectItem.Add_Click({ Restart-Remote })
+# Owner-only confirmation: separate labels are required for one bold leading
+# instruction. A stock MessageBox cannot style a single paragraph. The modal
+# itself performs NO account/Remote action; only an explicit Yes enables the
+# existing authenticated Host request.
+function New-RdcOwnerAccountSwitchDialog {
+    $dialog=New-Object Windows.Forms.Form
+    $dialog.Text='Смена аккаунта Desktop Commander'
+    $dialog.Name='rc1-account-switch-confirmation'
+    $dialog.FormBorderStyle=[Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.StartPosition=[Windows.Forms.FormStartPosition]::CenterParent
+    $dialog.ShowInTaskbar=$false
+    $dialog.MaximizeBox=$false
+    $dialog.MinimizeBox=$false
+    $dialog.AutoScaleMode=[Windows.Forms.AutoScaleMode]::Font
+    $dialog.Font=[Drawing.Font]::new('Segoe UI',10)
+    $dialog.ClientSize=[Drawing.Size]::new(600,325)
+    $dialog.BackColor=[Drawing.Color]::FromArgb(29,32,36)
+    $dialog.ForeColor=[Drawing.Color]::Gainsboro
+
+    $layout=New-Object Windows.Forms.TableLayoutPanel
+    $layout.Dock=[Windows.Forms.DockStyle]::Fill
+    $layout.Padding=[Windows.Forms.Padding]::new(24,20,24,16)
+    $layout.ColumnCount=1
+    $layout.RowCount=6
+    [void]$layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    for($i=0;$i -lt 4;$i++){
+        [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::AutoSize))
+    }
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,52))
+
+    $paragraphs=@(
+        'Сначала откройте сайт Desktop Commander и войдите в аккаунт, на который хотите переключиться.',
+        'Смена аккаунта разорвёт текущее соединение и отзовёт авторизацию этого устройства.',
+        'После выхода из аккаунта RDC Relay запустит новый Remote и начнёт процедуру авторизации устройства.',
+        'Продолжить смену аккаунта?'
+    )
+    for($i=0;$i -lt $paragraphs.Count;$i++){
+        $label=New-Object Windows.Forms.Label
+        $label.Name='rc1-account-switch-paragraph-'+[string]($i+1)
+        $label.Text=$paragraphs[$i]
+        $label.AutoSize=$true
+        $label.MaximumSize=[Drawing.Size]::new($(if($i -eq 0){502}else{546}),0)
+        $label.Dock=[Windows.Forms.DockStyle]::Top
+        $label.ForeColor=$dialog.ForeColor
+        $label.Margin=[Windows.Forms.Padding]::new(0,0,0,$(if($i -lt 3 -and $i -ne 0){14}else{0}))
+        if($i -eq 0){
+            $label.Font=[Drawing.Font]::new($dialog.Font,[Drawing.FontStyle]::Bold)
+            # Only the bold opening instruction is indented. The other
+            # paragraphs retain their exact original left coordinate.
+            $lead=New-Object Windows.Forms.TableLayoutPanel
+            $lead.Name='rc1-account-switch-warning-row'
+            $lead.Dock=[Windows.Forms.DockStyle]::Top
+            $lead.AutoSize=$true
+            $lead.ColumnCount=2
+            $lead.RowCount=1
+            $lead.Margin=[Windows.Forms.Padding]::new(0,0,0,14)
+            [void]$lead.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute,44))
+            [void]$lead.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+            $warning=New-Object Windows.Forms.PictureBox
+            $warning.Name='rc1-account-switch-warning-icon'
+            $warning.Image=([Drawing.SystemIcons]::Warning).ToBitmap()
+            $warning.Size=[Drawing.Size]::new(32,32)
+            $warning.SizeMode=[Windows.Forms.PictureBoxSizeMode]::CenterImage
+            $warning.Margin=[Windows.Forms.Padding]::new(0,0,12,0)
+            $warning.TabStop=$false
+            $warning.AccessibleDescription='Стандартный значок предупреждения.'
+            [void]$lead.Controls.Add($warning,0,0)
+            [void]$lead.Controls.Add($label,1,0)
+            $layout.Controls.Add($lead,0,$i)
+        }else{
+            $layout.Controls.Add($label,0,$i)
+        }
+    }
+
+    # Two zones in the original bottom row: site helper at far left,
+    # unchanged Yes/No pair aligned at far right with symmetric edge insets.
+    $buttonRow=New-Object Windows.Forms.TableLayoutPanel
+    $buttonRow.Name='rc1-account-switch-bottom-row'
+    $buttonRow.Dock=[Windows.Forms.DockStyle]::Fill
+    $buttonRow.ColumnCount=2
+    $buttonRow.RowCount=1
+    $buttonRow.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    [void]$buttonRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,50))
+    [void]$buttonRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,50))
+    $site=New-Object Windows.Forms.Button
+    $site.Name='rc1-account-switch-signout-website'
+    $site.Text='Выйти из аккаунта'
+    $site.Size=[Drawing.Size]::new(192,34)
+    $site.Anchor=([Windows.Forms.AnchorStyles]::Top -bor [Windows.Forms.AnchorStyles]::Left)
+    $site.Margin=[Windows.Forms.Padding]::new(0,8,0,0)
+    $site.DialogResult=[Windows.Forms.DialogResult]::None
+    $site.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $site.ForeColor=$dialog.ForeColor
+    $site.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $site.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
+    $site.AccessibleDescription='Открывает официальный кабинет Desktop Commander. Выход из аккаунта выполняется вручную на сайте.'
+    $site.Add_Click({
+        # A web-navigation helper only: never log out Remote, change
+        # credentials or close this confirmation on the site-button click.
+        try{
+            Start-Process -FilePath 'https://mcp.desktopcommander.app/settings' -ErrorAction Stop | Out-Null
+        }catch{
+            [void][Windows.Forms.MessageBox]::Show(
+                'Не удалось открыть сайт Desktop Commander.',
+                'RDC Relay',[Windows.Forms.MessageBoxButtons]::OK,
+                [Windows.Forms.MessageBoxIcon]::Warning)
+        }
+    })
+    $buttons=New-Object Windows.Forms.FlowLayoutPanel
+    $buttons.Name='rc1-account-switch-buttons'
+    $buttons.Dock=[Windows.Forms.DockStyle]::Fill
+    $buttons.FlowDirection=[Windows.Forms.FlowDirection]::RightToLeft
+    $buttons.WrapContents=$false
+    $buttons.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
+    $buttons.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    $no=New-Object Windows.Forms.Button
+    $no.Name='rc1-account-switch-no'
+    $no.Text='Нет'
+    $no.Size=[Drawing.Size]::new(96,34)
+    $no.DialogResult=[Windows.Forms.DialogResult]::No
+    $no.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $no.ForeColor=$dialog.ForeColor
+    $no.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $no.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
+    $no.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
+    $yes=New-Object Windows.Forms.Button
+    $yes.Name='rc1-account-switch-yes'
+    $yes.Text='Да'
+    $yes.Size=[Drawing.Size]::new(96,34)
+    $yes.DialogResult=[Windows.Forms.DialogResult]::Yes
+    $yes.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $yes.ForeColor=$dialog.ForeColor
+    $yes.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $yes.FlatAppearance.BorderColor=[Drawing.Color]::LightCoral
+    $yes.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
+    [void]$buttons.Controls.Add($no)
+    [void]$buttons.Controls.Add($yes)
+    [void]$buttonRow.Controls.Add($site,0,0)
+    [void]$buttonRow.Controls.Add($buttons,1,0)
+    $layout.Controls.Add($buttonRow,0,5)
+    $dialog.Controls.Add($layout)
+    # Destructive account logout must never be the implicit Enter/Esc choice.
+    $dialog.AcceptButton=$no
+    $dialog.CancelButton=$no
+    $dialog.ActiveControl=$no
+    return $dialog
+}
+function Show-RdcOwnerAccountSwitchConfirmation {
+    $confirmation=New-RdcOwnerAccountSwitchDialog
+    try{
+        return $confirmation.ShowDialog($form)
+    }finally{
+        $confirmation.Dispose()
+    }
+}
+$switchAccountItem.Add_Click({
+    if ($OwnerGui) {
+        if (-not $script:ownerManagedMode -or -not $script:ownerCanSwitchAccount) { return }
+        $answer=Show-RdcOwnerAccountSwitchConfirmation
+        if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
+        $script:ownerCanSwitchAccount=$false
+        $switchAccountItem.Enabled=$false
+        $script:ownerQueuedAction='SWITCH_ACCOUNT'
+        Set-State 'Смена аккаунта…' 'Host проверяет владение Remote и выполняет штатный выход.' ([Drawing.Color]::Khaki)
+        return
+    }
+    Switch-RemoteAccount
+})
+# Reuse the exact Stop modal geometry, safe No default and standard
+# Windows warning triangle. No second style/layout implementation.
+function New-RdcOwnerReconnectDialog {
+    $dialog=New-RdcOwnerStopDialog
+    $dialog.Name='rc1-reconnect-remote-confirmation'
+    $dialog.Text='Переподключение Remote'
+    $message=@($dialog.Controls.Find('rc1-stop-remote-question',$true))|Select-Object -First 1
+    $warning=@($dialog.Controls.Find('rc1-stop-remote-warning-icon',$true))|Select-Object -First 1
+    $buttons=@($dialog.Controls.Find('rc1-stop-remote-buttons',$true))|Select-Object -First 1
+    $yes=@($dialog.Controls.Find('rc1-stop-remote-yes',$true))|Select-Object -First 1
+    $no=@($dialog.Controls.Find('rc1-stop-remote-no',$true))|Select-Object -First 1
+    if(-not $message -or -not $warning -or -not $buttons -or -not $yes -or -not $no){
+        $dialog.Dispose()
+        throw 'RC1_RECONNECT_CONFIRMATION_LAYOUT_MISSING'
+    }
+    $message.Name='rc1-reconnect-remote-question'
+    $message.Text='Переподключить Remote?'
+    $warning.Name='rc1-reconnect-remote-warning-icon'
+    $buttons.Name='rc1-reconnect-remote-buttons'
+    $yes.Name='rc1-reconnect-remote-yes'
+    $no.Name='rc1-reconnect-remote-no'
+    return $dialog
+}
+function Show-RdcOwnerReconnectConfirmation {
+    $confirmation=New-RdcOwnerReconnectDialog
+    try { return $confirmation.ShowDialog($form) }
+    finally { $confirmation.Dispose() }
+}
+$reconnectItem.Add_Click({
+    if ($OwnerGui) {
+        if (-not $script:ownerManagedMode -or -not $script:ownerCanReconnect) { return }
+        $answer=Show-RdcOwnerReconnectConfirmation
+        if ($answer -eq [Windows.Forms.DialogResult]::Yes) { $script:ownerQueuedAction='RECONNECT' }
+        return
+    }
+    Restart-Remote
+})
 $devicesItem.Add_Click({
+    if ($OwnerGui) {
+        if ($script:ownerRealMode) { $script:ownerQueuedNavigation='DEVICE_MANAGEMENT' }
+        return
+    }
     try { Start-Process 'https://mcp.desktopcommander.app/' } catch {}
 })
 $verifyDeviceItem.Add_Click({
+    if ($OwnerGui) { return } # The RC1 item is absent; no manual verification path.
     try { Start-Process 'https://mcp.desktopcommander.app/device/verify' } catch {}
 })
 $helpMenu = New-Object Windows.Forms.ContextMenuStrip
@@ -5520,6 +6197,128 @@ $openLogItem.Text = 'Открыть журнал'
 $helpButton.Add_Click({
     $helpMenu.Show($helpButton,(New-Object Drawing.Point(10,$helpButton.Height)))
 })
+
+# Keep all existing mode-specific Help content, but present it in an
+# Owner-only dark scrollable dialog instead of a light system MessageBox.
+function New-RdcOwnerHelpDialog([string]$content) {
+    $dialog=New-Object Windows.Forms.Form
+    $dialog.Name='rc1-help-dialog'
+    $dialog.Text='RDC Relay — справка'
+    $dialog.FormBorderStyle=[Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.StartPosition=[Windows.Forms.FormStartPosition]::CenterParent
+    $dialog.ShowInTaskbar=$false
+    $dialog.MaximizeBox=$false
+    $dialog.MinimizeBox=$false
+    $dialog.AutoScaleMode=[Windows.Forms.AutoScaleMode]::Font
+    $dialog.Font=[Drawing.Font]::new('Segoe UI',10)
+    # Height is set after measuring the help text: do not leave the former
+    # oversized 480px panel for the short Owner help variants.
+    $dialog.ClientSize=[Drawing.Size]::new(660,325)
+    $dialog.BackColor=[Drawing.Color]::FromArgb(29,32,36)
+    $dialog.ForeColor=[Drawing.Color]::Gainsboro
+
+    $layout=New-Object Windows.Forms.TableLayoutPanel
+    $layout.Name='rc1-help-layout'
+    $layout.Dock=[Windows.Forms.DockStyle]::Fill
+    $layout.Padding=[Windows.Forms.Padding]::new(24,20,24,16)
+    $layout.ColumnCount=1
+    $layout.RowCount=3
+    [void]$layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,44))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,52))
+
+    # Standard Windows circled-question icon, aligned with the title.
+    $headingRow=New-Object Windows.Forms.TableLayoutPanel
+    $headingRow.Name='rc1-help-heading-row'
+    $headingRow.Dock=[Windows.Forms.DockStyle]::Top
+    $headingRow.ColumnCount=2
+    $headingRow.RowCount=1
+    $headingRow.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    [void]$headingRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute,44))
+    [void]$headingRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    $helpIcon=New-Object Windows.Forms.PictureBox
+    $helpIcon.Name='rc1-help-question-icon'
+    $helpIcon.Image=([Drawing.SystemIcons]::Question).ToBitmap()
+    $helpIcon.Size=[Drawing.Size]::new(32,32)
+    $helpIcon.SizeMode=[Windows.Forms.PictureBoxSizeMode]::CenterImage
+    $helpIcon.Margin=[Windows.Forms.Padding]::new(0,0,12,0)
+    $helpIcon.TabStop=$false
+    $helpIcon.AccessibleDescription='Стандартный значок вопроса.'
+    $heading=New-Object Windows.Forms.Label
+    $heading.Name='rc1-help-heading'
+    $heading.Text='Справка / О программе'
+    $heading.Font=[Drawing.Font]::new('Segoe UI',12,[Drawing.FontStyle]::Bold)
+    $heading.ForeColor=$dialog.ForeColor
+    $heading.AutoSize=$true
+    $heading.Margin=[Windows.Forms.Padding]::new(0,3,0,0)
+    [void]$headingRow.Controls.Add($helpIcon,0,0)
+    [void]$headingRow.Controls.Add($heading,1,0)
+    [void]$layout.Controls.Add($headingRow,0,0)
+
+    $body=New-Object Windows.Forms.RichTextBox
+    $body.Name='rc1-help-content'
+    $body.Text=$content
+    $body.ReadOnly=$true
+    $body.TabStop=$true
+    $body.AccessibleName='Справка RDC Relay'
+    $body.ScrollBars=[Windows.Forms.RichTextBoxScrollBars]::Vertical
+    $body.WordWrap=$true
+    $body.DetectUrls=$false
+    $body.ShortcutsEnabled=$true
+    $body.BorderStyle=[Windows.Forms.BorderStyle]::None
+    $body.Dock=[Windows.Forms.DockStyle]::Fill
+    # No contrasting grey textbox panel: help reads as one continuous surface.
+    $body.BackColor=$dialog.BackColor
+    $body.ForeColor=$dialog.ForeColor
+    $body.Font=$dialog.Font
+    $body.Margin=[Windows.Forms.Padding]::new(0,0,0,8)
+    [void]$layout.Controls.Add($body,0,1)
+
+    $buttons=New-Object Windows.Forms.FlowLayoutPanel
+    $buttons.Name='rc1-help-buttons'
+    $buttons.Dock=[Windows.Forms.DockStyle]::Fill
+    $buttons.FlowDirection=[Windows.Forms.FlowDirection]::RightToLeft
+    $buttons.WrapContents=$false
+    $buttons.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
+    $buttons.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    $close=New-Object Windows.Forms.Button
+    $close.Name='rc1-help-close'
+    $close.Text='Закрыть'
+    $close.Size=[Drawing.Size]::new(96,34)
+    $close.DialogResult=[Windows.Forms.DialogResult]::OK
+    $close.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $close.ForeColor=$dialog.ForeColor
+    $close.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $close.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
+    $close.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
+    [void]$buttons.Controls.Add($close)
+    [void]$layout.Controls.Add($buttons,0,2)
+    $dialog.Controls.Add($layout)
+    # Same vertical rhythm and maximum client height as the accepted
+    # 600x325 Account Switch dialog. Measure the actual wrapped text instead
+    # of estimating by character count. Long help scrolls, never clips.
+    $measureWidth=[Math]::Max(320,$dialog.ClientSize.Width-80)
+    $textFlags=([Windows.Forms.TextFormatFlags]::WordBreak -bor
+        [Windows.Forms.TextFormatFlags]::TextBoxControl -bor
+        [Windows.Forms.TextFormatFlags]::NoPrefix)
+    $measured=[Windows.Forms.TextRenderer]::MeasureText(
+        [string]$body.Text,$body.Font,
+        [Drawing.Size]::new($measureWidth,10000),$textFlags)
+    $neededHeight=$layout.Padding.Top+44+$measured.Height+20+52+$layout.Padding.Bottom
+    $dialog.ClientSize=[Drawing.Size]::new(
+        $dialog.ClientSize.Width,
+        [Math]::Max(220,[Math]::Min(325,$neededHeight)))
+    $dialog.AcceptButton=$close
+    $dialog.CancelButton=$close
+    $dialog.ActiveControl=$close
+    return $dialog
+}
+function Show-RdcOwnerHelp([string]$content) {
+    $helpDialog=New-RdcOwnerHelpDialog $content
+    try { return $helpDialog.ShowDialog($form) }
+    finally { $helpDialog.Dispose() }
+}
 
 $aboutItem.Add_Click({
     $helpText =
@@ -5541,15 +6340,59 @@ $aboutItem.Add_Click({
         'При первой авторизации подтвердите устройство в браузере, сверив код из журнала. ' +
         'Повторные запуски обычно используют сохранённую сессию. ' + $nl + $nl +
         'Пароли и токены эта оболочка не копирует и не хранит.'
-    [Windows.Forms.MessageBox]::Show(
-        $helpText,
-        'RDC Relay — справка',
-        [Windows.Forms.MessageBoxButtons]::OK,
-        [Windows.Forms.MessageBoxIcon]::Information
-    ) | Out-Null
+    if ($OwnerGui) {
+        if($script:ownerObservedMode){
+            $helpText = 'RDC Relay 1.6.0 RC1' + $nl + $nl +
+              'Найден уже работающий Desktop Commander Remote. Приложение показывает его состояние, не прерывая подключение.' + $nl + $nl +
+              'Закрытие окна закрывает только GUI; Host и Remote продолжают работать.' + $nl +
+              'Повторное открытие через трей восстанавливает состояние и журнал.' + $nl +
+              'Полное завершение RDC Relay через трей не отключает ранее запущенный Remote.'
+        }elseif($script:ownerManagedMode){
+            $helpText = 'RDC Relay 1.6.0 RC1' + $nl + $nl +
+              'Host запускает Desktop Commander Remote 0.2.52.' + $nl + $nl +
+              'Закрытие окна закрывает только GUI; Host и Remote продолжают работать.' + $nl +
+              'Повторное открытие через трей восстанавливает состояние и журнал.' + $nl +
+              'Статистику вызовов при необходимости можно подключить повторно в меню «Аккаунт».'
+        }else{
+            $helpText = 'RDC Relay 1.6.0 RC1' + $nl + $nl +
+              'Режим проверки: Desktop Commander Remote не подключён.' + $nl +
+              'Закрытие окна закрывает только GUI; Host продолжает работать.' + $nl +
+              'Повторное открытие через трей восстанавливает состояние и журнал.'
+        }
+        # Diagnostics belong in About, not the compact RC1 footer.
+        $helpPid=if([int]$script:ownerRemotePid -gt 0){[string][int]$script:ownerRemotePid}else{'—'}
+        $helpText += $nl + $nl + 'PID Remote: ' + $helpPid
+    }
+    if ($OwnerGui) {
+        [void](Show-RdcOwnerHelp $helpText)
+    }else{
+        [Windows.Forms.MessageBox]::Show(
+            $helpText,
+            'RDC Relay — справка',
+            [Windows.Forms.MessageBoxButtons]::OK,
+            [Windows.Forms.MessageBoxIcon]::Information
+        ) | Out-Null
+    }
 })
 
 $openLogItem.Add_Click({
+    if ($OwnerGui) {
+        # The Host sends a fixed-category, credential-free bounded journal.
+        # Show that actual GUI pane; never open a private legacy Remote log.
+        try {
+            Render-CompactLog
+            $log.Focus()
+            $log.SelectionStart = $log.TextLength
+            $log.ScrollToCaret()
+        } catch {
+            [Windows.Forms.MessageBox]::Show(
+                'Не удалось открыть журнал RC1 в окне.',
+                'RDC Relay 1.6 RC1', [Windows.Forms.MessageBoxButtons]::OK,
+                [Windows.Forms.MessageBoxIcon]::Warning
+            ) | Out-Null
+        }
+        return
+    }
     try {
         if (-not (Test-Path $logPath)) {
             [Windows.Forms.MessageBox]::Show(
@@ -5572,6 +6415,7 @@ $openLogItem.Add_Click({
     }
 })
 function Refresh-Window {
+    if ($OwnerGui) { return }
     if ($script:initializing) { Complete-RuntimeInitialization; return }
     if ($script:remoteOperation) { Update-RemoteOperation; return }
     Apply-SystemFrameTheme
@@ -5758,12 +6602,15 @@ $form.Add_ResizeBegin({
 $form.Add_ResizeEnd({
     $script:uiInteracting = $false
     Layout-LogScrollbars
+    if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
     try { $log.RefreshViewport() } catch {}
     Refresh-Window
 })
 
 $form.Add_FormClosing({
     param($sender,$e)
+    # OwnerGui X always closes this replacement GUI, never legacy Remote.
+    if ($OwnerGui) { return }
     if ($script:allowClose -or $SelfTest -or $Preview) { return }
     if ($script:initializing -or $script:remoteOperation) {
         $e.Cancel = $true
@@ -5778,6 +6625,11 @@ $form.Add_FormClosing({
 })
 $form.Add_FormClosed({
     $timer.Stop()
+    if($script:ownerVersionIntroTimer){
+        $script:ownerVersionIntroTimer.Stop()
+        $script:ownerVersionIntroTimer.Dispose()
+        $script:ownerVersionIntroTimer=$null
+    }
     if ($script:enableUpdateNotice) { Dispose-RdcUpdateNotice }
     if ($script:shortcutSyncTimer) {
         try { $script:shortcutSyncTimer.Stop() } catch {}
@@ -5965,9 +6817,10 @@ if ($SelfTest) {
             throw 'Divider drag mask center geometry regressed'
         }
         if ($runtimeSourceText.IndexOf('ApplyCompactLineSpacing()',[StringComparison]::Ordinal) -lt 0 -or
-            $runtimeSourceText.IndexOf('$headerLog.ApplyCompactLineSpacing()',[StringComparison]::Ordinal) -lt 0 -or
+            $runtimeSourceText.IndexOf('if($OwnerGui){$headerLog.ApplyCompactHeaderLineArtSpacing()}',[StringComparison]::Ordinal) -lt 0 -or
+            $runtimeSourceText.IndexOf('else{$headerLog.ApplyCompactLineSpacing()}',[StringComparison]::Ordinal) -lt 0 -or
             $runtimeSourceText.IndexOf('$log.ApplyCompactLineSpacing()',[StringComparison]::Ordinal) -lt 0) {
-            throw 'Global RichEdit compact line spacing regressed'
+            throw 'RC1 selective / legacy RichEdit spacing contract regressed'
         }
         if ($runtimeSourceText.IndexOf('250.0 * i / fadeDenominator',[StringComparison]::Ordinal) -lt 0 -or
             $runtimeSourceText.IndexOf('250.0 * (crossingFade-1-i) / fadeDenominator',[StringComparison]::Ordinal) -lt 0) {
@@ -6147,7 +7000,11 @@ if ($SelfTest) {
     if ($form.Width -ne $testFormWidth -or $form.Height -ne $testFormHeight) { throw 'Pane resize changed whole window size' }
     if ($contentHost.RowStyles[1].Height -lt $testPaneMin) { throw 'Activity pane minimum height failed' }
     Set-ActivityPaneHeight 99999
-    if (($contentHost.ClientSize.Height - $contentHost.RowStyles[1].Height) -lt ($testPaneMin-1)) { throw 'Header minimum height clamp failed' }
+    $testHeaderMin=[Math]::Min($headerPaneMinHeightPreferred,
+        [Math]::Max(48,$contentHost.ClientSize.Height-$testPaneMin))
+    if (($contentHost.ClientSize.Height - $contentHost.RowStyles[1].Height) -lt ($testHeaderMin-1)) {
+        throw 'Header banner minimum height clamp failed'
+    }
     Set-ActivityPaneHeight $testPaneHeight
     if ($log.GetType().Name -ne 'RdcLogBox') { throw 'Activity log control missing' }
     if ($logHost.GetType().Name -ne 'RdcBufferedPanel') { throw 'Buffered log viewport missing' }
@@ -6264,13 +7121,13 @@ if ($SelfTest) {
     $checkPos=$log.Text.IndexOf('✅',[StringComparison]::Ordinal)
     if($checkPos -lt 0){throw 'Check marker missing'}
     $log.Select($checkPos,'✅'.Length)
-    if($log.SelectionColor.ToArgb() -ne $accentPurple.ToArgb()){throw 'Check marker color mismatch'}
+    if($log.SelectionColor.ToArgb() -ne $accentSuccess.ToArgb()){throw 'Check marker color mismatch'}
     foreach($probe in @(
         @('🔌',$statusGreen,'Plug marker color mismatch'),
         @('⏳',$accentWait,'Wait marker color mismatch'),
         @('🌐',$accentNetwork,'Network marker color mismatch'),
         @('💾',$accentStorage,'Storage marker color mismatch'),
-        @('👋',$accentPresence,'Presence marker color mismatch'),
+        @('👋',$accentGreeting,'Presence marker color mismatch'),
         @('🚀',$accentOrange,'Launch marker color mismatch')
     )){
         $p=$headerLog.Text.IndexOf([string]$probe[0],[StringComparison]::Ordinal)
@@ -6647,6 +7504,17 @@ if ($SelfTest) {
     Write-Output 'GUI LOGIC SELF TEST PASSED'
     $form.Dispose()
     if ($windowMutex) { $windowMutex.ReleaseMutex(); $windowMutex.Dispose() }
+    exit 0
+}
+if ($OwnerGui) {
+    # The exact ORIGINAL product WinForms controls are already constructed.
+    # Owner footer starts IDLE. The Owner timer checks the published stable
+    # manifest asynchronously and shows the compact read-only notice ONLY
+    # for a confirmed newer stable version; never fabricate 1.6.0 RC2.
+    # The candidate updater/installer remains deliberately disabled.
+    # Only the OwnerGui attach path runs the candidate remote-free IPC viewer.
+    . (Join-Path $root 'rc1-owner-gui.ps1')
+    Start-RdcOwnerGui
     exit 0
 }
 if ($Preview) {

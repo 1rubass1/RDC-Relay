@@ -43,15 +43,35 @@ internal static class SetupProgram
     [STAThread]
     private static int Main(string[] args)
     {
+#if RDC_RC1_BLOCKED
+        // Fail-safe RC1 compiler path. No payload extraction, process stop,
+        // user registration, shortcuts, settings or installer transaction.
+        // Removed only after independent real Remote/installer owner GO.
+        return 42;
+#endif
         bool silent = HasArgument(args, "--silent");
-        bool noShortcuts = HasArgument(args, "--no-shortcuts");
-        bool noRegister = HasArgument(args, "--no-register");
+        // Private transaction test harness may opt out of real registration.
+        // These switches MUST NOT be accepted by the public release binary.
+        bool noShortcuts = false;
+        bool noRegister = false;
+#if RDC_INSTALLER_TEST
+        noShortcuts = HasArgument(args, "--no-shortcuts");
+        noRegister = HasArgument(args, "--no-register");
+#endif
 
         Mutex windowMutex = null, payloadMutex = null;
         bool ownsWindow = false, ownsPayload = false;
         PayloadTransaction transaction = null;
+        RdcReleaseMetadataSnapshot metadata = null;
+        bool metadataMutationStarted = false;
         try
         {
+#if !RDC_INSTALLER_TEST
+            if (HasArgument(args,"--no-shortcuts")||
+                HasArgument(args,"--no-register")||
+                !String.IsNullOrWhiteSpace(GetOption(args,"--install-root")))
+                throw new InvalidOperationException("RDC_RELEASE_UNSAFE_INSTALL_FLAGS");
+#endif
             string installRoot = GetOption(args, "--install-root");
             if (String.IsNullOrWhiteSpace(installRoot))
             {
@@ -72,30 +92,60 @@ internal static class SetupProgram
             try { ownsPayload = payloadMutex.WaitOne(0); } catch (AbandonedMutexException) { ownsPayload = true; }
             if (!ownsPayload)
                 throw new InvalidOperationException("Другая установка или обновление RDC Relay уже выполняется.");
-            Directory.CreateDirectory(installRoot);
-            Directory.CreateDirectory(Path.Combine(installRoot, "backups"));
-
             string newVersion = ReadEmbeddedText("RdcPayload.version.txt").Trim();
-            if (newVersion.Length == 0)
-                throw new InvalidOperationException("Embedded version.txt is empty.");
+            AssertEmbeddedVersion(newVersion);
 
+            // Explicit, isolated installer test flags preserve historical
+            // disposable tests. Production registration/shortcut operations
+            // use the stricter registered-install policy.
+            bool isolatedTest = noShortcuts && noRegister &&
+                !String.IsNullOrWhiteSpace(GetOption(args,"--install-root"));
+            if ((noShortcuts || noRegister) && !isolatedTest)
+                throw new InvalidOperationException("RDC_RELEASE_UNSAFE_INSTALL_FLAGS");
+            if (!isolatedTest)
+            {
+                RdcReleaseInstallState.Decision existing=RdcReleaseInstallState.Detect(installRoot);
+                if (existing.Mode==RdcReleaseInstallState.Kind.Refuse)
+                    throw new InvalidOperationException("RDC_RELEASE_INSTALL_STATE_"+existing.Reason);
+                if (existing.Mode==RdcReleaseInstallState.Kind.Upgrade && !silent)
+                {
+                    DialogResult confirm=MessageBox.Show(
+                        RdcReleaseInstallState.Prompt(newVersion),
+                        "RDC Relay — обновление",
+                        MessageBoxButtons.YesNo,MessageBoxIcon.Warning,
+                        MessageBoxDefaultButton.Button2);
+                    if(confirm!=DialogResult.Yes)return 1;
+                }
+            }
+
+            Directory.CreateDirectory(installRoot);
+            Directory.CreateDirectory(Path.Combine(installRoot,"backups"));
+            // Capture both categories before the first user-visible mutation.
+            // Abort if a shortcut/registration cannot be safely snapshotted.
+            if (!isolatedTest)
+                metadata = new RdcReleaseMetadataSnapshot(!noShortcuts,!noRegister);
             transaction = new PayloadTransaction(installRoot);
             transaction.Apply();
-            DeleteIfExists(Path.Combine(installRoot, "Remote Desktop Commander.cmd"));
-            DeleteIfExists(Path.Combine(installRoot, "CommanderRelay.cmd"));
-
-            string iconPath = CreateVersionedIcon(installRoot, newVersion);
+            string iconPath = CreateVersionedIcon(installRoot,newVersion);
             if (!noShortcuts)
             {
-                CreateShortcuts(installRoot, iconPath);
-                SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
+                metadataMutationStarted = true;
+                CreateShortcuts(installRoot,iconPath);
+                SHChangeNotify(0x08000000,0,IntPtr.Zero,IntPtr.Zero);
             }
-            CleanupLegacyIcons(installRoot, iconPath);
             if (!noRegister)
-                RegisterInstalledApp(installRoot, iconPath, newVersion);
+            {
+                metadataMutationStarted = true;
+                RegisterInstalledApp(installRoot,iconPath,newVersion);
+            }
 
             transaction.Commit();
-            DeleteIfExists(Path.Combine(installRoot, ".local-candidate.json"));
+            // Legacy cosmetics are not part of the transaction; keep any
+            // previous rollback assets until the critical install commits.
+            DeleteIfExists(Path.Combine(installRoot,"Remote Desktop Commander.cmd"));
+            DeleteIfExists(Path.Combine(installRoot,"CommanderRelay.cmd"));
+            try { CleanupLegacyIcons(installRoot,iconPath); } catch { }
+            DeleteIfExists(Path.Combine(installRoot,".local-candidate.json"));
             if (!silent)
             {
                 MessageBox.Show(
@@ -114,7 +164,12 @@ internal static class SetupProgram
             if (transaction != null)
             {
                 try { transaction.Rollback(); }
-                catch (Exception rollbackError) { error += "\r\nRollback: " + rollbackError.Message; }
+                catch (Exception rollbackError) { error += "\r\nPayload rollback: " + rollbackError.Message; }
+            }
+            if (metadataMutationStarted && metadata != null)
+            {
+                try { metadata.Restore(); }
+                catch (Exception metadataError) { error += "\r\nMetadata rollback: " + metadataError.Message; }
             }
             if (!silent)
             {
@@ -134,6 +189,18 @@ internal static class SetupProgram
             if (ownsWindow) windowMutex.ReleaseMutex();
             if (windowMutex != null) windowMutex.Dispose();
         }
+    }
+
+    private static void AssertEmbeddedVersion(string newVersion)
+    {
+        if(!System.Text.RegularExpressions.Regex.IsMatch(newVersion??"",
+            @"^\d+\.\d+\.\d+$"))
+            throw new InvalidOperationException("RDC_RELEASE_INVALID_EMBEDDED_VERSION");
+        string manifest=ReadEmbeddedText("RdcPayload.update-manifest.json");
+        var match=System.Text.RegularExpressions.Regex.Match(manifest,
+            "\\\"version\\\"\\s*:\\s*\\\"(\\d+\\.\\d+\\.\\d+)\\\"");
+        if(!match.Success||!String.Equals(match.Groups[1].Value,newVersion,StringComparison.Ordinal))
+            throw new InvalidOperationException("RDC_RELEASE_EMBEDDED_MANIFEST_VERSION_MISMATCH");
     }
 
     private static bool HasArgument(string[] args, string name)
@@ -324,7 +391,7 @@ internal static class SetupProgram
 
             key.SetValue("DisplayName", "RDC Relay", RegistryValueKind.String);
             key.SetValue("DisplayVersion", version, RegistryValueKind.String);
-            key.SetValue("Publisher", "UMAS", RegistryValueKind.String);
+            key.SetValue("Publisher", "RUBASS", RegistryValueKind.String);
             key.SetValue("InstallLocation", installRoot, RegistryValueKind.String);
             key.SetValue("DisplayIcon", iconPath, RegistryValueKind.String);
             key.SetValue("URLInfoAbout", "https://github.com/1rubass1/RDC-Relay", RegistryValueKind.String);
