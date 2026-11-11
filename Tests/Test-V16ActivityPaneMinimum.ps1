@@ -14,10 +14,14 @@ Check ($errors.Count -eq 0) 'full GUI parses after pane adjustment'
 Check ($source.Contains('$activityRowReserve=if($OwnerGui){Get-Rc1ActivityRowReserve $paneMinHeightPreferred}else{0}') -and
  $source.Contains('$activityPaneMinHeightPreferred=$paneMinHeightPreferred+$activityRowReserve') -and
  $source.Contains('$preferredMinimumHeight = 78 + 38 + $headerPaneMinHeightPreferred + $activityPaneMinHeightPreferred + 7 + 48') -and
+ $source.Contains('if($OwnerGui){') -and
+ $source.Contains('$windowFrameHeight=[Math]::Max(0,$form.Height-$form.ClientSize.Height)') -and
+ $source.Contains('$minimumWindowHeight=[Math]::Min($windowHeight,78+38+7+2+$windowFrameHeight)') -and
  $source.Contains('$headerPaneMinHeightPreferred=if($OwnerGui){Get-Rc1HeaderBannerMinimum}else{$paneMinHeightPreferred}') -and
  $source.Contains('$activityDefaultHeight = $activityPaneMinHeightPreferred') -and
- $source.Contains('Set-ActivityPaneHeight (Get-EffectivePaneMinHeight)')) 'Owner minimum, default and minimum window height all increase consistently'
-$funcNames=@('Get-EffectivePaneMinHeight','Get-ClampedActivityPaneHeight','Set-ActivityPaneHeight')
+ $source.Contains('Set-ActivityPaneHeight (Get-EffectivePaneMinHeight)')) 'Owner bottom-edge minimum removes fixed one-line slack while keeping normal pane baseline'
+$funcNames=@('Get-Rc1CompressedActivityHeight','Get-EffectivePaneMinHeight',
+ 'Get-ClampedActivityPaneHeight','Set-ActivityPaneHeight')
 foreach($name in $funcNames){
  $def=$ast.Find({param($n)
   $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name
@@ -105,21 +109,111 @@ try{
  Check ([Math]::Abs(($contentHost.ClientSize.Height-$contentHost.RowStyles[1].Height)-$upperMin) -lt 0.1) 'actual divider setter respects new smaller header minimum'
  Check ($headerPaneMinHeightPreferred -lt 125 -and
   $activityPaneMinHeightPreferred -eq (8*$ownerPitch+17)) 'Owner pane clamp follows mixed glyph metrics'
- $minWindowHeight=78+38+$headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred+7+48
- Check (($headerPitch -ne 14 -or $ownerPitch -ne 15) -or ($minWindowHeight -eq 401)) 'full Owner window minimum uses actual compact journal pitch'
+ $legacyMinimumHeight=78+38+$headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred+7+48
+ Check (($headerPitch -ne 14 -or $ownerPitch -ne 15) -or ($legacyMinimumHeight -eq 401)) 'historical artificial window floor was 401px on the STARMER fonts'
+ $fakeForm=New-Object Windows.Forms.Form
+ try {
+  $fakeForm.Size=[Drawing.Size]::new(800,900)
+  $frameHeight=[Math]::Max(0,$fakeForm.Height-$fakeForm.ClientSize.Height)
+  $ownerMinimumHeight=78+38+7+2+$frameHeight
+  Check ($ownerMinimumHeight -lt $legacyMinimumHeight-100 -and
+   $ownerMinimumHeight -ge 78+38+7+2) 'Owner window bottom edge can now travel well below the historical 401px floor without overlap'
+ }finally{$fakeForm.Dispose()}
  $minPaneHeight=$headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred
  $contentHost.Height=$minPaneHeight
  Check ((Get-EffectivePaneMinHeight) -eq $activityPaneMinHeightPreferred -and
   (Get-ClampedActivityPaneHeight -9999) -eq $activityPaneMinHeightPreferred -and
-  (Get-ClampedActivityPaneHeight 99999) -eq $activityPaneMinHeightPreferred) 'fully collapsed window fits exactly six-row header and six-event lower pane'
- $contentHost.Height=440
- $smallSize=$contentHost.Size
- $contentHost.Height=200
+  (Get-ClampedActivityPaneHeight 99999) -eq $activityPaneMinHeightPreferred) 'at the preferred minimum both panes retain complete approved header/journal rows'
+
+ Check ($source.Contains('Set-ActivityPaneHeight (Get-Rc1CompressedActivityHeight $contentHost.ClientSize.Height)') -and
+  $source.Contains('# Small-screen initial launch must use the same proportional fit')) 'small-screen first launch initializes both panes proportionally rather than collapsing journal to one pixel'
+ $resizeHandlers=@($ast.FindAll({param($node)
+   $node -is [Management.Automation.Language.ScriptBlockExpressionAst] -and
+   $node.Extent.Text.Contains('Get-Rc1CompressedActivityHeight $contentHost.ClientSize.Height') -and
+   $node.Extent.Text.Contains('Set-ActivityPaneHeight $contentHost.RowStyles[1].Height')
+ },$true))
+ Check ($resizeHandlers.Count -eq 1) 'production content resize uses adaptive pane compression rather than keeping absolute bottom height'
+ if($resizeHandlers.Count -ne 1){throw 'MISSING_PRODUCTION_OWNER_WINDOW_RESIZE_HANDLER'}
+ $resize=& ([scriptblock]::Create($resizeHandlers[0].Extent.Text))
+ $contentHost.Add_Resize($resize)
+ $shrinking=$true;$lastLower=$activityPaneMinHeightPreferred+1;$lastUpper=$headerPaneMinHeightPreferred+1
+ foreach($height in @(($minPaneHeight-1),($minPaneHeight-15),200,180,150,100,70,32,16,9)){
+  $contentHost.Height=$height
+  $actual=[int][Math]::Round($contentHost.RowStyles[1].Height)
+  $expected=Get-Rc1CompressedActivityHeight $contentHost.ClientSize.Height
+  $upper=$contentHost.ClientSize.Height-$actual
+  if($actual -ne $expected -or $actual -lt 1 -or $upper -lt 8 -or
+   $actual -gt $lastLower -or $upper -gt $lastUpper){
+   $shrinking=$false
+  }
+  $lastLower=$actual;$lastUpper=$upper
+ }
+ Check $shrinking 'bottom-edge resize continuously collapses both panes to 1px lower / 8px upper including 7px divider without one-row slack'
+ Check ($contentHost.ClientSize.Height -eq 9 -and
+  [int]$contentHost.RowStyles[1].Height -eq 1 -and
+  ($contentHost.ClientSize.Height-[int]$contentHost.RowStyles[1].Height) -eq 8) 'at physical floor both text panes consume every available pixel, divider remains inside 8px header'
+ $contentHost.Height=100
+ $manual=Get-ClampedActivityPaneHeight 35
+ Set-ActivityPaneHeight 35
+ Check ([int]$manual -eq 35 -and [int]$contentHost.RowStyles[1].Height -eq 35) 'central splitter retains manual movement when window is compact'
  $smallMin=Get-EffectivePaneMinHeight
- Check ($smallMin -ge 48 -and $smallMin -le 120 -and
-  (Get-ClampedActivityPaneHeight 99999) -ge $smallMin -and
-  (Get-ClampedActivityPaneHeight 99999) -le ($contentHost.ClientSize.Height-48)) 'limited-display fallback remains bounded and usable'
- $contentHost.Size=$smallSize
+ Check ($smallMin -eq 1 -and
+  (Get-ClampedActivityPaneHeight -9999) -eq 1 -and
+  (Get-ClampedActivityPaneHeight 99999) -eq 92) 'compact drag limits are physical 1px lower viewport and 7px separator plus 1px upper'
+ $contentHost.Height=440
+
+ # Drive an actual hidden WinForms Form by its bottom edge. Confirm the
+ # docked top/footer and two-pane layout consume the whole shrinking client
+ # area and the former 401px floor no longer traps a spare text row.
+ $originalHost=$contentHost
+ $fixture=New-Object Windows.Forms.Form
+ try{
+  $fixture.Size=New-Object Drawing.Size(800,700)
+  $frame=[Math]::Max(0,$fixture.Height-$fixture.ClientSize.Height)
+  $minimumHeight=78+38+7+2+$frame
+  $fixture.MinimumSize=New-Object Drawing.Size(800,$minimumHeight)
+  $fixture.FormBorderStyle=[Windows.Forms.FormBorderStyle]::Sizable
+  $topBar=New-Object Windows.Forms.Panel
+  $topBar.Dock=[Windows.Forms.DockStyle]::Top
+  $topBar.Height=78
+  $bottomBar=New-Object Windows.Forms.Panel
+  $bottomBar.Dock=[Windows.Forms.DockStyle]::Bottom
+  $bottomBar.Height=38
+  $fixtureHost=New-Object Windows.Forms.TableLayoutPanel
+  $fixtureHost.Dock=[Windows.Forms.DockStyle]::Fill
+  $fixtureHost.RowCount=2
+  [void]$fixtureHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent,100)))
+  [void]$fixtureHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,$activityPaneMinHeightPreferred)))
+  $contentHost=$fixtureHost
+  $contentHost.Add_Resize($resize)
+  $fixture.Controls.Add($fixtureHost)
+  $fixture.Controls.Add($bottomBar)
+  $fixture.Controls.Add($topBar)
+  $fixture.PerformLayout()
+  $fit=$true
+  foreach($outerHeight in @(520,430,401,385,350,320,300,250,210,185,$minimumHeight)){
+   $fixture.Height=$outerHeight
+   $fixture.PerformLayout()
+   $available=$fixtureHost.ClientSize.Height
+   $lower=[int][Math]::Round($fixtureHost.RowStyles[1].Height)
+   $upper=$available-$lower
+   $needed=$fixture.ClientSize.Height-78-38
+   if([Math]::Abs($available-$needed) -gt 1 -or $lower -lt 1 -or $upper -lt 8){
+    $fit=$false
+   }
+   if($available -lt ($headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred) -and
+      $lower -ne (Get-Rc1CompressedActivityHeight $available)){
+    $fit=$false
+   }
+  }
+  Check $fit 'real hidden main window bottom resize packs docked panes and divider to the exact available height without one-line dead zone'
+  Check ($fixture.MinimumSize.Height -eq $minimumHeight -and
+   $fixture.Height -eq $minimumHeight -and
+   $fixtureHost.ClientSize.Height -le 12) 'actual window reaches chrome plus 7px divider and 1px per text panel at minimum'
+ }finally{
+  $contentHost=$originalHost
+  $fixture.Dispose()
+ }
  $OwnerGui=$false
  $headerPaneMinHeightPreferred=$paneMinHeightPreferred
  $activityPaneMinHeightPreferred=$paneMinHeightPreferred
