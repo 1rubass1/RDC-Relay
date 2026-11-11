@@ -6202,7 +6202,9 @@ function New-RdcOwnerHelpDialog([string]$content) {
     $dialog.MinimizeBox=$false
     $dialog.AutoScaleMode=[Windows.Forms.AutoScaleMode]::Font
     $dialog.Font=[Drawing.Font]::new('Segoe UI',10)
-    $dialog.ClientSize=[Drawing.Size]::new(660,480)
+    # Height is set after measuring the help text: do not leave the former
+    # oversized 480px panel for the short Owner help variants.
+    $dialog.ClientSize=[Drawing.Size]::new(660,325)
     $dialog.BackColor=[Drawing.Color]::FromArgb(29,32,36)
     $dialog.ForeColor=[Drawing.Color]::Gainsboro
 
@@ -6284,6 +6286,20 @@ function New-RdcOwnerHelpDialog([string]$content) {
     [void]$buttons.Controls.Add($close)
     [void]$layout.Controls.Add($buttons,0,2)
     $dialog.Controls.Add($layout)
+    # Same vertical rhythm and maximum client height as the accepted
+    # 600x325 Account Switch dialog. Measure the actual wrapped text instead
+    # of estimating by character count. Long help scrolls, never clips.
+    $measureWidth=[Math]::Max(320,$dialog.ClientSize.Width-80)
+    $textFlags=([Windows.Forms.TextFormatFlags]::WordBreak -bor
+        [Windows.Forms.TextFormatFlags]::TextBoxControl -bor
+        [Windows.Forms.TextFormatFlags]::NoPrefix)
+    $measured=[Windows.Forms.TextRenderer]::MeasureText(
+        [string]$body.Text,$body.Font,
+        [Drawing.Size]::new($measureWidth,10000),$textFlags)
+    $neededHeight=$layout.Padding.Top+44+$measured.Height+20+52+$layout.Padding.Bottom
+    $dialog.ClientSize=[Drawing.Size]::new(
+        $dialog.ClientSize.Width,
+        [Math]::Max(220,[Math]::Min(325,$neededHeight)))
     $dialog.AcceptButton=$close
     $dialog.CancelButton=$close
     $dialog.ActiveControl=$close

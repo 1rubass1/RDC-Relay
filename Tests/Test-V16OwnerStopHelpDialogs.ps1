@@ -11,7 +11,8 @@ function Check([bool]$ok,[string]$label){
  else{$script:fail++;Write-Output ('FAIL '+$label)}
 }
 Check ($errors.Count -eq 0) 'production GUI source parses'
-foreach($name in @('New-RdcOwnerStopDialog','Show-RdcOwnerStopConfirmation',
+foreach($name in @('New-RdcOwnerAccountSwitchDialog',
+ 'New-RdcOwnerStopDialog','Show-RdcOwnerStopConfirmation',
  'New-RdcOwnerReconnectDialog','Show-RdcOwnerReconnectConfirmation',
  'New-RdcOwnerHelpDialog','Show-RdcOwnerHelp')){
  $fn=$ast.Find({param($n)
@@ -100,6 +101,31 @@ try {
   $no.Bottom -le $buttons.Height -and $yes.Bottom -le $buttons.Height) 'Reconnect label and action buttons fit without clipping'
 }finally{$reconnect.Dispose()}
 
+# Compare against the real Account Switch form, not an arbitrary guessed
+# modal target. Both forms use the same fixed dark WinForms design system.
+$account=New-RdcOwnerAccountSwitchDialog
+try { $accountHeight=$account.ClientSize.Height }
+finally { $account.Dispose() }
+$brief='RDC Relay 1.6.0 RC1'+[Environment]::NewLine+
+ 'Краткая справка по программе.'+[Environment]::NewLine+'PID Remote: —'
+$shortHelp=New-RdcOwnerHelpDialog $brief
+try {
+ Check ($shortHelp.ClientSize.Height -ge 220 -and
+  $shortHelp.ClientSize.Height -lt $accountHeight) 'short help content opens in proportionally smaller dialog'
+ $shortHeight=$shortHelp.ClientSize.Height
+}finally{$shortHelp.Dispose()}
+$realManaged='RDC Relay 1.6.0 RC1'+[Environment]::NewLine+[Environment]::NewLine+
+ 'Host запускает Desktop Commander Remote 0.2.52.'+[Environment]::NewLine+[Environment]::NewLine+
+ 'Закрытие окна закрывает только GUI; Host и Remote продолжают работать.'+[Environment]::NewLine+
+ 'Повторное открытие через трей восстанавливает состояние и журнал.'+[Environment]::NewLine+
+ 'Статистику вызовов при необходимости можно подключить повторно в меню «Аккаунт».'+
+ [Environment]::NewLine+[Environment]::NewLine+'PID Remote: —'
+$managedHelp=New-RdcOwnerHelpDialog $realManaged
+try {
+ Check ($managedHelp.ClientSize.Height -ge $shortHeight -and
+  $managedHelp.ClientSize.Height -le $accountHeight -and
+  $managedHelp.ClientSize.Height -lt 480) 'actual managed Host help fits account-style height rather than 480px'
+}finally{$managedHelp.Dispose()}
 $content='RDC Relay 1.6.0 RC1'+[Environment]::NewLine+[Environment]::NewLine+
  ('Текст справки, доступный для прокрутки. ' * 55)
 $help=New-RdcOwnerHelpDialog $content
@@ -129,6 +155,8 @@ try{
   -not $helpIcon.TabStop) 'Help header has standard circled question-mark icon'
  Check ($body.BackColor.ToArgb() -eq $help.BackColor.ToArgb() -and
   $body.ForeColor.ToArgb() -eq $help.ForeColor.ToArgb()) 'Help content is seamless with dark form background, no contrasting grey panel'
+ Check ($help.ClientSize.Height -eq $accountHeight -and
+  $help.ClientSize.Width -eq 660) 'long help text caps at actual Account Switch client height and retains wide text column'
  Check ($body -is [Windows.Forms.RichTextBox] -and
   $body.Text -ceq $content -and $body.ReadOnly -and $body.WordWrap -and
   $body.ScrollBars -eq [Windows.Forms.RichTextBoxScrollBars]::Vertical -and
