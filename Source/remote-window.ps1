@@ -3688,8 +3688,8 @@ $title.AutoSize = $true
 $title.Margin = [Windows.Forms.Padding]::new(0,3,8,0)
 $title.TextAlign = 'MiddleLeft'
 $title.Font = New-Object Drawing.Font('Segoe UI',13,[Drawing.FontStyle]::Bold)
-# The Help affordance belongs to the application title, not among the
-# remote-control actions. Windows provides the familiar blue question glyph.
+# Keep the familiar Windows question glyph. In Owner RC1 the Help action
+# belongs at the far right of the existing 38px footer, not in the title row.
 $titleHost = New-Object Windows.Forms.FlowLayoutPanel
 $titleHost.Name='rc1-title-help-row'
 $titleHost.Dock=[Windows.Forms.DockStyle]::Fill
@@ -3723,9 +3723,21 @@ $helpButton.BackColor=$form.BackColor
 $helpButton.ForeColor=$form.ForeColor
 $helpButton.Text=''
 $helpButton.Image=([Drawing.SystemIcons]::Question).ToBitmap()
+if($OwnerGui){
+    # The existing footer stays 38px tall. Shrink ONLY the native button and
+    # its Windows question bitmap to fit the 25px inner footer height.
+    $helpImageSource=$helpButton.Image
+    $helpImage=New-Object Drawing.Bitmap(22,22)
+    $helpGraphics=[Drawing.Graphics]::FromImage($helpImage)
+    try {
+        $helpGraphics.InterpolationMode=[Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $helpGraphics.DrawImage($helpImageSource,0,0,22,22)
+    }finally{$helpGraphics.Dispose();$helpImageSource.Dispose()}
+    $helpButton.Image=$helpImage
+}
 $helpButton.ImageAlign=[Drawing.ContentAlignment]::MiddleCenter
-$helpButton.Size=[Drawing.Size]::new(32,32)
-$helpButton.Margin=[Windows.Forms.Padding]::new(0)
+$helpButton.Size=if($OwnerGui){[Drawing.Size]::new(24,24)}else{[Drawing.Size]::new(32,32)}
+$helpButton.Margin=if($OwnerGui){[Windows.Forms.Padding]::new(1,0,0,0)}else{[Windows.Forms.Padding]::new(0)}
 $helpButton.Padding=[Windows.Forms.Padding]::new(0)
 $helpButton.FlatStyle=[Windows.Forms.FlatStyle]::Flat
 $helpButton.FlatAppearance.BorderSize=0
@@ -3739,7 +3751,7 @@ $finish.TabIndex = 0
 $accountButton.TabIndex = 1
 $helpButton.TabIndex = 2
 [void]$titleHost.Controls.Add($title)
-[void]$titleHost.Controls.Add($helpButton)
+if(-not $OwnerGui){[void]$titleHost.Controls.Add($helpButton)}
 
 $actions = New-Object Windows.Forms.FlowLayoutPanel
 $actions.Dock = 'Fill'
@@ -3794,11 +3806,23 @@ $bottom = New-Object Windows.Forms.TableLayoutPanel
 $bottom.Dock = 'Bottom'
 $bottom.Height = 38
 $bottom.BackColor = $form.BackColor
-$bottom.Padding = New-Object Windows.Forms.Padding(12,7,12,6)
-$bottom.ColumnCount = 2
+# Owner: 7px breathing room above, below and right of the 24px Help button.
+# Keep the bar height unchanged; only its internal right padding differs.
+$bottom.Padding = if($OwnerGui){[Windows.Forms.Padding]::new(12,7,7,6)}else{[Windows.Forms.Padding]::new(12,7,12,6)}
+$bottom.ColumnCount = if($OwnerGui){3}else{2}
 $bottom.RowCount = 1
+if($OwnerGui){
+    # The legacy implicit auto row can calculate as 100px and clip controls.
+    # Fix ONLY the Owner inner row at 25px; outer footer remains 38px.
+    [void]$bottom.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,25)))
+}
 [void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent,100)))
 [void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,$(if($OwnerGui){110}else{440}))))
+if($OwnerGui){
+    # Fixed 25px right cell: 1px gap + 24px Help button. Update animation
+    # only expands the adjacent column, without shifting the Help button.
+    [void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,25)))
+}
 $accentOrange = [Drawing.Color]::FromArgb(191,118,67)
 $accentPurple = [Drawing.Color]::FromArgb(74,55,103)
 $statusGreen = [Drawing.Color]::LightGreen
@@ -3906,6 +3930,10 @@ if($OwnerGui){$tip.SetToolTip($quotaLabel,'Последний подтвержд
 
 $bottom.Controls.Add($infoHost,0,0)
 $bottom.Controls.Add($hintHost,1,0)
+if($OwnerGui){
+    $helpButton.Anchor=[Windows.Forms.AnchorStyles]::None
+    $bottom.Controls.Add($helpButton,2,0)
+}
 # Owner-only subtle, non-layout animation of the version in the far corner.
 # No motion in high-contrast mode. The stable updater footer is unaffected.
 if($OwnerGui){
@@ -6959,9 +6987,9 @@ if ($SelfTest) {
     Set-FinishButtonMode $true
     if ($accountButton.Text -notlike 'Аккаунт*') { throw 'Account button missing' }
     if ($helpButton.Text -ne '' -or -not $helpButton.Image -or
-        $helpButton.Parent -ne $titleHost -or
+        $helpButton.Parent -ne $(if($OwnerGui){$bottom}else{$titleHost}) -or
         $helpButton.AccessibleName -ne 'Справка / О программе') {
-        throw 'Native title Help button missing'
+        throw 'Native Help button missing from expected header/footer host'
     }
     if ($accountMenu.Items.Count -lt 4) { throw 'Account menu missing' }
     if ($reconnectItem.Text -ne 'Переподключить') { throw 'Reconnect account action missing' }

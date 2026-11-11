@@ -16,8 +16,9 @@ Check ($raw.Contains('$helpButton = New-Object Windows.Forms.Button') -and
  $raw.Contains('$helpButton.Image=([Drawing.SystemIcons]::Question).ToBitmap()') -and
  $raw.Contains('$helpButton.AccessibleName='+ "'Справка / О программе'") -and
  $raw.Contains('$top.Controls.Add($titleHost,1,0)') -and
- $raw.Contains('[void]$titleHost.Controls.Add($helpButton)') -and
- -not $raw.Contains('$actions.Controls.Add($helpButton)')) 'real native blue Help icon is beside application title, not Stop/Account actions'
+ $raw.Contains('if(-not $OwnerGui){[void]$titleHost.Controls.Add($helpButton)}') -and
+ $raw.Contains('$bottom.Controls.Add($helpButton,2,0)') -and
+ -not $raw.Contains('$actions.Controls.Add($helpButton)')) 'native blue Help icon is in owner footer, not title or Stop/Account actions'
 Check (-not $raw.Contains('$helpMenu =') -and
  -not $raw.Contains('$helpMenu.Show(') -and
  -not $raw.Contains('$openLogItem.Add_Click(') -and

@@ -25,6 +25,7 @@ $names=@(
  'Test-V16OwnerAccountSwitchDialog.ps1',
  'Test-V16OwnerStopHelpDialogs.ps1',
  'Test-V16OwnerHelpJournalRoute.ps1',
+ 'Test-V16OwnerHelpFooterLayout.ps1',
  'Test-V16TrayGuiActivation.ps1',
  'Test-V16TrayV04Visual.ps1',
  'Test-V16AccountButtonCentering.ps1',
