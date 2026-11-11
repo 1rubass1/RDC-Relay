@@ -3729,6 +3729,8 @@ $helpButton.Margin=[Windows.Forms.Padding]::new(0)
 $helpButton.Padding=[Windows.Forms.Padding]::new(0)
 $helpButton.FlatStyle=[Windows.Forms.FlatStyle]::Flat
 $helpButton.FlatAppearance.BorderSize=0
+$helpButton.FlatAppearance.MouseOverBackColor=$helpButton.BackColor
+$helpButton.FlatAppearance.MouseDownBackColor=$helpButton.BackColor
 $helpButton.UseVisualStyleBackColor=$false
 $helpButton.Cursor=[Windows.Forms.Cursors]::Hand
 $helpButton.AccessibleRole=[Windows.Forms.AccessibleRole]::PushButton
@@ -6236,7 +6238,15 @@ $verifyDeviceItem.Add_Click({
     try { Start-Process 'https://mcp.desktopcommander.app/device/verify' } catch {}
 })
 # Direct Help action: no intermediate context menu.
-$helpButton.Add_Click({ Show-RdcAbout })
+# Preserve keyboard Tab focus cues; clear mouse-acquired focus so a click does
+# not draw a lingering focus rectangle on the otherwise borderless Help icon.
+$helpButton.Add_MouseDown({
+    if ($form.ActiveControl -eq $helpButton) { $form.ActiveControl=$null }
+})
+$helpButton.Add_Click({
+    try { Show-RdcAbout }
+    finally { $form.ActiveControl=$null }
+})
 
 # Keep all existing mode-specific Help content, but present it in an
 # Owner-only dark scrollable dialog instead of a light system MessageBox.

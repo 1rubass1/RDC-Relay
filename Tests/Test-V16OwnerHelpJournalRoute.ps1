@@ -22,18 +22,41 @@ Check (-not $raw.Contains('$helpMenu =') -and
  -not $raw.Contains('$helpMenu.Show(') -and
  -not $raw.Contains('$openLogItem.Add_Click(') -and
  -not $raw.Contains('$aboutItem.Add_Click(')) 'superseded Help context menu and invisible-focus journal action removed'
+Check ($raw.Contains('$helpButton.FlatStyle=[Windows.Forms.FlatStyle]::Flat') -and
+ $raw.Contains('$helpButton.FlatAppearance.BorderSize=0') -and
+ $raw.Contains('$helpButton.FlatAppearance.MouseOverBackColor=$helpButton.BackColor') -and
+ $raw.Contains('$helpButton.FlatAppearance.MouseDownBackColor=$helpButton.BackColor') -and
+ $raw.Contains('$helpButton.UseVisualStyleBackColor=$false')) 'Help stays borderless with no hover or pressed background color'
+Check ($raw.Contains('$helpButton.TabStop = $true') -and
+ $raw.Contains('$helpButton.AccessibleRole=[Windows.Forms.AccessibleRole]::PushButton')) 'Help retains keyboard Tab access and accessible button role'
 $direct=@($ast.FindAll({param($n)
  $n -is [Management.Automation.Language.ScriptBlockExpressionAst] -and
- $n.Extent.Text.Trim() -ceq '{ Show-RdcAbout }'
+ $n.Extent.Text -match '(?s)^\{\s*try \{ Show-RdcAbout \}\s*finally \{ \$form\.ActiveControl=\$null \}\s*\}$'
+},$true))
+$mouse=@($ast.FindAll({param($n)
+ $n -is [Management.Automation.Language.ScriptBlockExpressionAst] -and
+ $n.Extent.Text -match '(?s)^\{\s*if \(\$form\.ActiveControl -eq \$helpButton\) \{ \$form\.ActiveControl=\$null \}\s*\}$'
 },$true))
 Check ($direct.Count -eq 1 -and
- $raw.Contains('$helpButton.Add_Click({ Show-RdcAbout })')) 'a single Help button click directly opens About, no intermediate menu'
-if($direct.Count -eq 1) {
+ $raw.Contains('$helpButton.Add_Click({') -and
+ -not $raw.Contains('$helpMenu =')) 'Help click directly opens About without an intermediate menu'
+Check ($mouse.Count -eq 1 -and $raw.Contains('$helpButton.Add_MouseDown({')) 'mouse press clears Help focus without replacing the native WinForms button'
+if($direct.Count -eq 1 -and $mouse.Count -eq 1) {
  $script:aboutClicks=0
  function Show-RdcAbout {$script:aboutClicks++}
- $click=& ([scriptblock]::Create($direct[0].Extent.Text))
- & $click
- Check ($script:aboutClicks -eq 1) 'actual direct Help click executes About immediately'
+ $form=New-Object Windows.Forms.Form
+ $helpButton=New-Object Windows.Forms.Button
+ [void]$form.Controls.Add($helpButton)
+ try {
+  $click=& ([scriptblock]::Create($direct[0].Extent.Text))
+  $mouseDown=& ([scriptblock]::Create($mouse[0].Extent.Text))
+  $form.ActiveControl=$helpButton
+  & $mouseDown
+  Check ($form.ActiveControl -eq $null) 'mouse press removes Help focus rectangle'
+  $form.ActiveControl=$helpButton
+  & $click
+  Check ($script:aboutClicks -eq 1 -and $form.ActiveControl -eq $null) 'Help click opens About once and clears post-dialog focus'
+ }finally{$form.Dispose()}
 }
 foreach($name in @('Get-RdcOwnerJournalText','New-RdcOwnerJournalDialog',
  'Show-RdcOwnerJournal','New-RdcOwnerHelpDialog')){
