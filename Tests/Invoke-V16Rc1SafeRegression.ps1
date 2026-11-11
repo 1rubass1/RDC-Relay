@@ -24,6 +24,7 @@ $names=@(
  'Test-V16OwnerToolJournal.ps1','Test-V16OwnerAccountSwitch.ps1',
  'Test-V16OwnerAccountSwitchDialog.ps1',
  'Test-V16OwnerStopHelpDialogs.ps1',
+ 'Test-V16AccountButtonCentering.ps1',
  'Test-V16AppIconV04.ps1',
  'Test-V16ReleaseInstallPolicy.ps1','Test-V16ReleaseSetupSandbox.ps1',
  'Test-V16ManualSetupPrompt.ps1',

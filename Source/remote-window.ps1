@@ -733,6 +733,14 @@ public class RdcRoundedButton : Control {
     }
     private RdcButtonGlyph glyph = RdcButtonGlyph.None;
     private RdcButtonTone tone = RdcButtonTone.Accent;
+    private bool showMenuChevron;
+
+    // Keep the Account label geometrically centered. The dropdown affordance
+    // is a separate painted glyph, not part of the centered Text string.
+    public bool ShowMenuChevron {
+        get { return showMenuChevron; }
+        set { showMenuChevron = value; Invalidate(); }
+    }
 
     public RdcButtonGlyph Glyph {
         get { return glyph; }
@@ -853,6 +861,24 @@ public class RdcRoundedButton : Control {
         }
     }
 
+    private Rectangle GetMenuChevronBounds() {
+        return new Rectangle(Math.Max(0,Width-21),(Height-8)/2,10,8);
+    }
+
+    private void DrawMenuChevron(Graphics g, Color color) {
+        Rectangle bounds = GetMenuChevronBounds();
+        using (Pen pen = new Pen(color,1.7f)) {
+            pen.StartCap = LineCap.Round;
+            pen.EndCap = LineCap.Round;
+            pen.LineJoin = LineJoin.Round;
+            g.DrawLines(pen,new Point[] {
+                new Point(bounds.Left+1,bounds.Top+2),
+                new Point(bounds.Left+5,bounds.Top+6),
+                new Point(bounds.Left+9,bounds.Top+2)
+            });
+        }
+    }
+
     protected override void OnPaint(PaintEventArgs e) {
         // Opaque controls do not receive the normal background paint pass.
         // Clear the complete client area here so no stale sibling pixels can survive.
@@ -903,9 +929,12 @@ public class RdcRoundedButton : Control {
             e.Graphics,Text,Font,new Size(Int32.MaxValue,Height),flags);
 
         if (glyph == RdcButtonGlyph.None) {
+            // The dropdown triangle is anchored at the right edge; it must
+            // never shift the label's true horizontal center.
             TextRenderer.DrawText(
                 e.Graphics,Text,Font,ClientRectangle,content,
                 flags | TextFormatFlags.HorizontalCenter);
+            if (showMenuChevron) DrawMenuChevron(e.Graphics,content);
             if (Focused && ShowFocusCues)
                 ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle,-5,-5), ForeColor, BackColor);
             return;
@@ -3668,7 +3697,9 @@ $finish.Margin = New-Object Windows.Forms.Padding(16,0,0,0)
 
 $accountButton = New-Object RdcRoundedButton
 $accountButton.BackColor = $form.BackColor
-$accountButton.Text = 'Аккаунт ▾'
+$accountButton.Text = 'Аккаунт'
+$accountButton.ShowMenuChevron = $true
+$accountButton.AccessibleName = 'Аккаунт, открыть меню'
 $accountButton.Tone = [RdcButtonTone]::Neutral
 $accountButton.Size = New-Object Drawing.Size(120,36)
 $accountButton.Margin = New-Object Windows.Forms.Padding(0)
