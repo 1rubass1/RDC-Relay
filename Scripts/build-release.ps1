@@ -58,15 +58,19 @@ foreach ($name in @(
 Write-Host 'Compiling shaders...'
 & (Join-Path $PSScriptRoot 'build-shaders.ps1')
 
-Write-Host 'Building application icon...'
-& (Join-Path $assetsDir 'build-icon.ps1')
-
+# Owner-approved DES-002 app/shortcut icon v04 is prebuilt (18 ICO frames).
+# The former Assets/build-icon.ps1 draws superseded artwork. Never call it
+# during release packaging or it would silently overwrite the approved icon.
 $sourceIcon = Join-Path $assetsDir 'RDCRelay.ico'
 $runtimeIcon = Join-Path $sourceDir 'RDCRelay.ico'
-if (-not (Test-Path -LiteralPath $sourceIcon)) {
-    throw ('Missing application icon: ' + $sourceIcon)
+$approvedIconSha = '6421F60D00030F21F958B81118B36ACCF08155CE2A887EEEB329B60044A06FA8'
+foreach ($item in @($sourceIcon,$runtimeIcon)) {
+    if (-not [IO.File]::Exists($item) -or
+        (Get-FileHash -Algorithm SHA256 -LiteralPath $item).Hash -cne $approvedIconSha) {
+        throw ('RDC_RELEASE_APPROVED_APP_ICON_V04_MISMATCH: ' + $item)
+    }
 }
-Copy-Item -LiteralPath $sourceIcon -Destination $runtimeIcon -Force
+Write-Host 'Using verified approved application icon v04 (no regeneration).'
 
 $manifestPayload = @(
     'remote-window.ps1',
