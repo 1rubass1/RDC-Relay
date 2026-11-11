@@ -120,6 +120,38 @@ Check ($showFn.Extent.Text.Contains('Get-RdcOwnerJournalText') -and
  $showFn.Extent.Text.Contains('New-RdcOwnerJournalDialog $snapshot') -and
  $showFn.Extent.Text.Contains('$journal.ShowDialog($parent)') -and
  $showFn.Extent.Text.Contains('$journal.Dispose()')) 'actual journal command creates visible nested modal from safe history and disposes it'
+# G122 postmortem: the G121 Help context-menu item was removed, but its
+# old OwnerGui capability writes still caused an early startup exception.
+$ownerPath=Join-Path (Split-Path -Parent $PSScriptRoot) 'Source\rc1-owner-gui.ps1'
+$ownerSource=[IO.File]::ReadAllText($ownerPath,[Text.Encoding]::UTF8)
+$parsedTokens=$null;$ownerParseErrors=$null
+[void][Management.Automation.Language.Parser]::ParseFile(
+ $ownerPath,[ref]$parsedTokens,[ref]$ownerParseErrors)
+Check ($ownerParseErrors.Count -eq 0 -and
+ -not ([regex]::IsMatch($ownerSource,'(?m)^\s*\$openLogItem\s*(?:\.|\[|=)'))) 'OwnerGui never dereferences the removed G121 Help menu item'
+Check ($ownerSource.IndexOf('$initialCapabilities=$handshake.payload.capabilities',
+ [StringComparison]::Ordinal) -ge 0 -and
+ $ownerSource.IndexOf('$initialCapabilities=$handshake.payload.capabilities',
+ [StringComparison]::Ordinal) -lt
+ $ownerSource.IndexOf('$script:ownerJournalAllowed=[bool]$initialCapabilities.sanitizedJournal',
+ [StringComparison]::Ordinal) -and
+ $ownerSource.Contains('$script:ownerJournalAllowed=[bool]$snapshot.capabilities.sanitizedJournal') -and
+ $raw.Contains('$showJournal.Enabled=(-not $OwnerGui) -or [bool]$script:ownerJournalAllowed')) 'Host-sanctioned journal capability binds to the new About button at startup and refresh'
+$OwnerGui=$true
+$script:ownerJournalAllowed=$false
+$restricted=New-RdcOwnerHelpDialog 'Test authenticated capability disabled'
+try{
+ $parent=@($restricted.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+ $journalButton=$parent.GetControlFromPosition(0,2).GetControlFromPosition(0,0)
+ Check (-not $journalButton.Enabled) 'sanitized journal disabled when Owner capability is denied'
+}finally{$restricted.Dispose()}
+$script:ownerJournalAllowed=$true
+$allowed=New-RdcOwnerHelpDialog 'Test authenticated capability enabled'
+try{
+ $parent=@($allowed.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+ $journalButton=$parent.GetControlFromPosition(0,2).GetControlFromPosition(0,0)
+ Check ($journalButton.Enabled) 'sanitized journal enabled only when Owner capability allows'
+}finally{$allowed.Dispose()}
 Write-Output ('RC1_HELP_JOURNAL_ROUTE_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}
 exit 0

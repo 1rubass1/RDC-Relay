@@ -35,13 +35,15 @@ Check ($src.Contains('OpenGui();') -and
  $src.Contains('reopenSignal.WaitOne(0)')) 'tray menu, tray double-click and launcher event retain common OpenGui route'
 $start=$src.LastIndexOf('public static class RdcOwnerActivate {',[StringComparison]::Ordinal)
 if($start -lt 0){throw 'ACTIVATION_HELPER_MISSING'}
-$code="using System;"+[Environment]::NewLine+$src.Substring($start)
+$end=$src.IndexOf('// Multi-size PNG-backed Windows icons',$start,[StringComparison]::Ordinal)
+if($end -lt $start){throw 'G122_ACTIVATION_HELPER_END_MISSING'}
+$code="using System;"+[Environment]::NewLine+$src.Substring($start,$end-$start)
 Add-Type -TypeDefinition $code -ReferencedAssemblies System.Windows.Forms,System.Drawing
 Check ([RdcOwnerActivate]::OpenOwned([IntPtr]::Zero,$PID) -ceq 'NO_WINDOW') 'null HWND returns no-window status without side effects'
 $fake=New-Object Windows.Forms.Form
 $other=New-Object Windows.Forms.Form
 try{
- $fake.Text='RDC Relay - isolated test window'
+ $fake.Text='RDC Relay 1.6.0 RC1 — Fake only test'
  $other.Text='Unrelated helper window'
  $fake.ShowInTaskbar=$false
  $other.ShowInTaskbar=$false
@@ -52,6 +54,10 @@ try{
  Check ($found -eq $fakeHandle) 'hidden RDC Relay window is found by verified owning PID and title prefix'
  Check ([RdcOwnerActivate]::OpenOwned($fakeHandle,($PID+17777)) -ceq 'NOT_OWNED') 'correct window cannot activate under spoofed GUI PID'
  Check ([RdcOwnerActivate]::FindOwnedWindow(($PID+17777)) -eq [IntPtr]::Zero) 'wrong PID does not allow title-only window adoption'
+ $fake.Text='RDC Relay 1.6.0 RC1 — управляемый Host/GUI'
+ Check ([RdcOwnerActivate]::FindOwnedWindow($PID) -eq $fakeHandle) 'real managed-mode Owner GUI title is recognized even while its WinForms window is hidden'
+ $fake.Text='RDC Relay — справка'
+ Check ([RdcOwnerActivate]::FindOwnedWindow($PID) -eq [IntPtr]::Zero) 'same-process About dialog cannot be mistaken for the main GUI'
  $fake.Text='Unrelated helper window renamed'
  Check ([RdcOwnerActivate]::FindOwnedWindow($PID) -eq [IntPtr]::Zero) 'name-mismatched helper windows are never treated as main GUI'
 }finally{

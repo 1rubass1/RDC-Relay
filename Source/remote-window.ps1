@@ -6335,6 +6335,9 @@ function New-RdcOwnerHelpDialog([string]$content) {
     $showJournal.FlatStyle=[Windows.Forms.FlatStyle]::Flat
     $showJournal.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
     $showJournal.Margin=[Windows.Forms.Padding]::new(0)
+    # Owner journal access follows the authenticated Host's capability;
+    # legacy/non-Owner About can still show its empty journal placeholder.
+    $showJournal.Enabled=(-not $OwnerGui) -or [bool]$script:ownerJournalAllowed
     $showJournal.Add_Click({
         param($sender,$e)
         Show-RdcOwnerJournal ($sender.FindForm())

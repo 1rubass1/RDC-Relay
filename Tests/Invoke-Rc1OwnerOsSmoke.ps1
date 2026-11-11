@@ -8,7 +8,8 @@ if(-not $Execute){Write-Output 'NOT CHECKED: OS smoke requires explicit -Execute
 . (Join-Path $PSScriptRoot 'Rc1OsFixtureProof.ps1')
 $project=Split-Path -Parent $PSScriptRoot
 $branch=(git -C $project branch --show-current).Trim()
-if($branch -cne 'feature/v1.6-host-gui-owner-pilot'){throw 'OS_REFUSED_WRONG_BRANCH'}
+if($branch -cne 'feature/v1.6-host-gui-owner-pilot' -and
+   $branch -cne 'feature/rc1-tray-v04-gui-reactivation'){throw 'OS_REFUSED_WRONG_BRANCH'}
 $marker=Get-Content -LiteralPath (Join-Path $project 'Source\rc1-candidate.json') -Raw -Encoding UTF8|ConvertFrom-Json
 if($marker.candidate -cne '1.6.0 RC1' -or $marker.liveRemoteEnabled -ne $false -or
    $marker.installable -ne $false -or $marker.publishable -ne $false){throw 'OS_REFUSED_CANDIDATE_GATE'}

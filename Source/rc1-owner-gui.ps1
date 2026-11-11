@@ -262,15 +262,18 @@ function Start-RdcOwnerGui {
  $accountButton.Enabled=$true
  $quotaAuthItem.Enabled=$script:ownerManagedMode
  $accountButton.AccessibleDescription='Аккаунт: переход к управлению устройствами без изменения Remote.'
+ # Handshake capability values must be validated before any binding.
+ $initialCapabilities=$handshake.payload.capabilities
+ if(-not $initialCapabilities){throw 'RC1_OWNER_CAPABILITIES_MISSING'}
  $script:ownerCanSwitchAccount=[bool]$initialCapabilities.switchAccount
  $switchAccountItem.Enabled=$script:ownerCanSwitchAccount
  $reconnectItem.Enabled=$false
- $initialCapabilities=$handshake.payload.capabilities
- if(-not $initialCapabilities){throw 'RC1_OWNER_CAPABILITIES_MISSING'}
  $devicesItem.Enabled=[bool]$initialCapabilities.deviceManagementLink
  $verifyDeviceItem.Enabled=$false # RC1 manual verification removed
- $openLogItem.Enabled=[bool]$initialCapabilities.sanitizedJournal
- $openLogItem.Text='Показать журнал RC1'
+ $script:ownerJournalAllowed=[bool]$initialCapabilities.sanitizedJournal
+ # G121 removed the Help context menu and $openLogItem. The About dialog
+ # now creates its own "Показать журнал" control over sanitized Owner events.
+ # Never access an obsolete control here: this prevented Owner GUI startup.
  $helpButton.Enabled=$true
  $script:ownerCloseGeneration=[int]$handshake.payload.closeGeneration
  $script:ownerEventCursor=0
@@ -341,7 +344,7 @@ function Start-RdcOwnerGui {
      # Permissions come from Host, never from a GUI-local PID/ownership guess.
      $devicesItem.Enabled=[bool]$snapshot.capabilities.deviceManagementLink
      $verifyDeviceItem.Enabled=[bool]$snapshot.capabilities.deviceVerificationLink
-     $openLogItem.Enabled=[bool]$snapshot.capabilities.sanitizedJournal
+     $script:ownerJournalAllowed=[bool]$snapshot.capabilities.sanitizedJournal
      $script:ownerCanSwitchAccount=[bool]$snapshot.capabilities.switchAccount
      $switchAccountItem.Enabled=$script:ownerCanSwitchAccount
      if($script:ownerManagedMode){

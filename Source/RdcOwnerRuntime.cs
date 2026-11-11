@@ -159,6 +159,9 @@ public sealed class RdcOwnerRuntime : IDisposable {
  readonly ApplicationContext context=new ApplicationContext();
  readonly NotifyIcon tray=new NotifyIcon();
  readonly System.Windows.Forms.Timer pulse=new System.Windows.Forms.Timer();
+ // Animation cadence is independent from 250ms Host health/IPC polling.
+ readonly System.Windows.Forms.Timer trayFrameTimer=new System.Windows.Forms.Timer();
+ RdcOwnerTrayVisual trayVisual;
  readonly RdcOwnerServer server;
  readonly List<Dictionary<string,object>> events=new List<Dictionary<string,object>>();
  readonly HashSet<string> requestIds=new HashSet<string>(StringComparer.Ordinal);
@@ -259,8 +262,11 @@ public sealed class RdcOwnerRuntime : IDisposable {
    server.Start();
    if(trialRoot!=null && failConstructorAfterServerStart)
     throw new IOException("RC1_TRIAL_INJECTED_CONSTRUCTOR_FAILURE");
-   tray.Icon=SystemIcons.Information; // deliberately not installed v1.5.18 icon
+   tray.Icon=SystemIcons.Information; // fallback only for incomplete fake-only fixtures
    tray.Text="RDC Relay 1.6 RC1 | FAKE Remote";
+   trayVisual=RdcOwnerTrayVisual.Load(sourceRoot,tray);
+   if(trayVisual!=null)trayVisual.Update(remoteSupervisor.Snapshot());
+   else Append("host","tray artwork missing in isolated fixture; fallback icon");
    tray.Visible=true;
    var menu=new ContextMenuStrip();
    var open=new ToolStripMenuItem("Открыть RDC Relay");
@@ -304,6 +310,20 @@ public sealed class RdcOwnerRuntime : IDisposable {
    menu.Items.Add(open);menu.Items.Add(trayStatusItem);menu.Items.Add(new ToolStripSeparator());menu.Items.Add(trayExitItem);
    tray.ContextMenuStrip=menu;
    tray.DoubleClick+=(s,e)=>OpenGui();
+   trayFrameTimer.Interval=40; // 160ms color fades at 4 ticks; cached frames
+   trayFrameTimer.Tick+=(s,e)=>{
+    lock(gate){
+     if(disposed||trayVisual==null)return;
+     try{trayVisual.Advance();}
+     catch(Exception problem){
+      Append("host","tray icon render failed: "+problem.GetType().Name);
+      trayFrameTimer.Stop();
+      tray.Icon=SystemIcons.Information;
+      trayVisual.Dispose();trayVisual=null;
+     }
+    }
+   };
+   trayFrameTimer.Start();
    pulse.Interval=250;
    pulse.Tick+=(s,e)=>{
     lock(gate){
@@ -346,6 +366,17 @@ public sealed class RdcOwnerRuntime : IDisposable {
      // GUI is asked via closeGeneration; no process kill or orphan.
      // An unverified ticket/child is NOT a clean full exit.
      if(exitRequested && gui==null && guiState=="NONE")context.ExitThread();
+     // Host state snapshots are sampled at 250ms; the 40ms timer only
+     // advances an already-selected cached icon, without allocating snapshots.
+     if(trayVisual!=null){
+      try{trayVisual.Update(remoteSupervisor.Snapshot());}
+      catch(Exception problem){
+       Append("host","tray state render failed: "+problem.GetType().Name);
+       trayFrameTimer.Stop();
+       tray.Icon=SystemIcons.Information;
+       trayVisual.Dispose();trayVisual=null;
+      }
+     }
     }
    };
    if(trialRoot!=null)trialClock.Start();
@@ -355,10 +386,12 @@ public sealed class RdcOwnerRuntime : IDisposable {
   }catch{
    // Fail-closed unwind of partly created host-owned resources.
    try{pulse.Stop();pulse.Dispose();}catch{}
+   try{trayFrameTimer.Stop();trayFrameTimer.Dispose();}catch{}
    try{if(reopenSignal!=null)reopenSignal.Dispose();}catch{}
    try{if(idleUpgradeSignal!=null)idleUpgradeSignal.Dispose();}catch{}
    try{if(guiReadySignal!=null)guiReadySignal.Dispose();}catch{}
    try{tray.Visible=false;tray.Dispose();}catch{}
+   try{if(trayVisual!=null)trayVisual.Dispose();}catch{}
    bool ipcClean=true;
    try{if(server!=null)server.Dispose();}catch{ipcClean=false;}
    bool ownTicketClean=true;
@@ -1268,7 +1301,10 @@ public sealed class RdcOwnerRuntime : IDisposable {
   lock(gate){
    if(disposed)return;
    disposed=true;
-   pulse.Stop();pulse.Dispose();tray.Visible=false;tray.Dispose();
+   pulse.Stop();pulse.Dispose();
+   trayFrameTimer.Stop();trayFrameTimer.Dispose();
+   tray.Visible=false;tray.Dispose();
+   if(trayVisual!=null){trayVisual.Dispose();trayVisual=null;}
    if(reopenSignal!=null)reopenSignal.Dispose();
    if(idleUpgradeSignal!=null)idleUpgradeSignal.Dispose();
    if(guiReadySignal!=null)guiReadySignal.Dispose();
@@ -1331,7 +1367,11 @@ public static class RdcOwnerActivate {
    if(GetWindowThreadProcessId(h,out pid)==0||pid!=(uint)expectedPid)return true;
    var title=new System.Text.StringBuilder(160);
    GetWindowText(h,title,title.Capacity);
-   if(!title.ToString().StartsWith("RDC Relay",StringComparison.OrdinalIgnoreCase))return true;
+   // A modal About/Journal window must not be mistaken for the main GUI.
+   // Owner GUI changes its caption after authenticated HELLO.
+   // Accept only the release-specific top-level main window, never the
+   // versionless About/Journal modal or another titled window in the PID.
+   if(!title.ToString().StartsWith("RDC Relay 1.6.0 RC1",StringComparison.Ordinal))return true;
    result=h;return false;
   },IntPtr.Zero);
   return result;
@@ -1363,5 +1403,169 @@ public static class RdcOwnerActivate {
    hwnd=handle,dwFlags=2,dwCount=3,dwTimeout=0}; // FLASHW_TRAY, bounded
   FlashWindowEx(ref flash);
   return "ATTENTION";
+ }
+}
+
+// Multi-size PNG-backed Windows icons derived only from the owner-approved tray
+// 04 package. One cached Icon per frame: no Bitmap or HICON allocation on ticks.
+public sealed class RdcOwnerTrayVisual : IDisposable {
+ readonly NotifyIcon tray;
+ readonly Dictionary<string,Icon> icons=new Dictionary<string,Icon>(StringComparer.Ordinal);
+ readonly List<MemoryStream> streams=new List<MemoryStream>();
+ readonly Stopwatch phase=Stopwatch.StartNew();
+ DateTime nextMotionQueryUtc=DateTime.MinValue;
+ bool animate=true,disposed=false;
+ string semantic="",shownFrame="",shownTip="";
+ const int WorkPulseMs=1800, SwapMs=800;
+ static readonly string[] keys={
+  "offline","connecting-a","connecting-b","auth-a","auth-b","ready","fault",
+  "work-00","work-01","work-02","work-03","work-04","work-05",
+  "work-06","work-07","work-08","work-09",
+  "connecting-ab-25","connecting-ab-50","connecting-ab-75",
+  "connecting-ba-25","connecting-ba-50","connecting-ba-75",
+  "auth-ab-25","auth-ab-50","auth-ab-75",
+  "auth-ba-25","auth-ba-50","auth-ba-75"
+ };
+ [System.Runtime.InteropServices.DllImport("user32.dll",CharSet=System.Runtime.InteropServices.CharSet.Auto)]
+ static extern bool SystemParametersInfo(uint action,uint param,out bool enabled,uint flags);
+ static bool MotionEnabled(){
+  bool enabled=false;
+  // SPI_GETCLIENTAREAANIMATION. Fall back to a static icon if unavailable.
+  return SystemParametersInfo(0x1042,0,out enabled,0) && enabled;
+ }
+ public static RdcOwnerTrayVisual Load(string sourceRoot,NotifyIcon target) {
+  string path=Path.Combine(sourceRoot,"RdcTrayV04.bin");
+  if(!File.Exists(path))return null; // legacy/incomplete fake-only fixtures
+  if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)
+   throw new InvalidDataException("RC1_TRAY_REPARSE_DENIED");
+  return new RdcOwnerTrayVisual(path,target);
+ }
+ RdcOwnerTrayVisual(string path,NotifyIcon target) {
+  if(target==null)throw new ArgumentNullException("target");
+  tray=target;
+  try{
+   var info=new FileInfo(path);
+   if(info.Length<100||info.Length>4194304)throw new InvalidDataException("RC1_TRAY_BUNDLE_SIZE");
+   // Attest the owner's approved v04 binary before handing icons to Win32.
+   const string approvedSha="607D271A09983A407F3E8CC8560A93DC59385C18DCEC08ECA1740318C2B1AD59";
+   using(var hashStream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read)){
+    var hasher=new System.Security.Cryptography.SHA256Managed();
+    string actual=BitConverter.ToString(hasher.ComputeHash(hashStream)).Replace("-","");
+    if(actual!=approvedSha)throw new InvalidDataException("RC1_TRAY_APPROVED_SHA_MISMATCH");
+   }
+   using(var reader=new BinaryReader(new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read))){
+    if(Encoding.ASCII.GetString(reader.ReadBytes(8))!="RDCTRAY4"||
+       reader.ReadUInt16()!=1||reader.ReadByte()!=keys.Length)
+     throw new InvalidDataException("RC1_TRAY_BUNDLE_HEADER");
+    for(int i=0;i<keys.Length;i++){
+     int nameLength=reader.ReadByte();
+     if(nameLength<1||nameLength>40)throw new InvalidDataException("RC1_TRAY_NAME_LENGTH");
+     string name=Encoding.ASCII.GetString(reader.ReadBytes(nameLength));
+     if(name!=keys[i])throw new InvalidDataException("RC1_TRAY_ASSET_ORDER");
+     int size=reader.ReadInt32();
+     if(size<100||size>1048576)throw new InvalidDataException("RC1_TRAY_ICON_BYTES");
+     byte[] ico=reader.ReadBytes(size);
+     if(ico.Length!=size||ico[0]!=0||ico[1]!=0||ico[2]!=1||ico[3]!=0||
+        ico[4]!=8||ico[5]!=0)throw new InvalidDataException("RC1_TRAY_ICON_FORMAT");
+     var backing=new MemoryStream(ico,false);
+     streams.Add(backing);
+     // Use the actual Windows notification-area small-icon metric (16px
+     // at 100%, commonly 20/24px at higher DPI), not a default 32px HICON.
+     icons.Add(name,new Icon(backing,SystemInformation.SmallIconSize));
+    }
+    if(reader.BaseStream.Position!=reader.BaseStream.Length)
+     throw new InvalidDataException("RC1_TRAY_BUNDLE_EXTRA_BYTES");
+   }
+   animate=MotionEnabled();
+   nextMotionQueryUtc=DateTime.UtcNow.AddSeconds(5);
+  }catch{Dispose();throw;}
+ }
+ public static string Semantic(string connection,string activity) {
+  // Source is the authoritative sanitized Remote supervisor snapshot.
+  // Fault and disconnected override any stale tool activity.
+  if(connection=="Fault")return "fault";
+  if(connection=="Connecting"||connection=="Reconnecting")return "connecting";
+  if(connection=="AuthPending")return "auth";
+  if(connection=="Ready")return activity=="working"?"working":"ready";
+  return "offline";
+ }
+ static string SwapFrame(string prefix,bool motion,long elapsedMs){
+  if(!motion)return prefix+"-a";
+  // Mirrors preview CSS: 1.6s cycle, color interpolation at 40-50%
+  // and 90-100% (160ms), sampled at 40ms from cached 25/50/75% ICOs.
+  long position=elapsedMs%(2*SwapMs);
+  if(position<680)return prefix+"-a";
+  if(position<720)return prefix+"-ab-25";
+  if(position<760)return prefix+"-ab-50";
+  if(position<800)return prefix+"-ab-75";
+  if(position<1480)return prefix+"-b";
+  if(position<1520)return prefix+"-ba-25";
+  if(position<1560)return prefix+"-ba-50";
+  return prefix+"-ba-75";
+ }
+ public static string Frame(string state,bool motion,long elapsedMs) {
+  if(state=="connecting"||state=="auth")return SwapFrame(state,motion,elapsedMs);
+  if(state=="working"){
+   if(!motion)return "work-09";
+   // CSS 0/100%=100%, midpoint=45%, ease-in-out. Cached levels
+   // approximate the preview easing without constructing a new icon.
+   double position=(elapsedMs%WorkPulseMs)/900.0;
+   if(position>1.0)position=2.0-position;
+   double eased=(1.0-Math.Cos(Math.PI*position))/2.0;
+   int index=Math.Max(0,Math.Min(9,(int)Math.Round(9.0*(1.0-eased))));
+   return "work-"+index.ToString("D2");
+  }
+  if(state=="ready"||state=="fault")return state;
+  return "offline";
+ }
+ static string ShortStatus(string state){
+  switch(state){
+   case "connecting":return "Подключение";
+   case "auth":return "Авторизация";
+   case "ready":return "Готов к работе";
+   case "working":return "Выполнение";
+   case "fault":return "Ошибка соединения";
+   default:return "Отключён";
+  }
+ }
+ public void Update(Dictionary<string,object> snapshot){
+  if(disposed||snapshot==null)return;
+  string connection=snapshot.ContainsKey("state")?
+   Convert.ToString(snapshot["state"]):"Disconnected";
+  string activity=snapshot.ContainsKey("toolActivity")?
+   Convert.ToString(snapshot["toolActivity"]):"idle";
+  string next=Semantic(connection,activity);
+  if(next!=semantic){semantic=next;phase.Restart();}
+  Advance();
+  // No rapid text/tooltip churn while drawing animated frames.
+  bool fake=snapshot.ContainsKey("fake")&&Convert.ToBoolean(snapshot["fake"]);
+  string tip="RDC Relay RC1 | "+(fake?"Тест | ":"")+ShortStatus(semantic);
+  if(tip!=shownTip){
+   tray.Text=tip.Length<=63?tip:tip.Substring(0,63);
+   shownTip=tip;
+  }
+ }
+ public void Advance(){
+  if(disposed || String.IsNullOrEmpty(semantic))return;
+  if(DateTime.UtcNow>=nextMotionQueryUtc){
+   bool nextMotion=MotionEnabled();
+   if(nextMotion!=animate){animate=nextMotion;phase.Restart();}
+   nextMotionQueryUtc=DateTime.UtcNow.AddSeconds(5);
+  }
+  string frame=Frame(semantic,animate,phase.ElapsedMilliseconds);
+  if(frame!=shownFrame){
+   Icon icon;
+   if(!icons.TryGetValue(frame,out icon))throw new InvalidDataException("RC1_TRAY_FRAME_MISSING");
+   tray.Icon=icon;
+   shownFrame=frame;
+  }
+ }
+ public void Dispose(){
+  if(disposed)return;
+  disposed=true;
+  foreach(var icon in icons.Values)try{icon.Dispose();}catch{}
+  icons.Clear();
+  foreach(var stream in streams)try{stream.Dispose();}catch{}
+  streams.Clear();
  }
 }

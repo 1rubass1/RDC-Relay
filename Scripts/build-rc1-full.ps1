@@ -4,18 +4,26 @@ param([switch]$Build)
 $ErrorActionPreference='Stop'
 if(-not $Build){Write-Output 'RC1_FULL_BUILD_INERT_USE_BUILD';exit 42}
 $repo=Split-Path -Parent $PSScriptRoot
-if((git -C $repo branch --show-current).Trim() -cne 'feature/v1.6-host-gui-owner-pilot'){
+$branch=(git -C $repo branch --show-current).Trim()
+if($branch -cne 'feature/v1.6-host-gui-owner-pilot' -and
+   $branch -cne 'feature/rc1-tray-v04-gui-reactivation'){
  throw 'RC1_WRONG_FEATURE_BRANCH'
 }
 $src=Join-Path $repo 'Source'
-# Desktop/application/installer icon only. This build does not change tray
-# status icon logic, which is owned by the concurrent Designer/Tray task.
+# The base desktop/installer icon remains separately approved. The Host now
+# uses the distinct, attested tray v04 state bundle loaded at runtime.
 $approvedIconSha='6421F60D00030F21F958B81118B36ACCF08155CE2A887EEEB329B60044A06FA8'
 foreach($icon in @((Join-Path $repo 'Assets\RDCRelay.ico'),(Join-Path $src 'RDCRelay.ico'))){
  if(-not [IO.File]::Exists($icon) -or
    (Get-FileHash -Algorithm SHA256 -LiteralPath $icon).Hash -cne $approvedIconSha){
   throw 'RC1_APPROVED_APP_ICON_V04_MISMATCH'
  }
+}
+$approvedTraySha='607D271A09983A407F3E8CC8560A93DC59385C18DCEC08ECA1740318C2B1AD59'
+$trayBundle=Join-Path $src 'RdcTrayV04.bin'
+if(-not [IO.File]::Exists($trayBundle) -or
+   (Get-FileHash -LiteralPath $trayBundle -Algorithm SHA256).Hash -cne $approvedTraySha){
+ throw 'RC1_APPROVED_TRAY_V04_MISMATCH'
 }
 $marker=Get-Content -LiteralPath (Join-Path $src 'rc1-candidate.json') -Raw -Encoding UTF8|ConvertFrom-Json
 . (Join-Path $PSScriptRoot 'rc1-version-contract.ps1')
@@ -29,7 +37,7 @@ $names=@(
  'rc1-remote-observer.ps1','rc1-quota-client.ps1','RdcOwnerWire.cs','RdcOwnerRuntime.cs',
  'RdcOwnerProcess.cs','RdcOwnerTicketStore.cs','RdcOwnerRemoteState.cs',
  'RdcOwnerManagedProcess.cs',
- 'rc1-candidate.json','RDCRelay.ico','divider-caustic.ps',
+ 'rc1-candidate.json','RDCRelay.ico','RdcTrayV04.bin','divider-caustic.ps',
  'divider-caustic-detail.ps','divider-particles.ps','divider-particles-core.ps',
  'update-notice.ps1','update.ps1'
 )
