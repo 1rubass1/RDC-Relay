@@ -3683,9 +3683,20 @@ $statusDot.Dock = 'Fill'
 $statusDot.IndicatorColor = [Drawing.Color]::Gray
 $title = New-Object Windows.Forms.Label
 $title.Text = 'RDC Relay'
-$title.Dock = 'Fill'
+$title.Dock = 'None'
+$title.AutoSize = $true
+$title.Margin = [Windows.Forms.Padding]::new(0,3,8,0)
 $title.TextAlign = 'MiddleLeft'
 $title.Font = New-Object Drawing.Font('Segoe UI',13,[Drawing.FontStyle]::Bold)
+# The Help affordance belongs to the application title, not among the
+# remote-control actions. Windows provides the familiar blue question glyph.
+$titleHost = New-Object Windows.Forms.FlowLayoutPanel
+$titleHost.Name='rc1-title-help-row'
+$titleHost.Dock=[Windows.Forms.DockStyle]::Fill
+$titleHost.FlowDirection=[Windows.Forms.FlowDirection]::LeftToRight
+$titleHost.WrapContents=$false
+$titleHost.Margin=[Windows.Forms.Padding]::new(0)
+$titleHost.Padding=[Windows.Forms.Padding]::new(0)
 $statusDetail = New-Object Windows.Forms.Label
 $statusDetail.Dock = 'Fill'
 $statusDetail.TextAlign = 'MiddleLeft'
@@ -3706,15 +3717,27 @@ $accountButton.Tone = [RdcButtonTone]::Neutral
 $accountButton.Size = New-Object Drawing.Size(120,36)
 $accountButton.Margin = New-Object Windows.Forms.Padding(0)
 
-$helpButton = New-Object RdcCircleButton
-$helpButton.BackColor = $form.BackColor
-$helpButton.Text = '?'
-$helpButton.AccessibleName = 'Справка и журнал'
+$helpButton = New-Object Windows.Forms.Button
+$helpButton.Name='rc1-help-open'
+$helpButton.BackColor=$form.BackColor
+$helpButton.ForeColor=$form.ForeColor
+$helpButton.Text=''
+$helpButton.Image=([Drawing.SystemIcons]::Question).ToBitmap()
+$helpButton.ImageAlign=[Drawing.ContentAlignment]::MiddleCenter
+$helpButton.Size=[Drawing.Size]::new(32,32)
+$helpButton.Margin=[Windows.Forms.Padding]::new(0)
+$helpButton.Padding=[Windows.Forms.Padding]::new(0)
+$helpButton.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+$helpButton.FlatAppearance.BorderSize=0
+$helpButton.UseVisualStyleBackColor=$false
+$helpButton.Cursor=[Windows.Forms.Cursors]::Hand
+$helpButton.AccessibleRole=[Windows.Forms.AccessibleRole]::PushButton
+$helpButton.AccessibleName='Справка / О программе'
 $finish.TabIndex = 0
 $accountButton.TabIndex = 1
 $helpButton.TabIndex = 2
-$helpButton.Size = New-Object Drawing.Size(36,36)
-$helpButton.Margin = New-Object Windows.Forms.Padding(4,0,0,0)
+[void]$titleHost.Controls.Add($title)
+[void]$titleHost.Controls.Add($helpButton)
 
 $actions = New-Object Windows.Forms.FlowLayoutPanel
 $actions.Dock = 'Fill'
@@ -3724,12 +3747,11 @@ $actions.WrapContents = $false
 $actions.Margin = New-Object Windows.Forms.Padding(0)
 $actions.Padding = New-Object Windows.Forms.Padding(0,12,0,12)
 $actions.Controls.Add($finish)
-$actions.Controls.Add($helpButton)
 $actions.Controls.Add($accountButton)
 
 $tip = New-Object Windows.Forms.ToolTip
 $tip.SetToolTip($accountButton,'Действия с аккаунтом')
-$tip.SetToolTip($helpButton,'Справка и журнал')
+$tip.SetToolTip($helpButton,'Справка / О программе')
 
 $menuColors = New-Object RdcMenuColorTable
 $menuRenderer = New-Object Windows.Forms.ToolStripProfessionalRenderer -ArgumentList $menuColors
@@ -3762,7 +3784,7 @@ if($OwnerGui){[void]$accountMenu.Items.Add($quotaAuthItem)}
 
 $top.Controls.Add($statusDot,0,0)
 $top.SetRowSpan($statusDot,2)
-$top.Controls.Add($title,1,0)
+$top.Controls.Add($titleHost,1,0)
 $top.Controls.Add($statusDetail,1,1)
 $top.Controls.Add($actions,2,0)
 $top.SetRowSpan($actions,2)
@@ -6213,23 +6235,8 @@ $verifyDeviceItem.Add_Click({
     if ($OwnerGui) { return } # The RC1 item is absent; no manual verification path.
     try { Start-Process 'https://mcp.desktopcommander.app/device/verify' } catch {}
 })
-$helpMenu = New-Object Windows.Forms.ContextMenuStrip
-$helpMenu.BackColor = [Drawing.Color]::FromArgb(38,41,46)
-$helpMenu.ForeColor = [Drawing.Color]::Gainsboro
-$helpMenu.Renderer = $menuRenderer
-
-$aboutItem = New-Object Windows.Forms.ToolStripMenuItem
-$aboutItem.Text = 'Справка / О программе'
-
-$openLogItem = New-Object Windows.Forms.ToolStripMenuItem
-$openLogItem.Text = 'Открыть журнал'
-
-[void]$helpMenu.Items.Add($aboutItem)
-[void]$helpMenu.Items.Add($openLogItem)
-
-$helpButton.Add_Click({
-    $helpMenu.Show($helpButton,(New-Object Drawing.Point(10,$helpButton.Height)))
-})
+# Direct Help action: no intermediate context menu.
+$helpButton.Add_Click({ Show-RdcAbout })
 
 # Keep all existing mode-specific Help content, but present it in an
 # Owner-only dark scrollable dialog instead of a light system MessageBox.
@@ -6308,13 +6315,30 @@ function New-RdcOwnerHelpDialog([string]$content) {
     $body.Margin=[Windows.Forms.Padding]::new(0,0,0,8)
     [void]$layout.Controls.Add($body,0,1)
 
-    $buttons=New-Object Windows.Forms.FlowLayoutPanel
+    # Keep the journal action at the left edge and Close at the right.
+    $buttons=New-Object Windows.Forms.TableLayoutPanel
     $buttons.Name='rc1-help-buttons'
     $buttons.Dock=[Windows.Forms.DockStyle]::Fill
-    $buttons.FlowDirection=[Windows.Forms.FlowDirection]::RightToLeft
-    $buttons.WrapContents=$false
+    $buttons.ColumnCount=2
+    $buttons.RowCount=1
+    [void]$buttons.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$buttons.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute,96))
     $buttons.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
     $buttons.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    $showJournal=New-Object Windows.Forms.Button
+    $showJournal.Name='rc1-help-show-journal'
+    $showJournal.Text='Показать журнал'
+    $showJournal.AccessibleName='Показать журнал событий'
+    $showJournal.Size=[Drawing.Size]::new(160,34)
+    $showJournal.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $showJournal.ForeColor=$dialog.ForeColor
+    $showJournal.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $showJournal.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
+    $showJournal.Margin=[Windows.Forms.Padding]::new(0)
+    $showJournal.Add_Click({
+        param($sender,$e)
+        Show-RdcOwnerJournal ($sender.FindForm())
+    })
     $close=New-Object Windows.Forms.Button
     $close.Name='rc1-help-close'
     $close.Text='Закрыть'
@@ -6324,8 +6348,9 @@ function New-RdcOwnerHelpDialog([string]$content) {
     $close.ForeColor=$dialog.ForeColor
     $close.FlatStyle=[Windows.Forms.FlatStyle]::Flat
     $close.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
-    $close.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
-    [void]$buttons.Controls.Add($close)
+    $close.Margin=[Windows.Forms.Padding]::new(0)
+    [void]$buttons.Controls.Add($showJournal,0,0)
+    [void]$buttons.Controls.Add($close,1,0)
     [void]$layout.Controls.Add($buttons,0,2)
     $dialog.Controls.Add($layout)
     # Same vertical rhythm and maximum client height as the accepted
@@ -6352,8 +6377,105 @@ function Show-RdcOwnerHelp([string]$content) {
     try { return $helpDialog.ShowDialog($form) }
     finally { $helpDialog.Dispose() }
 }
+function Get-RdcOwnerJournalText {
+    # Use the already sanitized, bounded Owner event history, not a private
+    # legacy Remote log file. The compact main pane shows only the last
+    # viewport-sized slice; the journal window shows all retained events.
+    $items=New-Object System.Collections.Generic.List[string]
+    if($script:eventBlocks){
+        foreach($entry in $script:eventBlocks){
+            if(-not [string]::IsNullOrWhiteSpace([string]$entry)){
+                [void]$items.Add(([string]$entry).TrimEnd())
+            }
+        }
+    }
+    if(-not [string]::IsNullOrWhiteSpace([string]$script:currentEvent)){
+        [void]$items.Add(([string]$script:currentEvent).TrimEnd())
+    }
+    if($items.Count -eq 0){return 'Журнал пока пуст.'}
+    return [string]::Join([Environment]::NewLine,$items)
+}
+function New-RdcOwnerJournalDialog([string]$content) {
+    $dialog=New-Object Windows.Forms.Form
+    $dialog.Name='rc1-journal-dialog'
+    $dialog.Text='RDC Relay — журнал'
+    $dialog.StartPosition=[Windows.Forms.FormStartPosition]::CenterParent
+    $dialog.FormBorderStyle=[Windows.Forms.FormBorderStyle]::Sizable
+    $dialog.MinimumSize=[Drawing.Size]::new(520,280)
+    $dialog.ClientSize=[Drawing.Size]::new(740,420)
+    $dialog.ShowInTaskbar=$false
+    $dialog.MaximizeBox=$true
+    $dialog.MinimizeBox=$false
+    $dialog.AutoScaleMode=[Windows.Forms.AutoScaleMode]::Font
+    $dialog.Font=[Drawing.Font]::new('Segoe UI',10)
+    $dialog.BackColor=[Drawing.Color]::FromArgb(29,32,36)
+    $dialog.ForeColor=[Drawing.Color]::Gainsboro
+    $layout=New-Object Windows.Forms.TableLayoutPanel
+    $layout.Name='rc1-journal-layout'
+    $layout.Dock=[Windows.Forms.DockStyle]::Fill
+    $layout.Padding=[Windows.Forms.Padding]::new(20,18,20,16)
+    $layout.ColumnCount=1
+    $layout.RowCount=3
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,36))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,50))
+    $heading=New-Object Windows.Forms.Label
+    $heading.Name='rc1-journal-heading'
+    $heading.Text='Журнал'
+    $heading.Font=[Drawing.Font]::new('Segoe UI',12,[Drawing.FontStyle]::Bold)
+    $heading.AutoSize=$true
+    $heading.ForeColor=$dialog.ForeColor
+    $heading.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
+    [void]$layout.Controls.Add($heading,0,0)
+    $body=New-Object Windows.Forms.RichTextBox
+    $body.Name='rc1-journal-content'
+    $body.Text=$content
+    $body.ReadOnly=$true
+    $body.WordWrap=$false
+    $body.DetectUrls=$false
+    $body.ShortcutsEnabled=$true
+    $body.ScrollBars=[Windows.Forms.RichTextBoxScrollBars]::Both
+    $body.BorderStyle=[Windows.Forms.BorderStyle]::None
+    $body.BackColor=$dialog.BackColor
+    $body.ForeColor=$dialog.ForeColor
+    $body.Font=[Drawing.Font]::new($script:ownerTextFontFamily,10)
+    $body.Dock=[Windows.Forms.DockStyle]::Fill
+    $body.AccessibleName='Журнал событий RDC Relay'
+    $body.Margin=[Windows.Forms.Padding]::new(0,0,0,8)
+    [void]$layout.Controls.Add($body,0,1)
+    $footer=New-Object Windows.Forms.FlowLayoutPanel
+    $footer.Name='rc1-journal-footer'
+    $footer.Dock=[Windows.Forms.DockStyle]::Fill
+    $footer.FlowDirection=[Windows.Forms.FlowDirection]::RightToLeft
+    $footer.WrapContents=$false
+    $footer.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
+    $footer.Margin=[Windows.Forms.Padding]::new(0)
+    $close=New-Object Windows.Forms.Button
+    $close.Name='rc1-journal-close'
+    $close.Text='Закрыть'
+    $close.Size=[Drawing.Size]::new(96,34)
+    $close.DialogResult=[Windows.Forms.DialogResult]::OK
+    $close.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $close.ForeColor=$dialog.ForeColor
+    $close.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $close.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
+    $close.Margin=[Windows.Forms.Padding]::new(0)
+    [void]$footer.Controls.Add($close)
+    [void]$layout.Controls.Add($footer,0,2)
+    $dialog.Controls.Add($layout)
+    $dialog.AcceptButton=$close
+    $dialog.CancelButton=$close
+    $dialog.ActiveControl=$close
+    return $dialog
+}
+function Show-RdcOwnerJournal([Windows.Forms.Form]$parent) {
+    $snapshot=Get-RdcOwnerJournalText
+    $journal=New-RdcOwnerJournalDialog $snapshot
+    try { return $journal.ShowDialog($parent) }
+    finally { $journal.Dispose() }
+}
 
-$aboutItem.Add_Click({
+function Show-RdcAbout {
     $helpText =
         'RDC Relay v' + $appVersion + $nl + $nl +
         'О программе' + $nl +
@@ -6406,47 +6528,7 @@ $aboutItem.Add_Click({
             [Windows.Forms.MessageBoxIcon]::Information
         ) | Out-Null
     }
-})
-
-$openLogItem.Add_Click({
-    if ($OwnerGui) {
-        # The Host sends a fixed-category, credential-free bounded journal.
-        # Show that actual GUI pane; never open a private legacy Remote log.
-        try {
-            Render-CompactLog
-            $log.Focus()
-            $log.SelectionStart = $log.TextLength
-            $log.ScrollToCaret()
-        } catch {
-            [Windows.Forms.MessageBox]::Show(
-                'Не удалось открыть журнал RC1 в окне.',
-                'RDC Relay 1.6 RC1', [Windows.Forms.MessageBoxButtons]::OK,
-                [Windows.Forms.MessageBoxIcon]::Warning
-            ) | Out-Null
-        }
-        return
-    }
-    try {
-        if (-not (Test-Path $logPath)) {
-            [Windows.Forms.MessageBox]::Show(
-                'Журнал ещё не создан.',
-                'RDC Relay — журнал',
-                [Windows.Forms.MessageBoxButtons]::OK,
-                [Windows.Forms.MessageBoxIcon]::Information
-            ) | Out-Null
-            return
-        }
-        $notepad = Join-Path $env:SystemRoot 'System32\notepad.exe'
-        Start-Process -FilePath $notepad -ArgumentList ('"' + $logPath + '"')
-    } catch {
-        [Windows.Forms.MessageBox]::Show(
-            ('Не удалось открыть журнал.' + $nl + $nl + $_.Exception.Message),
-            'RDC Relay — журнал',
-            [Windows.Forms.MessageBoxButtons]::OK,
-            [Windows.Forms.MessageBoxIcon]::Error
-        ) | Out-Null
-    }
-})
+}
 function Refresh-Window {
     if ($OwnerGui) { return }
     if ($script:initializing) { Complete-RuntimeInitialization; return }
@@ -6866,11 +6948,13 @@ if ($SelfTest) {
     if ($finish.Text -ne 'Запустить' -or $finish.Glyph -ne [RdcButtonGlyph]::Play) { throw 'Start button state missing' }
     Set-FinishButtonMode $true
     if ($accountButton.Text -notlike 'Аккаунт*') { throw 'Account button missing' }
-    if ($helpButton.Text -ne '?') { throw 'Help button missing' }
+    if ($helpButton.Text -ne '' -or -not $helpButton.Image -or
+        $helpButton.Parent -ne $titleHost -or
+        $helpButton.AccessibleName -ne 'Справка / О программе') {
+        throw 'Native title Help button missing'
+    }
     if ($accountMenu.Items.Count -lt 4) { throw 'Account menu missing' }
     if ($reconnectItem.Text -ne 'Переподключить') { throw 'Reconnect account action missing' }
-    if ($helpMenu.Items.Count -ne 2) { throw 'Help menu missing' }
-    if ($openLogItem.Text -ne 'Открыть журнал') { throw 'Open log action missing' }
     if ($form.Text -ne 'RDC Relay') { throw 'Window title changed unexpectedly' }
     if ($form.FormBorderStyle -ne [Windows.Forms.FormBorderStyle]::Sizable -or $form.MaximizeBox -or $form.SizeGripStyle -ne [Windows.Forms.SizeGripStyle]::Hide) { throw 'Window vertical resize policy mismatch' }
     if ($form.MinimumSize.Width -ne $windowWidth -or $form.MaximumSize.Width -ne $windowWidth) { throw 'Window width must stay fixed' }

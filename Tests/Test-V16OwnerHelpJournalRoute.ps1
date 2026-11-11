@@ -1,0 +1,125 @@
+﻿# G121: Help icon next to title -> direct About -> real retained Owner journal.
+# AST-driven real WinForms controls and click; no installed app, Host or Remote.
+$ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+$path=Join-Path (Split-Path -Parent $PSScriptRoot) 'Source\remote-window.ps1'
+$raw=[IO.File]::ReadAllText($path,[Text.Encoding]::UTF8)
+$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
+$pass=0;$fail=0
+function Check([bool]$ok,[string]$name){
+ if($ok){$script:pass++;Write-Output ('PASS '+$name)}
+ else{$script:fail++;Write-Output ('FAIL '+$name)}
+}
+Check ($errors.Count -eq 0) 'production GUI source parses'
+Check ($raw.Contains('$helpButton = New-Object Windows.Forms.Button') -and
+ $raw.Contains('$helpButton.Image=([Drawing.SystemIcons]::Question).ToBitmap()') -and
+ $raw.Contains('$helpButton.AccessibleName='+ "'Справка / О программе'") -and
+ $raw.Contains('$top.Controls.Add($titleHost,1,0)') -and
+ $raw.Contains('[void]$titleHost.Controls.Add($helpButton)') -and
+ -not $raw.Contains('$actions.Controls.Add($helpButton)')) 'real native blue Help icon is beside application title, not Stop/Account actions'
+Check (-not $raw.Contains('$helpMenu =') -and
+ -not $raw.Contains('$helpMenu.Show(') -and
+ -not $raw.Contains('$openLogItem.Add_Click(') -and
+ -not $raw.Contains('$aboutItem.Add_Click(')) 'superseded Help context menu and invisible-focus journal action removed'
+$direct=@($ast.FindAll({param($n)
+ $n -is [Management.Automation.Language.ScriptBlockExpressionAst] -and
+ $n.Extent.Text.Trim() -ceq '{ Show-RdcAbout }'
+},$true))
+Check ($direct.Count -eq 1 -and
+ $raw.Contains('$helpButton.Add_Click({ Show-RdcAbout })')) 'a single Help button click directly opens About, no intermediate menu'
+if($direct.Count -eq 1) {
+ $script:aboutClicks=0
+ function Show-RdcAbout {$script:aboutClicks++}
+ $click=& ([scriptblock]::Create($direct[0].Extent.Text))
+ & $click
+ Check ($script:aboutClicks -eq 1) 'actual direct Help click executes About immediately'
+}
+foreach($name in @('Get-RdcOwnerJournalText','New-RdcOwnerJournalDialog',
+ 'Show-RdcOwnerJournal','New-RdcOwnerHelpDialog')){
+ $fn=$ast.Find({param($n)
+  $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+  $n.Name -ceq $name
+ },$true)
+ if(-not $fn){throw ('G121_PRODUCTION_FUNCTION_MISSING '+$name)}
+ . ([scriptblock]::Create($fn.Extent.Text))
+}
+$script:ownerTextFontFamily='Consolas'
+$script:eventBlocks=New-Object System.Collections.ArrayList
+$script:currentEvent=''
+Check ((Get-RdcOwnerJournalText) -ceq 'Журнал пока пуст.') 'empty event history explicitly shows empty journal, never a blank window'
+for($i=1;$i -le 12;$i++){
+ [void]$script:eventBlocks.Add(('000{0:D3} │ Событие {0}' -f $i))
+}
+$script:currentEvent='000013 │ Текущая операция'
+$snapshot=Get-RdcOwnerJournalText
+Check ($snapshot.Contains('000001 │ Событие 1') -and
+ $snapshot.Contains('000012 │ Событие 12') -and
+ $snapshot.Contains('000013 │ Текущая операция') -and
+ @($snapshot -split [Environment]::NewLine).Count -ge 13) 'journal snapshot contains all retained events and active event, not last viewport-size six'
+Check ($raw.Contains('while ($script:eventBlocks.Count -gt $retained)') -and
+ $raw.Contains('$retained=if($OwnerGui){64}else{6}') -and
+ -not $raw.Contains('Start-Process -FilePath $notepad -ArgumentList')) 'Owner journal uses existing bounded Host event history without reading raw logs or opening Notepad'
+$journal=New-RdcOwnerJournalDialog $snapshot
+try{
+ Check ($journal.Name -ceq 'rc1-journal-dialog' -and
+  $journal.Text -ceq 'RDC Relay — журнал' -and
+  $journal.Text -notmatch 'RC1|v1|1\.6' -and
+  $journal.StartPosition -eq [Windows.Forms.FormStartPosition]::CenterParent -and
+  -not $journal.ShowInTaskbar) 'real journal opens in dedicated, version-free modal window'
+ $layout=@($journal.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+ $heading=$layout.GetControlFromPosition(0,0)
+ $body=$layout.GetControlFromPosition(0,1)
+ $footer=$layout.GetControlFromPosition(0,2)
+ $close=@($footer.Controls|Where-Object{$_.Name -ceq 'rc1-journal-close'})|Select-Object -First 1
+ Check ($heading.Text -ceq 'Журнал' -and $heading.Font.Bold -and
+  $body.Text -ceq $snapshot -and
+  $body.Name -ceq 'rc1-journal-content') 'journal dialog actually displays entire captured event snapshot'
+ Check ($body.ReadOnly -and
+  -not $body.WordWrap -and
+  -not $body.DetectUrls -and
+  $body.ScrollBars -eq [Windows.Forms.RichTextBoxScrollBars]::Both -and
+  $body.Dock -eq [Windows.Forms.DockStyle]::Fill) 'journal is read-only, scrollable both directions and disables auto-open URLs'
+ Check ($body.BackColor.ToArgb() -eq $journal.BackColor.ToArgb() -and
+  $body.ForeColor.ToArgb() -eq $journal.ForeColor.ToArgb() -and
+  $close.Text -ceq 'Закрыть' -and
+  $journal.AcceptButton -eq $close -and
+  $journal.CancelButton -eq $close) 'journal follows dark Help styling with keyboard dismiss'
+ $journal.PerformLayout();$layout.PerformLayout()
+ Check ($body.ClientSize.Width -gt 320 -and $body.ClientSize.Height -gt 150 -and
+  $close.Right -le $footer.ClientSize.Width -and
+  $close.Bottom -le $footer.ClientSize.Height) 'actual journal modal content and Close footer fit without clipping'
+}finally{$journal.Dispose()}
+$help=New-RdcOwnerHelpDialog 'Пример справки'
+try {
+ $layout=@($help.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+ $buttons=$layout.GetControlFromPosition(0,2)
+ $show=$buttons.GetControlFromPosition(0,0)
+ $close=$buttons.GetControlFromPosition(1,0)
+ Check ($show.Name -ceq 'rc1-help-show-journal' -and
+  $show.Text -ceq 'Показать журнал' -and
+  $show.Width -eq 160 -and
+  $close.Text -ceq 'Закрыть' -and
+  $show.Left -lt $close.Left) 'actual Help footer has Show Journal on left and Close on right'
+ $script:journalClicks=0
+ $script:journalParent=$null
+ function Show-RdcOwnerJournal([Windows.Forms.Form]$parent){
+  $script:journalClicks++
+  $script:journalParent=$parent
+ }
+ $onClick=$show.GetType().GetMethod('OnClick',[Reflection.BindingFlags]'Instance,NonPublic')
+ [void]$onClick.Invoke($show,[object[]]@([EventArgs]::Empty))
+ Check ($script:journalClicks -eq 1 -and
+  [object]::ReferenceEquals($script:journalParent,$help)) 'real Show Journal control click opens journal with Help as modal parent, never focuses hidden main pane'
+}finally{$help.Dispose()}
+$showFn=$ast.Find({param($n)
+ $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+ $n.Name -ceq 'Show-RdcOwnerJournal'
+},$true)
+Check ($showFn.Extent.Text.Contains('Get-RdcOwnerJournalText') -and
+ $showFn.Extent.Text.Contains('New-RdcOwnerJournalDialog $snapshot') -and
+ $showFn.Extent.Text.Contains('$journal.ShowDialog($parent)') -and
+ $showFn.Extent.Text.Contains('$journal.Dispose()')) 'actual journal command creates visible nested modal from safe history and disposes it'
+Write-Output ('RC1_HELP_JOURNAL_ROUTE_PASS='+$pass+' FAIL='+$fail)
+if($fail){exit 1}
+exit 0

@@ -137,6 +137,7 @@ try{
  $body=$layout.GetControlFromPosition(0,1)
  $buttons=$layout.GetControlFromPosition(0,2)
  $close=@($buttons.Controls|Where-Object{$_.Name -ceq 'rc1-help-close'})|Select-Object -First 1
+ $journalButton=@($buttons.Controls|Where-Object{$_.Name -ceq 'rc1-help-show-journal'})|Select-Object -First 1
  Check ($help.Name -ceq 'rc1-help-dialog' -and
   $help.Text -ceq 'RDC Relay — справка' -and
   $help.FormBorderStyle -eq [Windows.Forms.FormBorderStyle]::FixedDialog -and
@@ -162,11 +163,19 @@ try{
   $body.ScrollBars -eq [Windows.Forms.RichTextBoxScrollBars]::Vertical -and
   $body.Dock -eq [Windows.Forms.DockStyle]::Fill -and
   $body.BorderStyle -eq [Windows.Forms.BorderStyle]::None) 'Help preserves all content in scrollable read-only text'
- Check ($buttons.Controls.Count -eq 1 -and
+ Check ($buttons -is [Windows.Forms.TableLayoutPanel] -and
+  $buttons.ColumnCount -eq 2 -and $buttons.Controls.Count -eq 2 -and
+  $journalButton.Text -ceq 'Показать журнал' -and
+  $journalButton.Width -eq 160 -and
+  $buttons.GetControlFromPosition(0,0) -eq $journalButton -and
+  $buttons.GetControlFromPosition(1,0) -eq $close -and
   $close.Text -ceq 'Закрыть' -and $close.Size.Width -eq 96 -and
   $close.Size.Height -eq 34 -and
-  $help.AcceptButton -eq $close -and $help.CancelButton -eq $close) 'Help footer uses same account-button styling with Enter/Esc close'
- $help.PerformLayout();$layout.PerformLayout();$headerRow.PerformLayout()
+  $help.AcceptButton -eq $close -and $help.CancelButton -eq $close) 'Help footer has left Show Journal and right default Close'
+ $help.PerformLayout();$layout.PerformLayout();$headerRow.PerformLayout();$buttons.PerformLayout()
+ Check ($journalButton.Left -lt $close.Left -and
+  $journalButton.Right -le $close.Left -and
+  $journalButton.Bottom -le $buttons.Height) 'Show Journal is visible at left of footer with no overlap'
  Check ($header.Left -gt $helpIcon.Left+32 -and
   $header.Right -le $headerRow.ClientSize.Width) 'Help heading aligns after native icon without clipping'
  Check ($body.Width -gt 0 -and $body.Height -gt 0 -and
@@ -240,13 +249,13 @@ if($reconnectHandler){
  Check ($script:ownerQueuedAction -ceq '' -and
   $script:reconnectConfirmCalls -eq 2) 'Reconnect observed mode cannot open confirmation or queue Remote'
 }
-$helpHandler=@($ast.FindAll({param($n)
- $n -is [Management.Automation.Language.ScriptBlockExpressionAst] -and
- $n.Extent.Text.Contains('Show-RdcOwnerHelp $helpText') -and
- $n.Extent.Text.Contains('$helpText =')
-},$true))|Select-Object -First 1
-Check ($null -ne $helpHandler) 'Help menu uses new Owner modal'
+$helpHandler=$ast.Find({param($n)
+ $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+ $n.Name -ceq 'Show-RdcAbout'
+},$true)
+Check ($null -ne $helpHandler) 'direct Help action uses the Owner modal'
 if($helpHandler){
+ . ([scriptblock]::Create($helpHandler.Extent.Text))
  $OwnerGui=$true
  $script:ownerObservedMode=$false
  $script:ownerManagedMode=$true
@@ -258,8 +267,7 @@ if($helpHandler){
   $script:capturedHelp=$content
   return [Windows.Forms.DialogResult]::OK
  }
- $helpClick=& ([scriptblock]::Create($helpHandler.Extent.Text))
- & $helpClick
+ Show-RdcAbout
   Check ($script:capturedHelp.Contains('Host запускает Desktop Commander Remote 0.2.52.') -and
    $script:capturedHelp.Contains('PID Remote: —')) 'existing managed-Host Help content and diagnostics preserved'
 }
