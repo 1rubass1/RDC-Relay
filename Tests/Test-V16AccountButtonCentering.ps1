@@ -1,5 +1,6 @@
-﻿# G119 — Account text centered independently of painted menu chevron.
-# Production button C# extracted by AST. Isolated WinForms paint only.
+﻿# G120: Account chevron + label centered together, exactly like Stop glyph.
+# Compiles the production button and paints isolated WinForms bitmaps.
+# Never starts Owner GUI, Host, Remote or installed application.
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 $src=Join-Path (Split-Path -Parent $PSScriptRoot) 'Source\remote-window.ps1'
@@ -7,108 +8,129 @@ $raw=[IO.File]::ReadAllText($src,[Text.Encoding]::UTF8)
 $tok=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($src,[ref]$tok,[ref]$errors)
 $pass=0;$fail=0
-function Check([bool]$ok,[string]$description) {
- if($ok){$script:pass++;Write-Output ('PASS '+$description)}
- else{$script:fail++;Write-Output ('FAIL '+$description)}
+function Check([bool]$ok,[string]$label) {
+ if($ok){$script:pass++;Write-Output ('PASS '+$label)}
+ else{$script:fail++;Write-Output ('FAIL '+$label)}
 }
-Check ($errors.Count -eq 0) 'production UI source parses'
+Check ($errors.Count -eq 0) 'production GUI script parses'
 $node=$ast.Find({param($n)
  $n -is [Management.Automation.Language.StringConstantExpressionAst] -and
  $n.Value.Contains('public class RdcRoundedButton') -and
  $n.Value.Contains('public class RdcCircleButton')
 },$true)
-if(-not $node){throw 'G119_ROUNDED_BUTTON_CSHARP_SOURCE_MISSING'}
+if(-not $node){throw 'G120_PRODUCTION_ROUNDED_BUTTON_CODE_NOT_FOUND'}
 Add-Type -TypeDefinition $node.Value -ReferencedAssemblies System.Windows.Forms,System.Drawing
 Check ($raw.Contains("$accountButton.Text = 'Аккаунт'") -and
  $raw.Contains('$accountButton.ShowMenuChevron = $true') -and
  $raw.Contains("$accountButton.AccessibleName = 'Аккаунт, открыть меню'") -and
- -not $raw.Contains("$accountButton.Text = 'Аккаунт ▾'")) 'production Account text has no inline dropdown symbol and exposes accessible label'
-Check ($raw.Contains('$accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))')) 'unchanged account menu opens below the same control'
+ -not $raw.Contains("$accountButton.Text = 'Аккаунт ▾'")) 'Account text and native left dropdown glyph configured separately'
+Check ($raw.Contains('$accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))')) 'Account menu opening behavior unchanged'
 Check ($raw.Contains("$finish.Glyph = [RdcButtonGlyph]::Stop") -and
- $raw.Contains("$finish.Text = 'Остановить'")) 'Stop button glyph and text remain unchanged'
+ $raw.Contains("$finish.Text = 'Остановить'")) 'Stop content and glyph preserved'
+Check ($raw.Contains('Rectangle iconRect = GetGroupIconBounds(textSize.Width)') -and
+ $raw.Contains('DrawMenuChevron(e.Graphics,iconRect,content)') -and
+ $raw.Contains('DrawGlyph(e.Graphics,iconRect,content)')) 'Account and Stop use exactly the same group bounds in actual paint code'
 $flags=[Reflection.BindingFlags]'Instance,NonPublic'
 $paint=[RdcRoundedButton].GetMethod('OnPaint',$flags)
-$bounds=[RdcRoundedButton].GetMethod('GetMenuChevronBounds',$flags)
-if(-not $paint -or -not $bounds){throw 'G119_PAINT_METHOD_OR_CHEVRON_BOUNDS_MISSING'}
+$groupBounds=[RdcRoundedButton].GetMethod('GetGroupIconBounds',$flags)
+if(-not $paint -or -not $groupBounds){throw 'G120_PAINT_OR_GROUP_BOUNDS_MISSING'}
 function Make-Button([string]$text,[bool]$chevron,[int]$width,[int]$height){
- $control=New-Object RdcRoundedButton
- $control.Text=$text
- $control.ShowMenuChevron=$chevron
- $control.Tone=[RdcButtonTone]::Neutral
- $control.Size=[Drawing.Size]::new($width,$height)
- $control.BackColor=[Drawing.Color]::FromArgb(29,32,36)
- return $control
+ $b=New-Object RdcRoundedButton
+ $b.Text=$text
+ $b.ShowMenuChevron=$chevron
+ $b.Tone=[RdcButtonTone]::Neutral
+ $b.Size=[Drawing.Size]::new($width,$height)
+ $b.BackColor=[Drawing.Color]::FromArgb(29,32,36)
+ return $b
 }
-function Paint-Button($control){
- $bitmap=New-Object Drawing.Bitmap($control.Width,$control.Height)
- $graphics=[Drawing.Graphics]::FromImage($bitmap)
+function Paint-Button($button) {
+ $bmp=New-Object Drawing.Bitmap($button.Width,$button.Height)
+ $graphics=[Drawing.Graphics]::FromImage($bmp)
  try {
   $graphics.Clear([Drawing.Color]::Magenta)
-  $event=New-Object Windows.Forms.PaintEventArgs($graphics,$control.ClientRectangle)
-  [void]$paint.Invoke($control,[object[]]@($event.PSObject.BaseObject))
+  $event=New-Object Windows.Forms.PaintEventArgs($graphics,$button.ClientRectangle)
+  [void]$paint.Invoke($button,[object[]]@($event.PSObject.BaseObject))
  }finally{$graphics.Dispose()}
- return $bitmap
+ return $bmp
 }
-foreach($dimension in @(@(120,36),@(144,43))){
- $width=$dimension[0];$height=$dimension[1]
+$sizeCases=@(@(120,36),@(144,43),@(160,48))
+foreach($dim in $sizeCases){
+ $width=[int]$dim[0];$height=[int]$dim[1]
+ $account=Make-Button 'Аккаунт' $true $width $height
+ $sameTextStop=Make-Button 'Аккаунт' $false $width $height
+ $realStop=Make-Button 'Остановить' $false $width $height
  $plain=Make-Button 'Аккаунт' $false $width $height
- $arrow=Make-Button 'Аккаунт' $true $width $height
- $blank=Make-Button '' $false $width $height
- try {
-  $rect=[Drawing.Rectangle]$bounds.Invoke($arrow,@())
-  $textWidth=[Windows.Forms.TextRenderer]::MeasureText(
-   $arrow.Text,$arrow.Font,[Drawing.Size]::new([int]::MaxValue,$height),
-   ([Windows.Forms.TextFormatFlags]::VerticalCenter -bor
-    [Windows.Forms.TextFormatFlags]::SingleLine -bor
-    [Windows.Forms.TextFormatFlags]::NoPadding)).Width
-  Check ($rect.Left -ge (0.5*($width+$textWidth)+4) -and
-   $rect.Right -le ($width-8) -and $rect.Height -eq 8) ('menu chevron does not overlap centered label at '+$width+'px')
-  $onlyText=Paint-Button $plain
-  $withArrow=Paint-Button $arrow
-  $noText=Paint-Button $blank
+ try{
+  $sameTextStop.Glyph=[RdcButtonGlyph]::Stop
+  $realStop.Glyph=[RdcButtonGlyph]::Stop
+  $tflags=[Windows.Forms.TextFormatFlags]::VerticalCenter -bor
+   [Windows.Forms.TextFormatFlags]::SingleLine -bor
+   [Windows.Forms.TextFormatFlags]::NoPadding
+  $tw=[Windows.Forms.TextRenderer]::MeasureText($account.Text,$account.Font,
+   [Drawing.Size]::new([int]::MaxValue,$height),$tflags).Width
+  $iconRect=[Drawing.Rectangle]$groupBounds.Invoke($account,[object[]]@([int]$tw))
+  $groupWidth=12+7+$tw
+  $expectedLeft=[Math]::Max(5,[int][Math]::Floor(($width-$groupWidth)/2))
+  Check ($iconRect.Left -eq $expectedLeft -and $iconRect.Width -eq 12 -and
+   $iconRect.Height -eq 12 -and
+   [Math]::Abs(($iconRect.Left+$groupWidth/2.0)-($width/2.0)) -le 1) ('chevron + Account text have one centered group at '+$width+'px')
+  $groupTextLeft=$iconRect.Right+7
+  Check ($iconRect.Right -lt $groupTextLeft -and
+   ($groupTextLeft+$tw) -le ($width-4) -and
+   $iconRect.Left -ge 5) ('left chevron and Account text fit with Stop-like 7px gap at '+$width+'px')
+  $accountBmp=Paint-Button $account
+  $stopBmp=Paint-Button $sameTextStop
+  $plainBmp=Paint-Button $plain
   try {
-   $leftSame=$true;$rightDiff=0;$minX=$width;$maxX=0;$textPixels=0
+   $textDiff=0;$glyphDiff=0;$arrowInk=0;$textInk=0
+   $inkMin=$width;$inkMax=-1
    for($y=0;$y -lt $height;$y++){
     for($x=0;$x -lt $width;$x++){
-     $a=$onlyText.GetPixel($x,$y).ToArgb()
-     $b=$withArrow.GetPixel($x,$y).ToArgb()
-     if($x -lt $rect.Left -and $a -ne $b){$leftSame=$false}
-     if($x -ge $rect.Left -and $a -ne $b){$rightDiff++}
-     if($x -lt $rect.Left -and $a -ne $noText.GetPixel($x,$y).ToArgb()){
-      $minX=[Math]::Min($minX,$x)
-      $maxX=[Math]::Max($maxX,$x)
-      $textPixels++
+     $acct=$accountBmp.GetPixel($x,$y)
+     $stop=$stopBmp.GetPixel($x,$y)
+     # Account and Stop use literally the same painted text layout.
+     if($x -ge $groupTextLeft -and $acct.ToArgb() -ne $stop.ToArgb()){$textDiff++}
+     if($x -ge $iconRect.Left -and $x -lt $iconRect.Right -and
+      $acct.ToArgb() -ne $stop.ToArgb()){$glyphDiff++}
+     if($acct.R -gt 175 -and $acct.G -gt 175 -and $acct.B -gt 175) {
+      $inkMin=[Math]::Min($inkMin,$x)
+      $inkMax=[Math]::Max($inkMax,$x)
+      if($x -ge $iconRect.Left -and $x -lt $iconRect.Right){$arrowInk++}
+      if($x -ge $groupTextLeft){$textInk++}
      }
     }
    }
-   Check ($leftSame -and $rightDiff -gt 5 -and
-    $rightDiff -lt 100) ('arrow-only pixels change right edge and never shift text at '+$width+'px')
-   Check ($textPixels -gt 30 -and
-    [Math]::Abs((($minX+$maxX)/2.0)-($width/2.0)) -le 3) ('visible Account letter pixel bounding box centered within 3px at '+$width+'px')
-   $stop=Make-Button 'Остановить' $false $width $height
-   try {
-    $stop.Glyph=[RdcButtonGlyph]::Stop
-    Check (-not $stop.ShowMenuChevron -and
-     $stop.Glyph -eq [RdcButtonGlyph]::Stop) ('Stop icon branch remains independent at '+$width+'px')
-   }finally{$stop.Dispose()}
-  }finally{$onlyText.Dispose();$withArrow.Dispose();$noText.Dispose()}
- }finally{$plain.Dispose();$arrow.Dispose();$blank.Dispose()}
+   Check ($textDiff -eq 0 -and $glyphDiff -gt 5) ('Account text pixels match Stop grouping, only icon changes at '+$width+'px')
+   Check ($arrowInk -gt 4 -and $textInk -gt 20 -and
+    $inkMin -lt $groupTextLeft -and $inkMax -ge $groupTextLeft) ('visible chevron on left of label, both readable at '+$width+'px')
+   Check ([Math]::Abs((($inkMin+$inkMax)/2.0)-($width/2.0)) -le 5) ('actual painted full visual group approximately centered at '+$width+'px')
+   $plainDiff=0
+   for($y=0;$y -lt $height;$y++){for($x=0;$x -lt $width;$x++){
+    if($x -ge $groupTextLeft -and
+     $plainBmp.GetPixel($x,$y).ToArgb() -ne $accountBmp.GetPixel($x,$y).ToArgb()){$plainDiff++}
+   }}
+   Check ($plainDiff -gt 10) ('group-centered text differs from rejected label-only centering at '+$width+'px')
+  }finally{$accountBmp.Dispose();$stopBmp.Dispose();$plainBmp.Dispose()}
+  Check (-not $realStop.ShowMenuChevron -and
+   $realStop.Glyph -eq [RdcButtonGlyph]::Stop -and
+   $plain.Glyph -eq [RdcButtonGlyph]::None) ('Stop and plain button branches unchanged at '+$width+'px')
+ }finally{$account.Dispose();$sameTextStop.Dispose();$realStop.Dispose();$plain.Dispose()}
 }
-$click=Make-Button 'Аккаунт' $true 120 36
-try {
- $click.Tag=0
+$button=Make-Button 'Аккаунт' $true 120 36
+try{
+ $button.Tag=0
  $listener=[EventHandler]{param($sender,$arguments)$sender.Tag=[int]$sender.Tag+1}
- $click.add_Click($listener)
+ $button.add_Click($listener)
  try{
-  $keyDown=$click.GetType().GetMethod('OnKeyDown',$flags)
-  $keyUp=$click.GetType().GetMethod('OnKeyUp',$flags)
+  $down=$button.GetType().GetMethod('OnKeyDown',$flags)
+  $up=$button.GetType().GetMethod('OnKeyUp',$flags)
   foreach($key in @([Windows.Forms.Keys]::Space,[Windows.Forms.Keys]::Enter)){
-   [void]$keyDown.Invoke($click,[object[]]@([Windows.Forms.KeyEventArgs]::new($key)))
-   [void]$keyUp.Invoke($click,[object[]]@([Windows.Forms.KeyEventArgs]::new($key)))
+   [void]$down.Invoke($button,[object[]]@([Windows.Forms.KeyEventArgs]::new($key)))
+   [void]$up.Invoke($button,[object[]]@([Windows.Forms.KeyEventArgs]::new($key)))
   }
-  Check ($click.Tag -eq 2) 'keyboard Space/Enter still dispatch Account Click'
- }finally{$click.remove_Click($listener)}
-}finally{$click.Dispose()}
-Write-Output ('RC1_ACCOUNT_BUTTON_CENTER_PASS='+$pass+' FAIL='+$fail)
+  Check ($button.Tag -eq 2) 'Account menu button retains Space/Enter keyboard activation'
+ }finally{$button.remove_Click($listener)}
+}finally{$button.Dispose()}
+Write-Output ('RC1_ACCOUNT_BUTTON_GROUP_CENTER_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}
 exit 0

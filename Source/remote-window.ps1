@@ -735,8 +735,8 @@ public class RdcRoundedButton : Control {
     private RdcButtonTone tone = RdcButtonTone.Accent;
     private bool showMenuChevron;
 
-    // Keep the Account label geometrically centered. The dropdown affordance
-    // is a separate painted glyph, not part of the centered Text string.
+    // Keep the Account icon and label centered as one visual group, using
+    // exactly the same grouping geometry as the Stop/Play button.
     public bool ShowMenuChevron {
         get { return showMenuChevron; }
         set { showMenuChevron = value; Invalidate(); }
@@ -861,20 +861,28 @@ public class RdcRoundedButton : Control {
         }
     }
 
-    private Rectangle GetMenuChevronBounds() {
-        return new Rectangle(Math.Max(0,Width-21),(Height-8)/2,10,8);
+    private Rectangle GetGroupIconBounds(int textWidth) {
+        // Used by both Account (chevron) and Stop/Play (action glyph).
+        const int iconSize = 12;
+        const int gap = 7;
+        int groupWidth = iconSize + gap + textWidth;
+        int left = Math.Max(5,(Width-groupWidth)/2);
+        return new Rectangle(left,(Height-iconSize)/2,iconSize,iconSize);
     }
 
-    private void DrawMenuChevron(Graphics g, Color color) {
-        Rectangle bounds = GetMenuChevronBounds();
+    private void DrawMenuChevron(Graphics g, Rectangle iconBounds, Color color) {
+        // 10x8 dropdown arrow centered within the same 12x12 glyph slot
+        // occupied by Stop/Play, on the LEFT of the Account label.
+        int x = iconBounds.Left + (iconBounds.Width-10)/2;
+        int y = iconBounds.Top + (iconBounds.Height-8)/2;
         using (Pen pen = new Pen(color,1.7f)) {
             pen.StartCap = LineCap.Round;
             pen.EndCap = LineCap.Round;
             pen.LineJoin = LineJoin.Round;
             g.DrawLines(pen,new Point[] {
-                new Point(bounds.Left+1,bounds.Top+2),
-                new Point(bounds.Left+5,bounds.Top+6),
-                new Point(bounds.Left+9,bounds.Top+2)
+                new Point(x+1,y+2),
+                new Point(x+5,y+6),
+                new Point(x+9,y+2)
             });
         }
     }
@@ -928,33 +936,27 @@ public class RdcRoundedButton : Control {
         Size textSize = TextRenderer.MeasureText(
             e.Graphics,Text,Font,new Size(Int32.MaxValue,Height),flags);
 
-        if (glyph == RdcButtonGlyph.None) {
-            // The dropdown triangle is anchored at the right edge; it must
-            // never shift the label's true horizontal center.
+        if (glyph == RdcButtonGlyph.None && !showMenuChevron) {
             TextRenderer.DrawText(
                 e.Graphics,Text,Font,ClientRectangle,content,
                 flags | TextFormatFlags.HorizontalCenter);
-            if (showMenuChevron) DrawMenuChevron(e.Graphics,content);
             if (Focused && ShowFocusCues)
                 ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle,-5,-5), ForeColor, BackColor);
             return;
         }
 
-        int iconSize = 12;
-        int gap = 7;
-        int groupWidth = iconSize + gap + textSize.Width;
-        int left = Math.Max(5,(Width-groupWidth)/2);
-        Rectangle iconRect = new Rectangle(
-            left,
-            (Height-iconSize)/2,
-            iconSize,
-            iconSize);
-        DrawGlyph(e.Graphics,iconRect,content);
+        // Account dropdown and Stop/Play share the identical centered
+        // 12px glyph + 7px gap + measured-text composition.
+        Rectangle iconRect = GetGroupIconBounds(textSize.Width);
+        if (showMenuChevron && glyph == RdcButtonGlyph.None)
+            DrawMenuChevron(e.Graphics,iconRect,content);
+        else
+            DrawGlyph(e.Graphics,iconRect,content);
 
         Rectangle textRect = new Rectangle(
-            iconRect.Right + gap,
+            iconRect.Right + 7,
             0,
-            Math.Max(1,Width-(iconRect.Right+gap)-5),
+            Math.Max(1,Width-(iconRect.Right+7)-5),
             Height);
         TextRenderer.DrawText(
             e.Graphics,Text,Font,textRect,content,

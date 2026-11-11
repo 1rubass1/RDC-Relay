@@ -1,5 +1,7 @@
 # G119 — Account button label centering
 
+> **SUPERSEDED BY OWNER FEEDBACK 2026-11-11:** Centering the text separately with a fixed right-hand chevron looked shifted right. G120 implements the requested **left chevron + Account label centered as a single group**, using the Stop/Play group layout. [G120 correction](V1-6-0-RC1-G120-ACCOUNT-CHEVRON-LEFT-GROUP-CENTER.md).
+
 **2026-11-11 · Programmer implementation candidate; owner visual and independent Reviewer pending. NOT A PUBLIC RELEASE.**
 
 ## Owner observation
