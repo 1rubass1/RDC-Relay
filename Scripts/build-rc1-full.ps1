@@ -12,14 +12,14 @@ if($branch -cne 'feature/v1.6-host-gui-owner-pilot' -and
 $src=Join-Path $repo 'Source'
 # The base desktop/installer icon remains separately approved. The Host now
 # uses the distinct, attested tray v04 state bundle loaded at runtime.
-$approvedIconSha='6421F60D00030F21F958B81118B36ACCF08155CE2A887EEEB329B60044A06FA8'
+$approvedIconSha='5FF100E2AB72453E081AF5C0157BAF41C8BCA57130C4CC42C8BDE9C612FCF1DC'
 foreach($icon in @((Join-Path $repo 'Assets\RDCRelay.ico'),(Join-Path $src 'RDCRelay.ico'))){
  if(-not [IO.File]::Exists($icon) -or
    (Get-FileHash -Algorithm SHA256 -LiteralPath $icon).Hash -cne $approvedIconSha){
   throw 'RC1_APPROVED_APP_ICON_V04_MISMATCH'
  }
 }
-$approvedTraySha='607D271A09983A407F3E8CC8560A93DC59385C18DCEC08ECA1740318C2B1AD59'
+$approvedTraySha='64A4009133FFB5B7CC89BD71D85B37BA2897EE5C7A715BC3C3C014625CEC3B23'
 $trayBundle=Join-Path $src 'RdcTrayV04.bin'
 if(-not [IO.File]::Exists($trayBundle) -or
    (Get-FileHash -LiteralPath $trayBundle -Algorithm SHA256).Hash -cne $approvedTraySha){

@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Drawing
 $repo=Split-Path -Parent $PSScriptRoot
-$expectedSha='6421F60D00030F21F958B81118B36ACCF08155CE2A887EEEB329B60044A06FA8'
+$expectedSha='5FF100E2AB72453E081AF5C0157BAF41C8BCA57130C4CC42C8BDE9C612FCF1DC'
 $sizes=@(16,20,24,30,32,36,40,48,60,64,72,80,96,120,128,144,192,256)
 $pass=0;$fail=0
 function Check([bool]$yes,[string]$label){

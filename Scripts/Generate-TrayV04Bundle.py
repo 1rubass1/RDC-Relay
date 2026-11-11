@@ -1,4 +1,8 @@
-"""Reproducibly package owner-approved tray 04 PNGs as one cached Win32 ICO bundle.
+"""HISTORICAL original tray v04 PNG-to-29-frame generator (superseded).
+
+The approved 2026-11-12 v04-final kit contains 49 precompiled ICOs, including
+36 working frames. Use Generate-TrayV04FinalBundle.py for the current RC1.
+This older generator is retained only to reproduce the earlier tray prototype.
 
 One-time offline developer script. No installer/runtime invocation, no network.
 Requires Python 3.8+ standard library only (no Pillow dependency).

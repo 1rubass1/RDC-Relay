@@ -1432,15 +1432,18 @@ public sealed class RdcOwnerTrayVisual : IDisposable {
  bool animate=true,disposed=false;
  string semantic="",shownFrame="",shownTip="";
  const int WorkPulseMs=1800, SwapMs=800;
- static readonly string[] keys={
-  "offline","connecting-a","connecting-b","auth-a","auth-b","ready","fault",
-  "work-00","work-01","work-02","work-03","work-04","work-05",
-  "work-06","work-07","work-08","work-09",
-  "connecting-ab-25","connecting-ab-50","connecting-ab-75",
-  "connecting-ba-25","connecting-ba-50","connecting-ba-75",
-  "auth-ab-25","auth-ab-50","auth-ab-75",
-  "auth-ba-25","auth-ba-50","auth-ba-75"
- };
+ // Exact owner-approved tray 04-final manifest order, including 36 pulse frames.
+ static readonly string[] keys=BuildKeys();
+ static string[] BuildKeys(){
+  var names=new List<string>{
+   "disconnected","connecting-a","connecting-b",
+   "authorization-a","authorization-b","ready","working-static","connection-error",
+   "connecting-mix-25","connecting-mix-50","connecting-mix-75",
+   "authorization-mix-25","authorization-mix-50","authorization-mix-75"
+  };
+  for(int i=1;i<=35;i++)names.Add("working-"+i.ToString("D2"));
+  return names.ToArray();
+ }
  [System.Runtime.InteropServices.DllImport("user32.dll",CharSet=System.Runtime.InteropServices.CharSet.Auto)]
  static extern bool SystemParametersInfo(uint action,uint param,out bool enabled,uint flags);
  static bool MotionEnabled(){
@@ -1462,7 +1465,7 @@ public sealed class RdcOwnerTrayVisual : IDisposable {
    var info=new FileInfo(path);
    if(info.Length<100||info.Length>4194304)throw new InvalidDataException("RC1_TRAY_BUNDLE_SIZE");
    // Attest the owner's approved v04 binary before handing icons to Win32.
-   const string approvedSha="607D271A09983A407F3E8CC8560A93DC59385C18DCEC08ECA1740318C2B1AD59";
+   const string approvedSha="64A4009133FFB5B7CC89BD71D85B37BA2897EE5C7A715BC3C3C014625CEC3B23";
    using(var hashStream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read)){
     var hasher=new System.Security.Cryptography.SHA256Managed();
     string actual=BitConverter.ToString(hasher.ComputeHash(hashStream)).Replace("-","");
@@ -1481,7 +1484,7 @@ public sealed class RdcOwnerTrayVisual : IDisposable {
      if(size<100||size>1048576)throw new InvalidDataException("RC1_TRAY_ICON_BYTES");
      byte[] ico=reader.ReadBytes(size);
      if(ico.Length!=size||ico[0]!=0||ico[1]!=0||ico[2]!=1||ico[3]!=0||
-        ico[4]!=8||ico[5]!=0)throw new InvalidDataException("RC1_TRAY_ICON_FORMAT");
+        ico[4]!=7||ico[5]!=0)throw new InvalidDataException("RC1_TRAY_ICON_FORMAT");
      var backing=new MemoryStream(ico,false);
      streams.Add(backing);
      // Use the actual Windows notification-area small-icon metric (16px
@@ -1506,32 +1509,31 @@ public sealed class RdcOwnerTrayVisual : IDisposable {
  }
  static string SwapFrame(string prefix,bool motion,long elapsedMs){
   if(!motion)return prefix+"-a";
-  // Mirrors preview CSS: 1.6s cycle, color interpolation at 40-50%
-  // and 90-100% (160ms), sampled at 40ms from cached 25/50/75% ICOs.
+  // Approved ICO sequence: A 680ms, 25/50/75% 40ms each, B 680ms,
+  // then the same intermediate frames in reverse order. Period 1600ms.
   long position=elapsedMs%(2*SwapMs);
   if(position<680)return prefix+"-a";
-  if(position<720)return prefix+"-ab-25";
-  if(position<760)return prefix+"-ab-50";
-  if(position<800)return prefix+"-ab-75";
+  if(position<720)return prefix+"-mix-25";
+  if(position<760)return prefix+"-mix-50";
+  if(position<800)return prefix+"-mix-75";
   if(position<1480)return prefix+"-b";
-  if(position<1520)return prefix+"-ba-25";
-  if(position<1560)return prefix+"-ba-50";
-  return prefix+"-ba-75";
+  if(position<1520)return prefix+"-mix-75";
+  if(position<1560)return prefix+"-mix-50";
+  return prefix+"-mix-25";
  }
  public static string Frame(string state,bool motion,long elapsedMs) {
-  if(state=="connecting"||state=="auth")return SwapFrame(state,motion,elapsedMs);
+  if(state=="connecting")return SwapFrame("connecting",motion,elapsedMs);
+  if(state=="auth")return SwapFrame("authorization",motion,elapsedMs);
   if(state=="working"){
-   if(!motion)return "work-09";
-   // CSS 0/100%=100%, midpoint=45%, ease-in-out. Cached levels
-   // approximate the preview easing without constructing a new icon.
-   double position=(elapsedMs%WorkPulseMs)/900.0;
-   if(position>1.0)position=2.0-position;
-   double eased=(1.0-Math.Cos(Math.PI*position))/2.0;
-   int index=Math.Max(0,Math.Min(9,(int)Math.Round(9.0*(1.0-eased))));
-   return "work-"+index.ToString("D2");
+   // Exact approved 1800ms sequence: static frame plus 35 animation frames.
+   // Reduced motion uses the specifically supplied static fallback.
+   if(!motion)return "working-static";
+   int index=(int)((elapsedMs%WorkPulseMs)/50);
+   return index==0?"working-static":"working-"+index.ToString("D2");
   }
-  if(state=="ready"||state=="fault")return state;
-  return "offline";
+  if(state=="ready")return "ready";
+  if(state=="fault")return "connection-error";
+  return "disconnected";
  }
  static string ShortStatus(string state){
   switch(state){
