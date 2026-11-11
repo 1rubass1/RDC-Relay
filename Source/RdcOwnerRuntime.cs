@@ -129,6 +129,10 @@ public sealed class RdcOwnerRuntime : IDisposable {
  readonly RdcOwnerToolJournal toolJournal=new RdcOwnerToolJournal();
  bool observedMode=false,managedMode=false,reopenAfterModeChange=false,autoStartPending=false;
  DateTime nextAutoStartUtc=DateTime.MinValue;
+ // Owner GUI focus is advisory: Windows may refuse activation from the tray.
+ // Limit diagnostics and balloon hints; never restart an unverified child.
+ DateTime guiSpawnUtc=DateTime.MinValue,lastGuiNoticeUtc=DateTime.MinValue;
+ bool guiWindowWarned=false;
  RdcOwnerManagedProcess managedProcess=null;
  // Logout is a separate, bounded private Job; never execute in the GUI or
  // borrow the running Remote's process tree or credential files.
@@ -433,10 +437,34 @@ public sealed class RdcOwnerRuntime : IDisposable {
   remoteSupervisor.NoteHostEvent(src+": "+message);
   if(events.Count>128)events.RemoveAt(0);
  }
+ void NotifyGuiOpenIssue(string code,string message){
+  DateTime now=DateTime.UtcNow;
+  if((now-lastGuiNoticeUtc).TotalSeconds<8)return;
+  lastGuiNoticeUtc=now;
+  Append("gui",code);
+  try{
+   tray.BalloonTipTitle="RDC Relay";
+   tray.BalloonTipText=message;
+   tray.BalloonTipIcon=ToolTipIcon.Info;
+   tray.ShowBalloonTip(3000);
+  }catch{} // notification availability is not Remote authority
+ }
  void RefreshGui(){
   if(gui==null)return;
   try{
-   if(!gui.HasExited)return;
+   if(!gui.HasExited){
+    // A live process without a window can no longer be reported as
+    // successfully opened forever. Do not kill it or launch a duplicate.
+    if(!guiWindowWarned && guiSpawnUtc!=DateTime.MinValue &&
+       (DateTime.UtcNow-guiSpawnUtc).TotalSeconds>=7){
+     guiWindowWarned=true;
+     gui.Refresh();
+     if(gui.MainWindowHandle==IntPtr.Zero)
+      NotifyGuiOpenIssue("window not ready",
+       "Окно RDC Relay пока не появилось. Повторите открытие через трей; Remote не затронут.");
+    }
+    return;
+   }
   }catch{guiState="UNVERIFIED";Append("gui","identity probe failed");return;}
   if((trialRoot!=null || observedMode || managedMode) && guiErrorTask!=null){
    try{if(!guiErrorTask.IsCompleted){Console.WriteLine("RC1_TRIAL_GUI_STDERR_PENDING");}
@@ -451,6 +479,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
   guiErrorTask=null;
   if(guiReadySignal!=null)guiReadySignal.Reset();
   gui.Dispose();gui=null;childPid=0;childBorn=0;childSession=0;guiAuthenticated=false;
+  guiSpawnUtc=DateTime.MinValue;guiWindowWarned=false;
   nonce="";lastRequestSequence=0;requestIds.Clear();requestOrder.Clear();
   if(!ticketStore.RevokeOnlyOwned()){
    guiState="UNVERIFIED";Append("gui","ticket ownership unverified; relaunch denied");return;
@@ -459,16 +488,47 @@ public sealed class RdcOwnerRuntime : IDisposable {
  }
  public void OpenGui(){
   lock(gate){
-   if(disposed||exitRequested || guiState=="UNVERIFIED")return;
+   if(disposed||exitRequested)return;
+   if(guiState=="UNVERIFIED"){
+    NotifyGuiOpenIssue("open denied: unverified",
+      "Окно RDC Relay не удалось проверить. Remote продолжает работу; проверьте журнал.");
+    return;
+   }
    RefreshGui();
+   if(guiState=="UNVERIFIED"){
+    NotifyGuiOpenIssue("open denied: unverified",
+      "Окно RDC Relay не удалось проверить. Remote продолжает работу; проверьте журнал.");
+    return;
+   }
    if(gui!=null){
     try{
-     if(gui.MainWindowHandle!=IntPtr.Zero){
-      RdcOwnerActivate.ShowWindow(gui.MainWindowHandle,9);
-      RdcOwnerActivate.SetForegroundWindow(gui.MainWindowHandle);
+     // Refresh the cached MainWindowHandle after an asynchronous GUI launch.
+     // Only our recorded PID, session and birth time may be activated.
+     gui.Refresh();
+     if(gui.Id!=childPid || gui.SessionId!=childSession ||
+        gui.StartTime.ToUniversalTime().Ticks!=childBorn){
+      guiState="UNVERIFIED";
+      NotifyGuiOpenIssue("open denied: child identity mismatch",
+        "Невозможно подтвердить окно RDC Relay. Remote не затронут.");
+      return;
      }
-    }catch{}
-    return; // no duplicate or no-HWND force stop
+     string result=RdcOwnerActivate.OpenOwned(gui.MainWindowHandle,childPid);
+     if(result=="ATTENTION"){
+      NotifyGuiOpenIssue("foreground denied",
+       "Окно RDC Relay уже открыто. Выберите его через Alt+Tab или панель задач.");
+     }else if(result=="NO_WINDOW"){
+      NotifyGuiOpenIssue("open pending: no window",
+       "Окно RDC Relay ещё не появилось. Попробуйте открыть его через трей ещё раз.");
+     }else if(result=="NOT_OWNED"){
+      guiState="UNVERIFIED";
+      NotifyGuiOpenIssue("open denied: unverified window",
+       "Невозможно подтвердить окно RDC Relay. Remote не затронут.");
+     }
+    }catch(Exception problem){
+     NotifyGuiOpenIssue("open failed: "+problem.GetType().Name,
+      "Не удалось вывести окно RDC Relay. Remote продолжает работу.");
+    }
+    return; // verified live child: never launch a second GUI
    }
    try{
     CheckPath(guiScript);
@@ -495,11 +555,15 @@ public sealed class RdcOwnerRuntime : IDisposable {
     if(gui==null)throw new InvalidOperationException("RC1_GUI_START_FAILED");
     if(trialRoot!=null || observedMode || managedMode)guiErrorTask=gui.StandardError.ReadToEndAsync();
     childPid=gui.Id;childBorn=gui.StartTime.ToUniversalTime().Ticks;childSession=gui.SessionId;
-    guiStarts++;guiState="SPAWNING";guiAuthenticated=false;Append("gui","spawned");
+    guiStarts++;guiState="SPAWNING";guiAuthenticated=false;
+    guiSpawnUtc=DateTime.UtcNow;guiWindowWarned=false;
+    Append("gui","spawned");
    }catch(Exception startError){
     lastGuiError=startError.GetType().Name+": "+startError.Message;
     if(lastGuiError.Length>180)lastGuiError=lastGuiError.Substring(0,180);
     guiFailures++;guiState="NONE";Append("gui","launch failed");
+    NotifyGuiOpenIssue("GUI launch failed: "+startError.GetType().Name,
+     "RDC Relay не смог открыть окно. Remote не затронут; проверьте журнал Host.");
     if(gui==null){
      childPid=0;childBorn=0;childSession=0;nonce="";
      if(ticketStore!=null){
@@ -1239,4 +1303,42 @@ public static class RdcOwnerActivate {
  public static extern bool ShowWindow(IntPtr h,int command);
  [System.Runtime.InteropServices.DllImport("user32.dll")]
  public static extern bool SetForegroundWindow(IntPtr h);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern bool IsWindow(IntPtr h);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern bool IsWindowVisible(IntPtr h);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern bool IsIconic(IntPtr h);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern IntPtr GetForegroundWindow();
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
+ [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+ public struct FlashInfo {
+  public uint cbSize;public IntPtr hwnd;public uint dwFlags,dwCount,dwTimeout;
+ }
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern bool FlashWindowEx(ref FlashInfo info);
+ public static string OpenOwned(IntPtr handle,int expectedPid) {
+  if(handle==IntPtr.Zero || !IsWindow(handle))return "NO_WINDOW";
+  uint windowPid=0;
+  if(GetWindowThreadProcessId(handle,out windowPid)==0 ||
+     windowPid!=(uint)expectedPid)return "NOT_OWNED";
+  // Restore only when minimized/hidden. An already visible GUI is not
+  // forcibly repositioned or made topmost, especially over fullscreen apps.
+  if(IsIconic(handle)||!IsWindowVisible(handle))ShowWindow(handle,9);
+  bool accepted=SetForegroundWindow(handle);
+  IntPtr foreground=GetForegroundWindow();
+  uint foregroundPid=0;
+  if(foreground!=IntPtr.Zero)GetWindowThreadProcessId(foreground,out foregroundPid);
+  if(accepted && (foreground==handle||foregroundPid==(uint)expectedPid))
+   return "VISIBLE";
+  if(foreground==handle||foregroundPid==(uint)expectedPid)return "VISIBLE";
+  // Win32 foreground lock can deny the call. Signal taskbar attention instead
+  // of injecting Alt, forcing TopMost, retrying forever or killing the GUI.
+  var flash=new FlashInfo{cbSize=(uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(FlashInfo)),
+   hwnd=handle,dwFlags=2,dwCount=3,dwTimeout=0}; // FLASHW_TRAY, bounded
+  FlashWindowEx(ref flash);
+  return "ATTENTION";
+ }
 }
