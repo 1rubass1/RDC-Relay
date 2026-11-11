@@ -33,30 +33,47 @@ $direct=@($ast.FindAll({param($n)
  $n -is [Management.Automation.Language.ScriptBlockExpressionAst] -and
  $n.Extent.Text -match '(?s)^\{\s*try \{ Show-RdcAbout \}\s*finally \{ \$form\.ActiveControl=\$null \}\s*\}$'
 },$true))
-$mouse=@($ast.FindAll({param($n)
- $n -is [Management.Automation.Language.ScriptBlockExpressionAst] -and
- $n.Extent.Text -match '(?s)^\{\s*if \(\$form\.ActiveControl -eq \$helpButton\) \{ \$form\.ActiveControl=\$null \}\s*\}$'
-},$true))
 Check ($direct.Count -eq 1 -and
  $raw.Contains('$helpButton.Add_Click({') -and
  -not $raw.Contains('$helpMenu =')) 'Help click directly opens About without an intermediate menu'
-Check ($mouse.Count -eq 1 -and $raw.Contains('$helpButton.Add_MouseDown({')) 'mouse press clears Help focus without replacing the native WinForms button'
-if($direct.Count -eq 1 -and $mouse.Count -eq 1) {
+Check (-not $raw.Contains('$helpButton.Add_MouseDown({') -and
+ $raw.Contains('Do not change focus during MouseDown: WinForms may then suppress the Click.')) 'no mouse-down focus manipulation can suppress native button click'
+if($direct.Count -eq 1) {
  $script:aboutClicks=0
  function Show-RdcAbout {$script:aboutClicks++}
  $form=New-Object Windows.Forms.Form
  $helpButton=New-Object Windows.Forms.Button
+ $form.ShowInTaskbar=$false
+ $form.StartPosition=[Windows.Forms.FormStartPosition]::Manual
+ $form.Location=[Drawing.Point]::new(-10000,-10000)
+ $form.Size=[Drawing.Size]::new(170,100)
+ $helpButton.Location=[Drawing.Point]::new(10,10)
+ $helpButton.Size=[Drawing.Size]::new(32,32)
  [void]$form.Controls.Add($helpButton)
  try {
   $click=& ([scriptblock]::Create($direct[0].Extent.Text))
-  $mouseDown=& ([scriptblock]::Create($mouse[0].Extent.Text))
+  $helpButton.Add_Click($click)
+  $form.Show()
   $form.ActiveControl=$helpButton
-  & $mouseDown
-  Check ($form.ActiveControl -eq $null) 'mouse press removes Help focus rectangle'
+  $helpButton.PerformClick()
+  Check ($script:aboutClicks -eq 1 -and $form.ActiveControl -eq $null) 'actual WinForms PerformClick opens About and releases lingering focus'
+  # Dispatch button-local mouse messages to its own isolated, off-screen HWND;
+  # no system cursor, installed GUI, tray, or Remote is touched.
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class RdcHelpButtonMouseTest {
+ [DllImport("user32.dll",CharSet=CharSet.Auto)]
+ public static extern IntPtr SendMessage(IntPtr hWnd,uint msg,IntPtr wParam,IntPtr lParam);
+}
+'@
   $form.ActiveControl=$helpButton
-  & $click
-  Check ($script:aboutClicks -eq 1 -and $form.ActiveControl -eq $null) 'Help click opens About once and clears post-dialog focus'
- }finally{$form.Dispose()}
+  $localPoint=[IntPtr]::new((6 -shl 16) -bor 6)
+  [void][RdcHelpButtonMouseTest]::SendMessage($helpButton.Handle,0x0201,[IntPtr]::new(1),$localPoint)
+  [void][RdcHelpButtonMouseTest]::SendMessage($helpButton.Handle,0x0202,[IntPtr]::Zero,$localPoint)
+  [Windows.Forms.Application]::DoEvents()
+  Check ($script:aboutClicks -eq 2 -and $form.ActiveControl -eq $null) 'native WM_LBUTTONDOWN/UP opens About exactly once, without residual focus'
+ }finally{$form.Close();$form.Dispose()}
 }
 foreach($name in @('Get-RdcOwnerJournalText','New-RdcOwnerJournalDialog',
  'Show-RdcOwnerJournal','New-RdcOwnerHelpDialog')){

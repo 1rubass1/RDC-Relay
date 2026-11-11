@@ -6238,11 +6238,8 @@ $verifyDeviceItem.Add_Click({
     try { Start-Process 'https://mcp.desktopcommander.app/device/verify' } catch {}
 })
 # Direct Help action: no intermediate context menu.
-# Preserve keyboard Tab focus cues; clear mouse-acquired focus so a click does
-# not draw a lingering focus rectangle on the otherwise borderless Help icon.
-$helpButton.Add_MouseDown({
-    if ($form.ActiveControl -eq $helpButton) { $form.ActiveControl=$null }
-})
+# Do not change focus during MouseDown: WinForms may then suppress the Click.
+# Clear the focus only AFTER opening About, once the normal Click has fired.
 $helpButton.Add_Click({
     try { Show-RdcAbout }
     finally { $form.ActiveControl=$null }
