@@ -59,17 +59,19 @@ try{
   $tray.Region.IsVisible(246,114) -eq $false) 'native rounded Region clips bottom-right corner of both popups'
  $sep=$tray.Items[1]
  $rect=[RdcOwnerAccountMenuRenderer]::SeparatorLineBounds($tray,$sep)
- Check ($rect.X -eq 2 -and $rect.Right -eq ($tray.Width-2) -and
-  $rect.Width -eq ($tray.Width-4) -and $rect.Height -eq 1) 'full-width rule reaches x=2 and ends 2px from right without checkbox gutter'
+ Check ($rect.X -eq 0 -and $rect.Y -eq [int]($sep.Height/2) -and
+  $rect.Width -eq $sep.Width -and $rect.Height -eq 1 -and
+  ($sep.Bounds.X+$rect.X) -eq 2 -and
+  ($sep.Bounds.X+$rect.Right) -eq ($tray.Width-2)) 'separator uses item-local graphics and spans menu x=2 through width-2'
  $lineBitmap=New-Object Drawing.Bitmap(248,130)
  $lineGraphics=[Drawing.Graphics]::FromImage($lineBitmap)
  try{
   $lineGraphics.Clear($tray.BackColor)
   $lineArgs=New-Object Windows.Forms.ToolStripSeparatorRenderEventArgs($lineGraphics,$sep,$false)
   $tray.Renderer.DrawSeparator($lineArgs)
-  $leftPixel=$lineBitmap.GetPixel(2,$rect.Y)
+  $leftPixel=$lineBitmap.GetPixel(0,$rect.Y)
   $rightPixel=$lineBitmap.GetPixel($rect.Right-1,$rect.Y)
-  $marginPixel=$lineBitmap.GetPixel(1,$rect.Y)
+  $marginPixel=$lineBitmap.GetPixel($rect.Right,$rect.Y)
   Check ($leftPixel.ToArgb() -ne $tray.BackColor.ToArgb() -and
    $rightPixel.ToArgb() -eq $leftPixel.ToArgb() -and
    $marginPixel.ToArgb() -eq $tray.BackColor.ToArgb()) 'real native separator painter produces a continuous full-width colored line'
@@ -80,6 +82,53 @@ try{
    ([Windows.Forms.SystemInformation]::HighContrast -or
     ($leftPixel.R -ge 180 -and $leftPixel.G -ge 180 -and $leftPixel.B -ge 190))) 'separator is intentionally much lighter than old RGB(105,112,124), or respects High Contrast'
  }finally{$lineGraphics.Dispose();$lineBitmap.Dispose()}
+ # Regression for the owner's screenshot: separately invoking DrawSeparator
+ # used to PASS while the full popup clipped the separator entirely. These
+ # assertions now capture the whole real WinForms ToolStrip paint pipeline.
+ $selectionColors=New-Object 'System.Collections.Generic.List[int]'
+ foreach($menu in @($account,$tray)){
+  $menu.PerformLayout()
+  $label=if([object]::ReferenceEquals($menu,$account)){'Account'}else{'Tray'}
+  $sepItem=$menu.Items[1]
+  $actualY=$sepItem.Bounds.Top+[int]($sepItem.Height/2)
+  $expectedInk=if([Windows.Forms.SystemInformation]::HighContrast){
+   [Drawing.SystemColors]::WindowText
+  }else{[Drawing.Color]::FromArgb(188,195,207)}
+  $bitmap=New-Object Drawing.Bitmap($menu.Width,$menu.Height)
+  try{
+   $menu.DrawToBitmap($bitmap,[Drawing.Rectangle]::new(0,0,$bitmap.Width,$bitmap.Height))
+   $painted=0
+   for($x=$sepItem.Bounds.Left;$x -lt $sepItem.Bounds.Right;$x++){
+    if($bitmap.GetPixel($x,$actualY).ToArgb() -eq $expectedInk.ToArgb()){$painted++}
+   }
+   Check ($painted -eq $sepItem.Width -and $sepItem.Width -ge 100) (
+    $label+' actual complete popup contains every full-width separator pixel, not clipped')
+   # Check real checkbox drawing inside the complete popup, not just
+   # PaintQuotaBox invoked on a free-standing un-clipped Graphics object.
+   foreach($check in @($menu.Items[3],$menu.Items[4])){
+    $check.Checked=$false
+    $menu.DrawToBitmap($bitmap,[Drawing.Rectangle]::new(0,0,$bitmap.Width,$bitmap.Height))
+    $rect=[RdcOwnerAccountMenuRenderer]::QuotaBoxBounds($check)
+    $px=$check.Bounds.Left+$rect.X+9
+    $py=$check.Bounds.Top+$rect.Y+9
+    $off=$bitmap.GetPixel($px,$py)
+    $check.Checked=$true
+    $menu.DrawToBitmap($bitmap,[Drawing.Rectangle]::new(0,0,$bitmap.Width,$bitmap.Height))
+    $on=$bitmap.GetPixel($px,$py)
+    Check ($off.ToArgb() -ne $on.ToArgb()) (
+     $label+' '+$check.Name+' visible checkmark survives complete popup painting')
+   }
+   $menu.Items[0].Select()
+   $menu.DrawToBitmap($bitmap,[Drawing.Rectangle]::new(0,0,$bitmap.Width,$bitmap.Height))
+   $selected=$bitmap.GetPixel(28,$menu.Items[0].Bounds.Top+[int]($menu.Items[0].Height/2))
+   [void]$selectionColors.Add($selected.ToArgb())
+   Check ([Windows.Forms.SystemInformation]::HighContrast -or
+      ($selected.R -eq 65 -and $selected.G -eq 54 -and $selected.B -eq 86)) (
+      $label+' selected row uses explicit purple compositing instead of system hover variant')
+  }finally{$bitmap.Dispose()}
+ }
+ Check ($selectionColors.Count -eq 2 -and $selectionColors[0] -eq $selectionColors[1]) (
+  'actual Account and tray selected-row pixels are identical')
  # Directly exercise the real painter's check glyph with live checked-state.
  $paint=New-Object Drawing.Bitmap(240,32)
  $graphics=[Drawing.Graphics]::FromImage($paint)
@@ -100,14 +149,13 @@ try{
    foreach($check in @($menu.Items[3],$menu.Items[4])){
     $rect=[RdcOwnerAccountMenuRenderer]::QuotaBoxBounds($check)
     $kind=if($check.Text -eq 'Автообновление'){'Auto-update'}else{'Quota'}
-    Check ($rect.X -eq $nativeImageRect.X -and
+    Check ($rect.X -eq $nativeImageRect.X+3 -and
      $rect.Width -eq $nativeImageRect.Width -and
-     [Math]::Abs(($rect.X+$rect.Width/2.0)-
-      ($nativeGutter.X+$nativeGutter.Width/2.0)) -le 0.5) (
-      $menuName+' '+$kind+' checkbox is horizontally centered in native icon gutter')
+     $rect.Right -le $nativeGutter.Right) (
+      $menuName+' '+$kind+' checkbox is exactly 3px toward label and stays in icon gutter')
     Check ($rect.Height -eq 16 -and $rect.Y -ge 0 -and
-     [Math]::Abs(($rect.Y+$rect.Height/2.0)-($check.Height/2.0)) -le 0.5) (
-      $menuName+' '+$kind+' checkbox is vertically centered in its actual row')
+     [Math]::Abs(($rect.Y+$rect.Height/2.0)-($check.Height/2.0)+1.0) -le 0.5) (
+      $menuName+' '+$kind+' checkbox is exactly 1px above geometric row center')
     $check.Size=[Drawing.Size]::new(240,32)
     $center=[RdcOwnerAccountMenuRenderer]::QuotaBoxBounds($check)
     $check.Checked=$false

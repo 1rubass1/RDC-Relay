@@ -182,9 +182,10 @@ public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
 
     public static Rectangle QuotaBoxBounds(ToolStripItem item) {
         const int side = 16;
-        // Native WinForms image slot begins at x=5 at 96 DPI; center the
-        // 16px checkbox in the same gutter, not 1px to its right.
-        return new Rectangle(5, Math.Max(0, (item.Height - side) / 2), side, side);
+        // Optical alignment from the real popup: move the square 3px
+        // toward the label and 1px upward against the baseline. Both
+        // Owner GUI and tray use exactly this same row-local geometry.
+        return new Rectangle(8, Math.Max(0, (item.Height - side) / 2 - 1), side, side);
     }
 
     public static void PaintQuotaBox(Graphics g, ToolStripMenuItem item) {
@@ -262,10 +263,11 @@ public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
     }
     public static Rectangle SeparatorLineBounds(ToolStrip strip,ToolStripItem item){
         if(strip==null||item==null)return Rectangle.Empty;
-        // Full-width rule within the curved border, bypassing the default
-        // Windows image-column indentation on the left.
-        return new Rectangle(2,item.Bounds.Top+item.Height/2,
-                             Math.Max(0,strip.Width-4),1);
+        // OnRenderSeparator receives an ITEM-LOCAL graphics surface:
+        // using item.Bounds.Top (menu coordinates) silently clips the
+        // whole line out of the actual popup. Separator items start at
+        // menu x=2 and end 2px from the opposite edge by native layout.
+        return new Rectangle(0,item.Height/2,Math.Max(0,item.Width),1);
     }
     protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e){
         if(!(e.ToolStrip is ContextMenuStrip)){base.OnRenderSeparator(e);return;}
@@ -291,9 +293,35 @@ public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
         }finally{e.Graphics.SmoothingMode=prev;}
     }
     protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e) {
-        base.OnRenderMenuItemBackground(e);
-        ToolStripMenuItem item = e.Item as ToolStripMenuItem;
-        if (item != null && IsCheckItem(item)) PaintQuotaBox(e.Graphics, item);
+        if(!(e.ToolStrip is ContextMenuStrip)){
+            base.OnRenderMenuItemBackground(e);
+            return;
+        }
+        ToolStripMenuItem item=e.Item as ToolStripMenuItem;
+        if(item==null){base.OnRenderMenuItemBackground(e);return;}
+        // Paint *every* row on its item-local surface; inherited native
+        // Professional hover rendering varies with system menus. One
+        // explicit purple selection formula now serves Account and tray.
+        using(Brush background=new SolidBrush(e.ToolStrip.BackColor))
+            e.Graphics.FillRectangle(background,new Rectangle(Point.Empty,item.Size));
+        if(item.Selected && item.Enabled){
+            if(SystemInformation.HighContrast)base.OnRenderMenuItemBackground(e);
+            else{
+                SmoothingMode prior=e.Graphics.SmoothingMode;
+                e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+                try{
+                    using(GraphicsPath selected=RoundedMenuPath(
+                          new RectangleF(2.5f,0.5f,Math.Max(0,item.Width-5f),
+                                         Math.Max(0,item.Height-1f))))
+                    using(Brush fill=new SolidBrush(Color.FromArgb(128,91,67,126)))
+                    using(Pen edge=new Pen(Color.FromArgb(123,95,162),1f)){
+                        e.Graphics.FillPath(fill,selected);
+                        e.Graphics.DrawPath(edge,selected);
+                    }
+                }finally{e.Graphics.SmoothingMode=prior;}
+            }
+        }
+        if(IsCheckItem(item))PaintQuotaBox(e.Graphics,item);
     }
     protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) {
         if (IsCheckItem(e.Item)) return;

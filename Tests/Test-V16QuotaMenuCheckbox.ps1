@@ -85,7 +85,7 @@ try{
  }finally{$ownerBitmap.Dispose();$legacyBitmap.Dispose()}
  $bounds=[RdcOwnerAccountMenuRenderer]::QuotaBoxBounds($quota)
  Check ($bounds.Width -eq 16 -and $bounds.Height -eq 16 -and
-  $bounds.X -eq 5 -and $bounds.Y -eq [Math]::Max(0,($quota.Height-16)/2)) 'checkbox 16px centered on native image slot x=5 and vertically aligned to row'
+  $bounds.X -eq 8 -and $bounds.Y -eq [Math]::Max(0,($quota.Height-16)/2-1)) 'checkbox optically shifted 3px right and 1px up versus native centered image slot'
  $on=Render-QuotaGlyph $true $true
  $off=Render-QuotaGlyph $false $true
  try{

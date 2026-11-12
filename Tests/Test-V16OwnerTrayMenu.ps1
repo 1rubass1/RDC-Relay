@@ -30,6 +30,33 @@ try{
   [string]::Join('|',$labels) -ceq [string]::Join('|',$expected)) 'native tray groups: open / account actions / devices+quota+auto-update / Help / exit, four separators'
  Check (@($items|Where-Object{$_ -is [Windows.Forms.ToolStripSeparator]}).Count -eq 4 -and
   -not $labels.Contains('Remote: готов к управляемому запуску')) 'removed redundant read-only status line; no extra dividers'
+ # Capture the complete native tray popup, not a freestanding renderer.
+ # This guards against menu-coordinate separator lines clipped by row graphics.
+ $popup=$menu.Menu
+ $popup.PerformLayout()
+ $bitmap=New-Object Drawing.Bitmap($popup.Width,$popup.Height)
+ try{
+  $popup.DrawToBitmap($bitmap,[Drawing.Rectangle]::new(0,0,$bitmap.Width,$bitmap.Height))
+  $ink=if([Windows.Forms.SystemInformation]::HighContrast){
+   [Drawing.SystemColors]::WindowText
+  }else{[Drawing.Color]::FromArgb(188,195,207)}
+  $visible=0;$complete=0
+  foreach($separator in @($popup.Items|Where-Object{$_ -is [Windows.Forms.ToolStripSeparator]})){
+   $y=$separator.Bounds.Top+[int]($separator.Height/2)
+   $bright=0
+   for($x=$separator.Bounds.Left;$x -lt $separator.Bounds.Right;$x++){
+    if($bitmap.GetPixel($x,$y).ToArgb() -eq $ink.ToArgb()){$bright++}
+   }
+   if($bright -eq $separator.Width -and $bright -gt 20){$complete++}
+   $visible += $bright
+  }
+  Check ($complete -eq 4 -and $visible -ge 80) 'complete native tray popup visibly paints all four separators edge to edge'
+  $popup.Items[0].Select()
+  $popup.DrawToBitmap($bitmap,[Drawing.Rectangle]::new(0,0,$bitmap.Width,$bitmap.Height))
+  $chosen=$bitmap.GetPixel(28,$popup.Items[0].Bounds.Top+[int]($popup.Items[0].Height/2))
+  Check ([Windows.Forms.SystemInformation]::HighContrast -or
+   ($chosen.R -eq 65 -and $chosen.G -eq 54 -and $chosen.B -eq 86)) 'native tray selected row matches purple Account highlight'
+ }finally{$bitmap.Dispose()}
  $menu.Refresh($false,$false,$false,$false,$false,$false,$true,$true)
  Check ($menu.OpenItem.Enabled -and $menu.HelpItem.Enabled -and $menu.ExitItem.Enabled -and
   -not $menu.SwitchItem.Enabled -and -not $menu.ReconnectItem.Enabled -and
