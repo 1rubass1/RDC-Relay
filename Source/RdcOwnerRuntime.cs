@@ -152,11 +152,10 @@ public sealed class RdcOwnerTrayMenu : IDisposable {
   Menu.Items.Add(new ToolStripSeparator());
   Menu.Items.Add(SwitchItem);
   Menu.Items.Add(ReconnectItem);
+  Menu.Items.Add(StartStopItem);
   Menu.Items.Add(new ToolStripSeparator());
   Menu.Items.Add(DevicesItem);
   Menu.Items.Add(QuotaItem);
-  Menu.Items.Add(new ToolStripSeparator());
-  Menu.Items.Add(StartStopItem);
   Menu.Items.Add(new ToolStripSeparator());
   Menu.Items.Add(HelpItem);
   Menu.Items.Add(new ToolStripSeparator());

@@ -23,12 +23,12 @@ try{
  $items=@($menu.Menu.Items)
  $labels=@($items|ForEach-Object{if($_ -is [Windows.Forms.ToolStripSeparator]){'---'}else{$_.Text}})
  $expected=@(
-  'Открыть окно RDC Relay','---','Сменить аккаунт','Переподключить','---',
+  'Открыть окно RDC Relay','---','Сменить аккаунт','Переподключить','Запустить','---',
   'Управление устройствами','Выводить остаток вызовов','---',
-  'Запустить','---','Справка о программе','---','Завершить RDC Relay')
+  'Справка о программе','---','Завершить RDC Relay')
  Check ($labels.Count -eq $expected.Count -and
-  [string]::Join('|',$labels) -ceq [string]::Join('|',$expected)) 'native tray groups: open / account / devices+quota / control / Help / exit, five separators'
- Check (@($items|Where-Object{$_ -is [Windows.Forms.ToolStripSeparator]}).Count -eq 5 -and
+  [string]::Join('|',$labels) -ceq [string]::Join('|',$expected)) 'native tray groups: open / account actions including Start-Stop / devices+quota / Help / exit, four separators'
+ Check (@($items|Where-Object{$_ -is [Windows.Forms.ToolStripSeparator]}).Count -eq 4 -and
   -not $labels.Contains('Remote: готов к управляемому запуску')) 'removed redundant read-only status line; no extra dividers'
  $menu.Refresh($false,$false,$false,$false,$false,$false,$true)
  Check ($menu.OpenItem.Enabled -and $menu.HelpItem.Enabled -and $menu.ExitItem.Enabled -and
