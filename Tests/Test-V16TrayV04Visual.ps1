@@ -88,8 +88,9 @@ $inputs=@('RdcOwnerWire.cs','RdcOwnerProcess.cs','RdcOwnerTicketStore.cs',
 & $csc /nologo /target:library ('/out:'+$dll) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Management.dll $inputs
 if($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists($dll)){throw 'G122_TRAY_FINAL_CSHARP_COMPILE_FAILED'}
 Add-Type -Path $dll
-# Seam-matched visual state changes must be clock-driven; the real Host state
-# and tooltip are never delayed, and fault/disconnect are never queued.
+# All three animation families must finish their current complete cycles before
+# a visual change, even to Fault/Disconnected. Authoritative Host and tooltip
+# states update immediately; only decorative icon frames are deferred.
 $green=[IO.File]::ReadAllBytes((Join-Path $kit 'ICO\connecting-a.ico'))
 $ready=[IO.File]::ReadAllBytes((Join-Path $kit 'ICO\ready.ico'))
 Check ([Linq.Enumerable]::SequenceEqual([byte[]]$green,[byte[]]$ready)) 'connecting green-bottom A and Ready icons are byte-identical'
@@ -123,13 +124,85 @@ $cancel=New-Object RdcOwnerTrayPhaseGate
 Check (-not $cancel.Update('connecting',$true,950) -and
  $cancel.WaitingUntilMs -eq -1 -and $cancel.Visible -eq 'connecting' -and
  -not $cancel.Advance($true,1600)) 'reverted Connecting cancels outdated pending Ready'
+# Snapshot may change many times inside one cycle. No FIFO: at the boundary
+# select the last, authoritative state, even when it becomes Fault or Offline.
 [void]$cancel.Update('ready',$true,1800)
-Check ($cancel.Update('fault',$true,1900) -and $cancel.Visible -eq 'fault' -and
- $cancel.WaitingUntilMs -eq -1) 'Fault immediately preempts any pending visual transition'
-[void]$cancel.Update('connecting',$true,2000)
-[void]$cancel.Update('ready',$true,2100)
-Check ($cancel.Update('offline',$true,2150) -and $cancel.Visible -eq 'offline' -and
- $cancel.WaitingUntilMs -eq -1) 'Disconnect is never delayed'
+Check (-not $cancel.Update('fault',$true,1900) -and
+ $cancel.WaitingUntilMs -eq 3200 -and $cancel.Latest -eq 'fault' -and
+ $cancel.Visible -eq 'connecting') 'Fault updates latest immediately but does not cut connecting animation'
+Check (-not $cancel.Update('offline',$true,2100) -and
+ $cancel.Latest -eq 'offline' -and $cancel.WaitingUntilMs -eq 3200 -and
+ -not $cancel.Advance($true,3199) -and $cancel.Advance($true,3200) -and
+ $cancel.Visible -eq 'offline') 'latest Offline replaces superseded Ready/Fault at completed cycle seam'
+Check ([RdcOwnerTrayPhaseGate]::CycleDurationMs('connecting') -eq 1600 -and
+ [RdcOwnerTrayPhaseGate]::CycleDurationMs('auth') -eq 1600 -and
+ [RdcOwnerTrayPhaseGate]::CycleDurationMs('working') -eq 1800 -and
+ [RdcOwnerTrayPhaseGate]::CycleDurationMs('ready') -eq 0 -and
+ [RdcOwnerTrayPhaseGate]::CycleDurationMs('fault') -eq 0 -and
+ [RdcOwnerTrayPhaseGate]::CycleDurationMs('offline') -eq 0) 'all three approved animation cycles have exact durations, static states do not wait'
+# Exhaustive animated source to every distinct semantic destination:
+# no new event cuts a cycle halfway, regardless of operation order.
+$states=@('connecting','auth','working','ready','fault','offline')
+foreach($from in @('connecting','auth','working')){
+ $period=[RdcOwnerTrayPhaseGate]::CycleDurationMs($from)
+ foreach($to in ($states | Where-Object{$_ -ne $from})){
+  $transition=New-Object RdcOwnerTrayPhaseGate
+  $created=$transition.Update($from,$true,0)
+  $held=-not $transition.Update($to,$true,40)
+  $before=-not $transition.Advance($true,$period-1)
+  $boundary=$transition.Advance($true,$period)
+  Check ($created -and $held -and $before -and $boundary -and
+   $transition.WaitingUntilMs -eq -1 -and
+   $transition.Visible -eq $to -and $transition.Latest -eq $to) (
+   $from+' completes '+$period+'ms cycle before '+$to)
+ }
+}
+# Concrete incident: a short purple Working signal must produce a full
+# purple 36-frame pulse before visually returning to green Ready.
+$pulse=New-Object RdcOwnerTrayPhaseGate
+Check ($pulse.Update('ready',$true,0) -and
+ $pulse.Update('working',$true,0) -and $pulse.Visible -eq 'working') 'idle green Ready starts purple Working animation at frame zero'
+Check (-not $pulse.Update('ready',$true,80) -and
+ $pulse.Visible -eq 'working' -and $pulse.Latest -eq 'ready' -and
+ $pulse.WaitingUntilMs -eq 1800) '80ms action does not truncate 1800ms purple Working animation'
+Check (-not $pulse.Update('ready',$true,500) -and
+ -not $pulse.Advance($true,1750) -and
+ [RdcOwnerTrayVisual]::Frame('working',$true,1750) -eq 'working-35' -and
+ -not $pulse.Advance($true,1799)) 'purple working frame 35 remains until full final 50ms ends'
+Check ($pulse.Advance($true,1800) -and $pulse.Visible -eq 'ready' -and
+ $pulse.WaitingUntilMs -eq -1) 'green Ready appears only at completed 36-frame Working boundary'
+# If a tool is still executing at the end, start another full animation cycle.
+$continuous=New-Object RdcOwnerTrayPhaseGate
+[void]$continuous.Update('working',$true,0)
+Check (-not $continuous.Update('working',$true,1500) -and
+ -not $continuous.Advance($true,1800) -and
+ $continuous.Visible -eq 'working' -and
+ $continuous.WaitingUntilMs -eq -1) 'working still active at cycle seam continues next full pulse'
+Check (-not $continuous.Update('ready',$true,1900) -and
+ $continuous.WaitingUntilMs -eq 3600 -and
+ -not $continuous.Advance($true,3599) -and
+ $continuous.Advance($true,3600) -and $continuous.Visible -eq 'ready') 'after repeated Working loop, exit waits until next full 3600ms boundary'
+# New signals do not restart a deadline; the latest one replaces any older
+# pending target, not an obsolete queue of states.
+$burst=New-Object RdcOwnerTrayPhaseGate
+[void]$burst.Update('working',$true,0)
+[void]$burst.Update('ready',$true,40)
+[void]$burst.Update('auth',$true,300)
+Check (-not $burst.Update('fault',$true,350) -and $burst.Latest -eq 'fault' -and
+ $burst.WaitingUntilMs -eq 1800 -and
+ -not $burst.Advance($true,1799) -and $burst.Advance($true,1800) -and
+ $burst.Visible -eq 'fault') 'burst of purple Working/Ready/Auth/Fault signals releases latest only at 1800ms'
+$static=New-Object RdcOwnerTrayPhaseGate
+[void]$static.Update('fault',$true,0)
+Check ($static.Update('connecting',$true,5) -and
+ $static.Visible -eq 'connecting' -and $static.WaitingUntilMs -eq -1) 'static Fault starts Connecting animation immediately'
+$cancelWork=New-Object RdcOwnerTrayPhaseGate
+[void]$cancelWork.Update('working',$true,0)
+[void]$cancelWork.Update('ready',$true,80)
+Check (-not $cancelWork.Update('working',$true,110) -and
+ $cancelWork.WaitingUntilMs -eq -1 -and
+ -not $cancelWork.Advance($true,1800) -and
+ $cancelWork.Visible -eq 'working') 'return to active Working during its pulse cancels obsolete Ready signal'
 $reduced=New-Object RdcOwnerTrayPhaseGate
 [void]$reduced.Update('connecting',$false,0)
 Check ($reduced.Update('ready',$false,760) -and $reduced.Visible -eq 'ready') 'Windows reduced-motion mode switches to Ready without waiting'

@@ -1621,35 +1621,41 @@ public static class RdcOwnerActivate {
  }
 }
 
-// Pure visual-only phase gate. Never delays the authoritative Remote snapshot,
-// Host IPC state, disconnect/fault handling, or GUI behavior.
-// Animated connecting/authorization transitions finish the current 1600ms
-// cycle; connecting-a and ready are pixel-identical in the approved ICO kit.
+// Pure visual-only phase gate: an animated frame family always finishes its
+// current complete cycle before another visual state is shown. The latest
+// authoritative Host snapshot, tooltip, IPC and Remote control are immediate.
+// The owner-approved Connecting/Authorization cycle is 1600ms, Working is
+// 1800ms; static states have no cycle to complete. At every boundary the
+// *latest* semantic state is selected (no queue of obsolete transient events).
 public sealed class RdcOwnerTrayPhaseGate {
- const int SwapCycleMs=1600;
+ const int SwapCycleMs=1600, WorkCycleMs=1800;
  public string Visible {get;private set;}
  public string Latest {get;private set;}
  public long WaitingUntilMs {get;private set;}
  public RdcOwnerTrayPhaseGate(){
   Visible="";Latest="";WaitingUntilMs=-1;
  }
- static bool CanFinishCycle(string from,string to){
-  return (from=="connecting" && (to=="auth"||to=="ready"||to=="working")) ||
-         (from=="auth" && (to=="ready"||to=="working"));
+ public static int CycleDurationMs(string state){
+  if(state=="connecting"||state=="auth")return SwapCycleMs;
+  if(state=="working")return WorkCycleMs;
+  return 0;
  }
  // Returns true only when the visible state changes and its phase must reset.
+ // Every animated source finishes its current full cycle before *any*
+ // destination, including when a working tool pulse was very short.
  public bool Update(string latest,bool motion,long elapsedMs){
   Latest=String.IsNullOrEmpty(latest)?"offline":latest;
   if(Visible==Latest){WaitingUntilMs=-1;return false;}
-  if(motion && CanFinishCycle(Visible,Latest)){
+  int period=motion?CycleDurationMs(Visible):0;
+  if(period>0){
    if(WaitingUntilMs<0){
-    // The next *complete* A frame, never the current half-cycle or a
-    // fixed delay. No timer or sleeps; the existing 40ms UI tick releases it.
-    WaitingUntilMs=((Math.Max(0L,elapsedMs)/SwapCycleMs)+1)*SwapCycleMs;
+    // The next exact full-cycle seam. The existing 40ms icon timer releases
+    // it; repeated or superseded snapshots never extend the cycle.
+    WaitingUntilMs=((Math.Max(0L,elapsedMs)/period)+1)*period;
    }
    return false;
   }
-  // Fault, disconnect, reconnect and all other urgent state changes preempt.
+  // First state, static source and Windows reduced-motion: immediate.
   WaitingUntilMs=-1;
   Visible=Latest;
   return true;
@@ -1811,8 +1817,8 @@ public sealed class RdcOwnerTrayVisual : IDisposable {
    if(nextMotion!=animate){animate=nextMotion;phase.Restart();}
    nextMotionQueryUtc=DateTime.UtcNow.AddSeconds(5);
   }
-  // The Host state was already updated on the last snapshot. Only the
-  // decorative frame is deferred, releasing exactly at the A-frame seam.
+  // Only the decorative frame is deferred. At every complete animation
+  // boundary the latest Host snapshot wins, not the first queued signal.
   if(phaseGate.Advance(animate,phase.ElapsedMilliseconds))phase.Restart();
   string frame=Frame(phaseGate.Visible,animate,phase.ElapsedMilliseconds);
   if(frame!=shownFrame){
