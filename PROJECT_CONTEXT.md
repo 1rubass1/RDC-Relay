@@ -1,5 +1,7 @@
 # RDC Relay — current development context
 
+> **2026-11-13 AI DevBook project migration checkpoint:** Owner explicitly requested transition from the former private AI Engineering Playbook (last documented `main@5cae0136c5eb0feaea4f00b8ba700199d58803c9`; full old-content diff unavailable) to canonical external read-only [AI DevBook](https://github.com/1rubass1/AI-DevBook) dynamic `main`, checked at `5d479bffc663f17aae7f721c89d5f47de8a7ffe6` (`0.7-draft`), entry `00_START_HERE.md`. Project entrypoint and knowledge routing were changed without a local copy or product code changes. Current chat **📐 Архитектор 2: new role/coordination/update instructions read and confirmed**. Other active/registered chat contexts: **unknown/not yet re-read**; let in-progress cycles finish, then re-read applicable entry/role/CORE/workflow at the next task handoff before adopting new process. Existing root and `COORDINATION/` remain canonical; no `AI Work/` migration, no automatic change to model, tools, credentials, rights or running Remote. Docs-only checkpoint; runtime/release not retested.
+
 > Updated: 2026-10-24. Source: existing product history, 2026-10-23 static audit, owner-approved next stage and current private Playbook GitHub main.
 
 **Stage:** Playbook governance and classified knowledge migration completed on `development` via PR #1 (merge `20b938b`). `main` and `stable` remain production-only.
