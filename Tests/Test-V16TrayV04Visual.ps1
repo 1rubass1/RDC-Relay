@@ -213,8 +213,8 @@ Check ($code.Contains('phaseGate.Update(next,animate,phase.ElapsedMilliseconds)'
  $code.Contains('phaseGate.Advance(animate,phase.ElapsedMilliseconds)') -and
  $code.Contains('ShortStatus(next)')) 'production uses phase gate on both 250ms snapshots and 40ms frames, tooltip is immediate'
 Check ([RdcOwnerTrayVisual]::Semantic('Ready','working') -eq 'working' -and
- [RdcOwnerTrayVisual]::Semantic('Ready','hold') -eq 'ready' -and
- [RdcOwnerTrayVisual]::Semantic('Ready','idle') -eq 'ready') 'working animation only for Ready+working; idle and hold are static'
+ [RdcOwnerTrayVisual]::Semantic('Ready','hold') -eq 'working' -and
+ [RdcOwnerTrayVisual]::Semantic('Ready','idle') -eq 'ready') 'tray maps shared active and adaptive hold to purple Working, idle to green Ready'
 Check ([RdcOwnerTrayVisual]::Semantic('Fault','working') -eq 'fault' -and
  [RdcOwnerTrayVisual]::Semantic('Disconnected','working') -eq 'offline' -and
  [RdcOwnerTrayVisual]::Semantic('AuthPending','working') -eq 'auth' -and
@@ -256,6 +256,23 @@ try{
  $live.Add('state','Ready');$live.Add('toolActivity','working');$live.Add('fake',$false)
  $visual.Update($live)
  Check ($notify.Text.Contains('Выполнение') -and $notify.Icon -ne $null) 'Ready+working selects activity pulse'
+ $live['toolActivity']='hold'
+ $visual.Update($live)
+ Check ($notify.Text.Contains('Ожидание следующего вызова') -and $notify.Icon -ne $null) 'Ready+hold keeps purple animated semantic but tooltip admits no running-tool proof'
+ $live['toolActivity']='idle'
+ $visual.Update($live)
+ Check ($notify.Text.Contains('Готов к работе') -and $notify.Icon -ne $null) 'Ready+idle restores accurate tooltip without waiting for animation'
+ # Hold must not restart/cancel an already playing purple loop: its semantic
+ # identity matches actual Working, even though tooltip explicitly differs.
+ $holdGate=New-Object RdcOwnerTrayPhaseGate
+ [void]$holdGate.Update('working',$true,0)
+ Check (-not $holdGate.Update([RdcOwnerTrayVisual]::Semantic('Ready','hold'),$true,900) -and
+  $holdGate.Visible -eq 'working' -and $holdGate.WaitingUntilMs -eq -1 -and
+  -not $holdGate.Advance($true,1800)) 'Working to Hold preserves same animation phase, no new cycle or early green flash'
+ Check (-not $holdGate.Update([RdcOwnerTrayVisual]::Semantic('Ready','idle'),$true,1900) -and
+  $holdGate.WaitingUntilMs -eq 3600 -and
+  -not $holdGate.Advance($true,3599) -and $holdGate.Advance($true,3600) -and
+  $holdGate.Visible -eq 'ready') 'shared hold expiry changes to Ready after full last purple animation loop'
  Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;

@@ -1751,7 +1751,9 @@ public sealed class RdcOwnerTrayVisual : IDisposable {
   if(connection=="Fault")return "fault";
   if(connection=="Connecting"||connection=="Reconnecting")return "connecting";
   if(connection=="AuthPending")return "auth";
-  if(connection=="Ready")return activity=="working"?"working":"ready";
+  // Mirror the divider: both real tool execution and the shared
+  // bounded inter-call hold keep the purple tray animation active.
+  if(connection=="Ready")return (activity=="working"||activity=="hold")?"working":"ready";
   return "offline";
  }
  static string SwapFrame(string prefix,bool motion,long elapsedMs){
@@ -1804,7 +1806,11 @@ public sealed class RdcOwnerTrayVisual : IDisposable {
   // No rapid text/tooltip churn while drawing animated frames.
   bool fake=snapshot.ContainsKey("fake")&&Convert.ToBoolean(snapshot["fake"]);
   // Show the actual state immediately while decorative frames finish.
-  string tip="RDC Relay RC1 | "+(fake?"Тест | ":"")+ShortStatus(next);
+  // During hold, completion of the last MCP tool is confirmed; whether the
+  // AI task continues is unknown. Keep the tooltip semantically accurate.
+  string tipStatus=(connection=="Ready"&&activity=="hold")
+   ?"Ожидание следующего вызова":ShortStatus(next);
+  string tip="RDC Relay RC1 | "+(fake?"Тест | ":"")+tipStatus;
   if(tip!=shownTip){
    tray.Text=tip.Length<=63?tip:tip.Substring(0,63);
    shownTip=tip;

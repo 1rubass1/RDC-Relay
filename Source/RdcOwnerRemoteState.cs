@@ -20,17 +20,39 @@ public sealed class RdcOwnerRemoteState {
  int observedPid=0;
  int activeToolCalls=0;
  DateTime lastToolMarkerUtc=DateTime.MinValue,activityHoldUntilUtc=DateTime.MinValue;
+ DateTime lastToolCompletedUtc=DateTime.MinValue;
+ double activityGapEwmaSeconds=3.0,activityHoldSeconds=10.0;
+ const double ActivityMinHoldSeconds=10.0,ActivityMaxHoldSeconds=30.0;
  bool toolFault=false;
- void ResetToolActivity(){activeToolCalls=0;lastToolMarkerUtc=DateTime.MinValue;activityHoldUntilUtc=DateTime.MinValue;toolFault=false;}
+ void ResetToolActivity(){
+  activeToolCalls=0;lastToolMarkerUtc=DateTime.MinValue;
+  activityHoldUntilUtc=DateTime.MinValue;lastToolCompletedUtc=DateTime.MinValue;
+  activityGapEwmaSeconds=3.0;activityHoldSeconds=ActivityMinHoldSeconds;
+  toolFault=false;
+ }
  // Fixed safe categories only; no tool arguments or results cross Host IPC.
  void NoteToolActivity(string marker){
   DateTime now=DateTime.UtcNow;
   if(marker.StartsWith("Remote tool started",StringComparison.Ordinal)){
+   // Same adaptive 10..30s gap hold as the original divider indicator.
+   // A completion marker establishes only the *tool* boundary: there is no
+   // upstream authoritative "AI task finished/thinking" signal.
+   if(activeToolCalls==0 && lastToolCompletedUtc!=DateTime.MinValue){
+    double gap=(now-lastToolCompletedUtc).TotalSeconds;
+    if(gap>=0.05 && gap<=24.0){
+     activityGapEwmaSeconds=0.75*activityGapEwmaSeconds+0.25*gap;
+     activityHoldSeconds=Math.Min(ActivityMaxHoldSeconds,
+      Math.Max(ActivityMinHoldSeconds,1.8+2.7*activityGapEwmaSeconds));
+    }
+   }
    activeToolCalls=Math.Min(64,activeToolCalls+1);lastToolMarkerUtc=now;
    activityHoldUntilUtc=DateTime.MinValue;
   }else if(marker.StartsWith("Remote tool completed",StringComparison.Ordinal)){
    activeToolCalls=Math.Max(0,activeToolCalls-1);lastToolMarkerUtc=now;
-   if(activeToolCalls==0)activityHoldUntilUtc=now.AddSeconds(10);
+   if(activeToolCalls==0){
+    lastToolCompletedUtc=now;
+    activityHoldUntilUtc=now.AddSeconds(activityHoldSeconds);
+   }
    toolFault=false;
   }else if(marker.StartsWith("Remote tool failed",StringComparison.Ordinal)){
    activeToolCalls=Math.Max(0,activeToolCalls-1);lastToolMarkerUtc=now;
