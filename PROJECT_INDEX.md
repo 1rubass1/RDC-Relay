@@ -5,12 +5,13 @@
 **Repository:** https://github.com/1rubass1/RDC-Relay
 **Integration branch:** `development` (development-only records), with `main`/`stable` reserved for tested release source.
 **Machine:** STARMER; working tree `E:\Projects\GitSync\RDC\RDC-Relay Work`.
-**Methodology:** private `1rubass1/AI-Engineering-Playbook`, read-only here.
+**Methodology:** external read-only [AI DevBook](https://github.com/1rubass1/AI-DevBook), mode **dynamic `main`**, verified on **2026-11-13** at full `5d479bffc663f17aae7f721c89d5f47de8a7ffe6` (`0.7-draft`); entry [`00_START_HERE.md`](https://github.com/1rubass1/AI-DevBook/blob/main/00_START_HERE.md). **No copied central methodology or pinned project SHA**; `AGENTS.md` contains RDC-specific boundaries. Each new work cycle reads the available actual branch revision, recording the observed SHA. Old source was private `1rubass1/AI-Engineering-Playbook`, last documented `main@5cae0136c5eb0feaea4f00b8ba700199d58803c9` (2026-10-23); exact old contents were inaccessible during transition, so a full version diff is **NOT VERIFIED**. **Project files updated; existing agent instruction reloads are not confirmed** (see context/board).
 
 ## Begin work
 - [AGENTS.md](AGENTS.md) — choose role by Playbook and enforce boundaries.
 - [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) — stage snapshot and next step.
 - [COORDINATION/BOARD.md](COORDINATION/BOARD.md) — single task/role status authority.
+- [COORDINATION/CHAT_REGISTRY.md](COORDINATION/CHAT_REGISTRY.md) — existing project chat registry (legacy equivalent of `AI Work/Coordination/`).
 - [DECISIONS.md](DECISIONS.md) — substantial adopted decisions and open proposals.
 - [Development knowledge index](docs/dev/README.md) — categorized documents.
 
