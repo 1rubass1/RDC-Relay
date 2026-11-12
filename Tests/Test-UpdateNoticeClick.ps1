@@ -14,6 +14,15 @@ $fn = $ast.Find({
 }, $true)
 if (-not $fn) { throw 'Start-RuntimeInitialization is missing' }
 . ([scriptblock]::Create($fn.Extent.Text))
+foreach($name in @('Test-RdcAutoUpdateEnabled','Set-RdcAutoUpdateEnabled')){
+    $preference=$ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq $name
+    },$true)
+    if(-not $preference){throw ('Missing real preference code: '+$name)}
+    . ([scriptblock]::Create($preference.Extent.Text))
+}
 
 function Assert([bool]$ok,[string]$message) { if (-not $ok) { throw $message } }
 function Set-RemoteActionsEnabled([bool]$enabled) { $script:actionsEnabled = $enabled }
@@ -45,6 +54,8 @@ $nl = [Environment]::NewLine
 try {
     New-Item -Path $root -ItemType Directory -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $root 'update.ps1') -Value '# stub: do not execute'
+    $script:autoUpdatePreferencePath=Join-Path $root 'auto-update.opt-out'
+    Assert (Test-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath) 'Auto-update default must be ON'
 
     # The relaunch after an earlier successful update intentionally skips startup checks.
     $SkipUpdate = $true
@@ -73,16 +84,35 @@ try {
     Assert ($script:launches.Count -eq 2) 'Standard startup check was suppressed'
     Assert ($script:launches[1].Arguments -notcontains '-Force') 'Standard startup incorrectly forced an update'
 
+    # Turning OFF auto-update persists across subsequent launches, even when
+    # version checks and the clickable update notification remain enabled.
+    Set-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath $false
+    Assert (-not (Test-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath)) 'Auto-update OFF must be persisted'
+    $SkipUpdate = $false
+    $script:updateInstallRequested = $false
+    Start-RuntimeInitialization
+    Assert ($script:launches.Count -eq 2 -and $script:completeCount -eq 2) 'Auto-update OFF must not start updater during program launch'
+    $script:updateInstallRequested = $true
+    Start-RuntimeInitialization
+    Assert ($script:launches.Count -eq 3 -and
+        $script:launches[2].Arguments -contains '-Force') 'Explicit user click still starts forced updater while auto-update is OFF'
+    Set-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath $true
+    Assert (Test-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath) 'Auto-update ON removes opt-out marker'
+    $script:updateInstallRequested = $false
+    Start-RuntimeInitialization
+    Assert ($script:launches.Count -eq 4 -and
+        $script:launches[3].Arguments -notcontains '-Force') 'Startup update resumes after user checks Auto-update ON'
+
     # A missing updater should not launch a process or interrupt an active Remote.
     Remove-Item -LiteralPath (Join-Path $root 'update.ps1') -Force
     $SkipUpdate = $true
     $script:updateInstallRequested = $true
     $script:initializing = $false
     Start-RuntimeInitialization
-    Assert ($script:launches.Count -eq 2) 'Missing updater launched unexpectedly'
-    Assert ($script:completeCount -eq 2) 'Missing updater did not finish initialization'
+    Assert ($script:launches.Count -eq 4) 'Missing updater launched unexpectedly'
+    Assert ($script:completeCount -eq 3) 'Missing updater did not finish initialization'
 
-    Write-Output 'PASS: explicit update click overrides -SkipUpdate; -Force, normal startup and missing-updater cases'
+    Write-Output 'PASS: default ON; OFF blocks startup across restarts; manual click overrides OFF and -SkipUpdate; ON restores startup; missing updater safe'
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }

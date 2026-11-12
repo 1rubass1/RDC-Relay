@@ -31,6 +31,60 @@ $script:enableUpdateNotice = -not $OwnerGui
 $script:ownerUpdateDemoMode=[bool]($OwnerGui -and -not $SelfTest)
 if($script:ownerUpdateDemoMode){$script:enableUpdateNotice=$true}
 $script:updateInstallRequested = $false
+# Per-user auto-update startup-install preference. Missing marker = ON.
+# The passive version notice and explicit update-button action NEVER consult
+# this setting; a denied RC1 installer remains denied regardless of this value.
+$script:autoUpdatePreferencePath=Join-Path (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RDCRelayOwnerPilot') 'auto-update.opt-out'
+function Test-RdcAutoUpdateEnabled([string]$path) {
+    try {
+        if([string]::IsNullOrWhiteSpace($path)){return $false}
+        if(-not [IO.File]::Exists($path)){return $true}
+        $file=Get-Item -LiteralPath $path -Force -ErrorAction Stop
+        if(($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+           ($file.Length -ne 10 -and $file.Length -ne 11)){return $false}
+        return [IO.File]::ReadAllText($path,[Text.Encoding]::UTF8) -ceq 'enabled-v1'
+    }catch{return $false}
+}
+function Set-RdcAutoUpdateEnabled([string]$path,[bool]$enabled) {
+    if([string]::IsNullOrWhiteSpace($path)){throw 'RC1_AUTO_UPDATE_PATH_REQUIRED'}
+    $dir=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($path))
+    if(-not $dir){throw 'RC1_AUTO_UPDATE_PARENT_REQUIRED'}
+    if([IO.Directory]::Exists($dir) -and
+      ([IO.File]::GetAttributes($dir) -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+        throw 'RC1_AUTO_UPDATE_REPARSE_DENIED'
+    }
+    if($enabled){
+        if([IO.File]::Exists($path)){
+            if(([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+                throw 'RC1_AUTO_UPDATE_REPARSE_DENIED'
+            }
+            [IO.File]::Delete($path)
+        }
+        if([IO.File]::Exists($path)){throw 'RC1_AUTO_UPDATE_ENABLE_FAILED'}
+        return
+    }
+    if(-not [IO.Directory]::Exists($dir)){[void][IO.Directory]::CreateDirectory($dir)}
+    if(([IO.File]::GetAttributes($dir) -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+        throw 'RC1_AUTO_UPDATE_REPARSE_DENIED'
+    }
+    $temp=Join-Path $dir ('auto-update-'+[Guid]::NewGuid().ToString('N')+'.tmp')
+    $backup=Join-Path $dir ('auto-update-'+[Guid]::NewGuid().ToString('N')+'.bak')
+    try {
+        [IO.File]::WriteAllText($temp,'disabled-v1',(New-Object Text.UTF8Encoding($false)))
+        if([IO.File]::Exists($path)){
+            if(([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+                throw 'RC1_AUTO_UPDATE_REPARSE_DENIED'
+            }
+            [IO.File]::Replace($temp,$path,$backup)
+        }else{[IO.File]::Move($temp,$path)}
+        if([IO.File]::ReadAllText($path,[Text.Encoding]::UTF8) -cne 'disabled-v1'){
+            throw 'RC1_AUTO_UPDATE_VERIFY_FAILED'
+        }
+    }finally{
+        if([IO.File]::Exists($temp)){[IO.File]::Delete($temp)}
+        if([IO.File]::Exists($backup)){[IO.File]::Delete($backup)}
+    }
+}
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'RDCRelay.ico'
@@ -3795,6 +3849,17 @@ $quotaAuthItem.CheckOnClick=[bool]$OwnerGui
 $quotaAuthItem.Visible=[bool]$OwnerGui
 $quotaAuthItem.Enabled=$false
 if($OwnerGui){[void]$accountMenu.Items.Add($quotaAuthItem)}
+$autoUpdateAuthItem=New-Object Windows.Forms.ToolStripMenuItem
+$autoUpdateAuthItem.Text='Автообновление'
+$autoUpdateAuthItem.Name='rc1-auto-update-toggle'
+$autoUpdateAuthItem.AccessibleDescription='Автоматическая установка при запуске; проверка версии и кнопка обновления остаются доступными.'
+$autoUpdateAuthItem.CheckOnClick=[bool]$OwnerGui
+$autoUpdateAuthItem.Visible=[bool]$OwnerGui
+$autoUpdateAuthItem.Enabled=[bool]$OwnerGui
+if($OwnerGui){
+    $autoUpdateAuthItem.Checked=[bool](Test-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath)
+    [void]$accountMenu.Items.Add($autoUpdateAuthItem)
+}
 
 $top.Controls.Add($statusDot,0,0)
 $top.SetRowSpan($statusDot,2)
@@ -5848,7 +5913,8 @@ function Start-RuntimeInitialization {
     $updaterPath = Join-Path $root 'update.ps1'
     # -SkipUpdate only suppresses the automatic startup check after an update.
     # An explicit click on the update notice must ALWAYS run the updater.
-    if ((-not $SkipUpdate -or $script:updateInstallRequested) -and
+    if (($script:updateInstallRequested -or
+         (-not $SkipUpdate -and (Test-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath))) -and
         (Test-Path -LiteralPath $updaterPath)) {
         try {
             Set-State 'Проверка обновлений…' 'Проверяю установленную версию; окно остаётся доступным.' ([Drawing.Color]::Khaki)
@@ -6044,6 +6110,21 @@ $quotaAuthItem.Add_Click({
     # The Tray Host retains its original automatic per-account OAuth and
     # 30-minute quota poll. Do not launch a second browser client from GUI:
     # on reenable the Host's next 15-second tick resumes that workflow.
+})
+$autoUpdateAuthItem.Add_Click({
+    if(-not $OwnerGui){return}
+    try{
+        Set-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath ([bool]$autoUpdateAuthItem.Checked)
+    }catch{
+        $autoUpdateAuthItem.Checked=[bool](Test-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath)
+        [void][Windows.Forms.MessageBox]::Show('Не удалось сохранить настройку автообновления.',
+            'RDC Relay',[Windows.Forms.MessageBoxButtons]::OK,[Windows.Forms.MessageBoxIcon]::Warning)
+    }
+})
+$accountMenu.Add_Opening({
+    if($OwnerGui){
+        $autoUpdateAuthItem.Checked=[bool](Test-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath)
+    }
 })
 $accountButton.Add_Click({
     $accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))

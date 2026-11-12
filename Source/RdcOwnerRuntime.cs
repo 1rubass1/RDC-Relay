@@ -131,7 +131,7 @@ public static class RdcOwnerGuiStartupNotice {
 public sealed class RdcOwnerTrayMenu : IDisposable {
  public readonly ContextMenuStrip Menu=new ContextMenuStrip();
  public readonly ToolStripMenuItem OpenItem,SwitchItem,ReconnectItem,
-  DevicesItem,QuotaItem,StartStopItem,HelpItem,ExitItem;
+  DevicesItem,QuotaItem,AutoUpdateItem,StartStopItem,HelpItem,ExitItem;
  public RdcOwnerTrayMenu(Action<string> onClick) {
   if(onClick==null)throw new ArgumentNullException("onClick");
   OpenItem=Item("Открыть окно RDC Relay","OPEN",onClick);
@@ -142,6 +142,11 @@ public sealed class RdcOwnerTrayMenu : IDisposable {
   QuotaItem.Name="rc1-tray-quota-toggle";
   QuotaItem.CheckOnClick=true;
   QuotaItem.Click+=(s,e)=>onClick(QuotaItem.Checked?"QUOTA_ON":"QUOTA_OFF");
+  AutoUpdateItem=new ToolStripMenuItem("Автообновление");
+  AutoUpdateItem.Name="rc1-tray-auto-update-toggle";
+  AutoUpdateItem.CheckOnClick=true;
+  AutoUpdateItem.ToolTipText="Установка при запуске; поиск обновлений и ручная кнопка работают отдельно";
+  AutoUpdateItem.Click+=(s,e)=>onClick(AutoUpdateItem.Checked?"AUTO_UPDATE_ON":"AUTO_UPDATE_OFF");
   StartStopItem=new ToolStripMenuItem("Запустить");
   StartStopItem.Name="rc1-tray-start-stop";
   StartStopItem.Click+=(s,e)=>onClick(StartStopItem.Text=="Остановить"?"STOP":"START");
@@ -156,6 +161,7 @@ public sealed class RdcOwnerTrayMenu : IDisposable {
   Menu.Items.Add(new ToolStripSeparator());
   Menu.Items.Add(DevicesItem);
   Menu.Items.Add(QuotaItem);
+  Menu.Items.Add(AutoUpdateItem);
   Menu.Items.Add(new ToolStripSeparator());
   Menu.Items.Add(HelpItem);
   Menu.Items.Add(new ToolStripSeparator());
@@ -168,13 +174,16 @@ public sealed class RdcOwnerTrayMenu : IDisposable {
   return item;
  }
  public void Refresh(bool managed,bool observed,bool ownedRunning,
-   bool ownedReady,bool accountBusy,bool shuttingDown,bool quotaEnabled) {
+   bool ownedReady,bool accountBusy,bool shuttingDown,bool quotaEnabled,
+  bool autoUpdateEnabled) {
   OpenItem.Enabled=!shuttingDown;
   SwitchItem.Enabled=managed&&!observed&&ownedRunning&&ownedReady&&!accountBusy&&!shuttingDown;
   ReconnectItem.Enabled=managed&&!observed&&ownedRunning&&!accountBusy&&!shuttingDown;
   DevicesItem.Enabled=(managed||observed)&&!shuttingDown;
   QuotaItem.Enabled=managed&&!observed&&!shuttingDown;
   QuotaItem.Checked=quotaEnabled;
+  AutoUpdateItem.Enabled=!shuttingDown;
+  AutoUpdateItem.Checked=autoUpdateEnabled;
   StartStopItem.Text=ownedRunning?"Остановить":"Запустить";
   StartStopItem.Enabled=managed&&!observed&&!accountBusy&&!shuttingDown;
   HelpItem.Enabled=!shuttingDown;
@@ -229,6 +238,60 @@ public static class RdcOwnerTrayQuotaPreference {
    }else File.Move(temp,absolute);
    if(File.ReadAllText(absolute,Encoding.UTF8)!="disabled-v1")
     throw new IOException("RC1_QUOTA_SETTING_VERIFY_FAILED");
+  }finally{
+   if(File.Exists(temp))File.Delete(temp);
+   if(File.Exists(backup))File.Delete(backup);
+  }
+ }
+}
+// A durable, per-user auto-update *startup-install* opt-out, independent of
+// update availability checks, version labels, manual clicks and RC1 release
+// safety policy. Missing file is ON; corrupt/unreadable setting fails closed.
+public static class RdcOwnerTrayAutoUpdatePreference {
+ public static string CurrentPath {
+  get {return Path.Combine(Environment.GetFolderPath(
+    Environment.SpecialFolder.LocalApplicationData),"RDCRelayOwnerPilot","auto-update.opt-out");}
+ }
+ public static bool Enabled(string path){
+  try{
+   if(String.IsNullOrWhiteSpace(path))return false;
+   if(!File.Exists(path))return true;
+   var info=new FileInfo(path);
+   if((info.Attributes&FileAttributes.ReparsePoint)!=0)return false;
+   if(info.Length!=10&&info.Length!=11)return false;
+   return File.ReadAllText(path,Encoding.UTF8)=="enabled-v1";
+  }catch{return false;}
+ }
+ public static void Set(string path,bool enabled){
+  if(String.IsNullOrWhiteSpace(path))throw new InvalidOperationException("RC1_AUTO_UPDATE_PATH_REQUIRED");
+  string full=Path.GetFullPath(path);
+  string dir=Path.GetDirectoryName(full);
+  if(String.IsNullOrEmpty(dir))throw new InvalidOperationException("RC1_AUTO_UPDATE_PARENT_REQUIRED");
+  if(Directory.Exists(dir)&&(File.GetAttributes(dir)&FileAttributes.ReparsePoint)!=0)
+   throw new InvalidOperationException("RC1_AUTO_UPDATE_REPARSE_DENIED");
+  if(enabled){
+   if(File.Exists(full)){
+    if((File.GetAttributes(full)&FileAttributes.ReparsePoint)!=0)
+     throw new InvalidOperationException("RC1_AUTO_UPDATE_REPARSE_DENIED");
+    File.Delete(full);
+   }
+   if(File.Exists(full))throw new IOException("RC1_AUTO_UPDATE_ENABLE_FAILED");
+   return;
+  }
+  if(!Directory.Exists(dir))Directory.CreateDirectory(dir);
+  if((File.GetAttributes(dir)&FileAttributes.ReparsePoint)!=0)
+   throw new InvalidOperationException("RC1_AUTO_UPDATE_REPARSE_DENIED");
+  string temp=Path.Combine(dir,"auto-update-"+Guid.NewGuid().ToString("N")+".tmp");
+  string backup=Path.Combine(dir,"auto-update-"+Guid.NewGuid().ToString("N")+".bak");
+  try{
+   File.WriteAllText(temp,"disabled-v1",new UTF8Encoding(false));
+   if(File.Exists(full)){
+    if((File.GetAttributes(full)&FileAttributes.ReparsePoint)!=0)
+     throw new InvalidOperationException("RC1_AUTO_UPDATE_REPARSE_DENIED");
+    File.Replace(temp,full,backup);
+   }else File.Move(temp,full);
+   if(File.ReadAllText(full,Encoding.UTF8)!="disabled-v1")
+    throw new IOException("RC1_AUTO_UPDATE_VERIFY_FAILED");
   }finally{
    if(File.Exists(temp))File.Delete(temp);
    if(File.Exists(backup))File.Delete(backup);
@@ -597,7 +660,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
    try{running=managedMode&&managedProcess!=null&&managedProcess.Running;}catch{}
    trayMenu.Refresh(managedMode,observedMode,running,managedState=="Ready",
     accountLogoutProcess!=null,disposed||exitRequested,
-    RdcOwnerTrayQuotaPreference.Enabled(RdcOwnerTrayQuotaPreference.CurrentPath));
+    RdcOwnerTrayQuotaPreference.Enabled(RdcOwnerTrayQuotaPreference.CurrentPath),
+    RdcOwnerTrayAutoUpdatePreference.Enabled(RdcOwnerTrayAutoUpdatePreference.CurrentPath));
   }
  }
  static bool ConfirmTrayAction(string question,string title){
@@ -628,6 +692,21 @@ public sealed class RdcOwnerRuntime : IDisposable {
    }catch{
     MessageBox.Show("Не удалось открыть управление устройствами.",
      "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+   }
+   return;
+  }
+  if(command=="AUTO_UPDATE_ON"||command=="AUTO_UPDATE_OFF"){
+   lock(gate){
+    if(disposed||exitRequested){RefreshTrayMenu();return;}
+    try{
+     RdcOwnerTrayAutoUpdatePreference.Set(
+      RdcOwnerTrayAutoUpdatePreference.CurrentPath,command=="AUTO_UPDATE_ON");
+     Append("host","automatic startup update preference changed by tray");
+    }catch{
+     MessageBox.Show("Не удалось сохранить настройку автообновления.",
+      "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+    }
+    RefreshTrayMenu(); // re-read persisted truth after any write or failure
    }
    return;
   }
