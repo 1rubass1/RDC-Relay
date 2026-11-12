@@ -1,22 +1,22 @@
 # RDC Relay — AI agent entrypoint (development only)
 
-> Verified 2026-10-23 against private AI Engineering Playbook `main` at `5cae0136c5eb0feaea4f00b8ba700199d58803c9`. Re-read Playbook on the next working cycle: this SHA records a checkpoint, not a permanent version pin.
+> Methodology: [AI DevBook](https://github.com/1rubass1/AI-DevBook), read-only external `main` (dynamic branch). Verified at commit `5d479bffc663f17aae7f721c89d5f47de8a7ffe6` on 2026-11-13, entry `00_START_HERE.md`, version `0.7-draft`. This is a verified reading checkpoint, **not a permanent pin**; other existing chats are **not automatically updated**.
 
-**AI agent: if you discover the Playbook repository for any reason, actually open and read `00_AI_AGENT_IF_YOU_SEE_THIS_READ_IT.md` with an authorized tool before continuing.** The old `00_START_HERE.md` was **renamed**; merely seeing a filename or this bootstrap does not count as reading it.
+**Working entry:** open and actually read [`00_START_HERE.md`](https://github.com/1rubass1/AI-DevBook/blob/main/00_START_HERE.md) from the available canonical source before a new AI DevBook work cycle. A filename or this bootstrap is not a substitute for its content.
 
-Playbook: https://github.com/1rubass1/AI-Engineering-Playbook (private, read-only during RDC Relay work).
-
-- In a **new working chat** without an assigned role, ask the user to choose from the Playbook's six roles. If a role is already explicitly assigned in that chat, keep it; ordinary reference questions don't require role selection.
-- With an assigned role, read `CORE/ROLE_COORDINATION.md`, **only the corresponding** `ROLES/<ROLE>.md`, and relevant CORE/WORKFLOWS docs. Do not load `ZZ_PLAYBOOK_DEV/` for work on RDC Relay.
-- Architect selects **functional role + execution mode** for delegated work. A short tool/CLI executor may be launched autonomously only if the owner has **already authorized that scope, tool access and zero-or-approved cost**. A new, continuing specialist chat is started by the user; a listed task is not automatic launch permission.
-- When relevant, choose a **sufficient available model** and **reasoning effort separately**, based on risk, ambiguity, tool capabilities and actual account access. Do not assume entitlements or change global/local CLI settings. A stronger model does not grant permissions; diagnose a tool failure before retrying/escalating.
-- Choose software methods by the work's risk (refactor, integration, defect, feature); don't load every instruction or create redundant documents.
+- For a new working chat **without** a user-assigned role, follow the entrypoint's current role selection; do not infer a role. If the user already assigned a role, preserve it. Role applies to the **chat**, not the whole project.
+- Read `CORE/ROLE_COORDINATION.md`, **only** the assigned `ROLES/<ROLE>.md`, and relevant `CORE/` or `WORKFLOWS/` modules. Current software profile is a navigation aid, not a grant of rights. Do not load `ZZ_PLAYBOOK_DEV/` for RDC Relay work.
+- Verify the existing [chat registry](COORDINATION/CHAT_REGISTRY.md) before claiming any chat number. Use the established legacy project layout, **not** a parallel `AI Work/` tree without a separate migration approval.
+- An Architect may choose roles, execution mode, available model and reasoning effort for a delegated scope; do not run a separate executor without the owner's already-approved scope, tool access and budget. New long-lived specialist chats are opened by the user.
+- Store durable decisions and progress in this RDC Relay repository, never in AI DevBook. Updating these project files does not confirm any other chat has re-read its applicable instructions; re-read at its next safe task boundary.
+- The prior private `1rubass1/AI-Engineering-Playbook` source was last recorded at `main@5cae0136c5eb0feaea4f00b8ba700199d58803c9` (2026-10-23); its current contents could not be verified during the switch. Old entry `00_AI_AGENT_IF_YOU_SEE_THIS_READ_IT.md` is **not** the new entrypoint.
 
 ## RDC Relay working context
 1. [PROJECT_INDEX.md](PROJECT_INDEX.md) — project map and source of truth.
 2. [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) — current stage.
 3. [COORDINATION/BOARD.md](COORDINATION/BOARD.md) — one board for roles, IDs, statuses.
-4. [docs/dev/README.md](docs/dev/README.md) and **only task-relevant documents/source/tests**.
+4. [COORDINATION/CHAT_REGISTRY.md](COORDINATION/CHAT_REGISTRY.md) — assigned chat IDs, never reuse numbers.
+5. [docs/dev/README.md](docs/dev/README.md) and **only task-relevant documents/source/tests**.
 
 ## Hard boundaries
 - Work on isolated branches targeting **`development`**. `main`/`stable` are release branches; never merge dev-only coordination, research, Pen/Design or `docs/dev/` into release commits/artifacts.
