@@ -25,8 +25,8 @@ Check ([RdcOwnerAccountMenuRenderer]::CornerRadius -eq 6 -and
  $guiText.Contains('Rounded(r,6f)')) 'menu corner radius 6px exactly matches Account rounded button'
 $colors=New-Object RdcMenuColorTable
 $render=New-Object RdcOwnerAccountMenuRenderer -ArgumentList @($colors)
-$account=New-Object Windows.Forms.ContextMenuStrip
-$tray=New-Object Windows.Forms.ContextMenuStrip
+$account=New-Object RdcOwnerPaddedContextMenuStrip
+$tray=New-Object RdcOwnerPaddedContextMenuStrip
 try{
  foreach($menu in @($account,$tray)){
   $menu.Renderer=New-Object RdcOwnerAccountMenuRenderer -ArgumentList @((New-Object RdcMenuColorTable))
@@ -44,7 +44,23 @@ try{
    [void]$menu.Items.Add($check)
   }
   $menu.Size=[Drawing.Size]::new(248,116)
+  $menu.PerformLayout()
   [RdcOwnerAccountMenuRenderer]::ApplyRoundedRegion($menu)
+ }
+ Check ([RdcOwnerPaddedContextMenuStrip]::ExtraEdgeSpace -eq
+  ([RdcOwnerAccountMenuRenderer]::CornerRadius + 1) -and
+  $guiText.Contains('$accountMenu = if($OwnerGui){New-Object RdcOwnerPaddedContextMenuStrip}') -and
+  $hostText.Contains('public readonly ContextMenuStrip Menu=new RdcOwnerPaddedContextMenuStrip();')) 'production Owner GUI and tray construct custom 7px top/bottom-padded popups'
+ foreach($menu in @($account,$tray)){
+  $menuName=if([object]::ReferenceEquals($menu,$account)){'Account'}else{'Tray'}
+  $menu.PerformLayout()
+  $first=$menu.Items[0]
+  $last=$menu.Items[$menu.Items.Count-1]
+  Check ($menu.Padding.Top -eq 9 -and $menu.Padding.Bottom -eq 9 -and
+   $menu.Padding.Left -eq 33 -and $menu.Padding.Right -eq 1 -and
+   $first.Bounds.Top -eq 9 -and
+   ($menu.Height-$last.Bounds.Bottom) -ge 9) ($menuName+
+   ' has 7px additional clear space at top and bottom without changing left/right gutter')
  }
  Check ($account.BackColor.ToArgb() -eq [Drawing.Color]::FromArgb(38,41,46).ToArgb() -and
   $tray.BackColor.ToArgb() -eq $account.BackColor.ToArgb() -and
@@ -122,6 +138,16 @@ try{
    $menu.DrawToBitmap($bitmap,[Drawing.Rectangle]::new(0,0,$bitmap.Width,$bitmap.Height))
    $selected=$bitmap.GetPixel(28,$menu.Items[0].Bounds.Top+[int]($menu.Items[0].Height/2))
    [void]$selectionColors.Add($selected.ToArgb())
+   if(-not [Windows.Forms.SystemInformation]::HighContrast){
+    $cornerX=$menu.Items[0].Bounds.Left+3
+    $cornerY=$menu.Items[0].Bounds.Top+1
+    $corner=$bitmap.GetPixel($cornerX,$cornerY)
+    Check ($corner.ToArgb() -ne $menu.BackColor.ToArgb()) (
+     $label+' selection rectangle has colored sharp upper-left corner, not rounded')
+    $bottomCorner=$bitmap.GetPixel($cornerX,$menu.Items[0].Bounds.Bottom-2)
+    Check ($bottomCorner.ToArgb() -ne $menu.BackColor.ToArgb()) (
+     $label+' selection rectangle has sharp lower-left corner, outer popup remains rounded')
+   }
    Check ([Windows.Forms.SystemInformation]::HighContrast -or
       ($selected.R -eq 65 -and $selected.G -eq 54 -and $selected.B -eq 86)) (
       $label+' selected row uses explicit purple compositing instead of system hover variant')

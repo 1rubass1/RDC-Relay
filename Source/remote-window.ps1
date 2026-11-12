@@ -675,13 +675,16 @@ public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
                 SmoothingMode prior=e.Graphics.SmoothingMode;
                 e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
                 try{
-                    using(GraphicsPath selected=RoundedMenuPath(
-                          new RectangleF(2.5f,0.5f,Math.Max(0,item.Width-5f),
-                                         Math.Max(0,item.Height-1f))))
+                    // Selection outline is intentionally RECTANGULAR; only
+                    // the outer menu window retains the 6px rounded region.
+                    RectangleF selected = new RectangleF(
+                        2.5f, 0.5f, Math.Max(0,item.Width-5f),
+                        Math.Max(0,item.Height-1f));
                     using(Brush fill=new SolidBrush(Color.FromArgb(128,91,67,126)))
                     using(Pen edge=new Pen(Color.FromArgb(123,95,162),1f)){
-                        e.Graphics.FillPath(fill,selected);
-                        e.Graphics.DrawPath(edge,selected);
+                        e.Graphics.FillRectangle(fill,selected);
+                        e.Graphics.DrawRectangle(edge,selected.X,selected.Y,
+                                                 selected.Width,selected.Height);
                     }
                 }finally{e.Graphics.SmoothingMode=prior;}
             }
@@ -691,6 +694,20 @@ public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
     protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) {
         if (IsCheckItem(e.Item)) return;
         base.OnRenderItemCheck(e);
+    }
+}
+
+// Native ContextMenuStrip ignores direct Padding assignments in its
+// ToolStripDropDownMenu layout. Override DefaultPadding instead so first and
+// last rows clear the outer popup's 6px rounded corners by one extra pixel.
+public sealed class RdcOwnerPaddedContextMenuStrip : ContextMenuStrip {
+    public const int ExtraEdgeSpace = RdcOwnerAccountMenuRenderer.CornerRadius + 1;
+    protected override Padding DefaultPadding {
+        get {
+            Padding original = base.DefaultPadding;
+            return new Padding(original.Left, original.Top + ExtraEdgeSpace,
+                               original.Right, original.Bottom + ExtraEdgeSpace);
+        }
     }
 }
 
@@ -3926,7 +3943,7 @@ $tip.SetToolTip($helpButton,'Справка / О программе')
 $menuColors = New-Object RdcMenuColorTable
 $menuRenderer = New-Object Windows.Forms.ToolStripProfessionalRenderer -ArgumentList $menuColors
 
-$accountMenu = New-Object Windows.Forms.ContextMenuStrip
+$accountMenu = if($OwnerGui){New-Object RdcOwnerPaddedContextMenuStrip}else{New-Object Windows.Forms.ContextMenuStrip}
 $accountMenu.BackColor = [Drawing.Color]::FromArgb(38,41,46)
 $accountMenu.ForeColor = [Drawing.Color]::Gainsboro
 $accountMenu.Renderer = if($OwnerGui){New-Object RdcOwnerAccountMenuRenderer -ArgumentList $menuColors}else{$menuRenderer}
