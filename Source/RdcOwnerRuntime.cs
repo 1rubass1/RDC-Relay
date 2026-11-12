@@ -7,6 +7,7 @@ using System.IO;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -125,6 +126,179 @@ public static class RdcOwnerGuiStartupNotice {
    (nowUtc-spawnedUtc).TotalSeconds>=GraceSeconds;
  }
 }
+// Mirror of the GUI renderer, unchanged, compiled in the independent Tray Host.
+// It must stay pixel-equivalent to the embedded original GUI style block.
+public class RdcMenuColorTable : ProfessionalColorTable {
+    private readonly Color accent = Color.FromArgb(191,118,67);
+    private readonly Color accentSoft = Color.FromArgb(166,98,55);
+
+    public RdcMenuColorTable() {
+        UseSystemColors = false;
+    }
+
+    public override Color ImageMarginGradientBegin { get { return accent; } }
+    public override Color ImageMarginGradientMiddle { get { return accent; } }
+    public override Color ImageMarginGradientEnd { get { return accent; } }
+
+    public override Color CheckBackground { get { return accent; } }
+    public override Color CheckPressedBackground { get { return accentSoft; } }
+    public override Color CheckSelectedBackground { get { return accent; } }
+
+    // Keep the selection outline fully opaque, but let the menu surface show
+    // through the purple interior at exactly half alpha.
+    public override Color MenuItemSelected { get { return Color.FromArgb(128,91,67,126); } }
+    public override Color MenuItemBorder { get { return Color.FromArgb(123,95,162); } }
+    public override Color MenuItemPressedGradientBegin { get { return Color.FromArgb(128,74,55,103); } }
+    public override Color MenuItemPressedGradientMiddle { get { return Color.FromArgb(128,74,55,103); } }
+    public override Color MenuItemPressedGradientEnd { get { return Color.FromArgb(128,74,55,103); } }
+}
+
+// Owner-only checkbox affordance: the orange image-margin is shared by all
+// Account commands, so show an actual high-contrast square for the quota toggle.
+// ToolStripMenuItem still owns Checked/CheckOnClick, keyboard and accessibility.
+public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
+    // Both Account and tray share the same user-affordance painter.
+    // Names are intentionally bounded to the four known checkbox actions.
+    private const string QuotaItemName = "rc1-quota-display-toggle";
+    private const string AutoUpdateItemName = "rc1-auto-update-toggle";
+    private const string TrayQuotaItemName = "rc1-tray-quota-toggle";
+    private const string TrayAutoUpdateItemName = "rc1-tray-auto-update-toggle";
+    public const int CornerRadius = 6; // RdcRoundedButton.OnPaint Rounded(r,6f)
+    private static bool IsCheckItem(ToolStripItem item) {
+        if (item == null) return false;
+        return item.Name == QuotaItemName || item.Name == AutoUpdateItemName ||
+               item.Name == TrayQuotaItemName || item.Name == TrayAutoUpdateItemName;
+    }
+
+    public RdcOwnerAccountMenuRenderer(ProfessionalColorTable colors) : base(colors) { }
+
+    // Owner Account only: remove the orange image-column fill without
+    // changing the shared color table (used by the Help and legacy menus).
+    // Use the actual menu BackColor so the glyph gutter joins the text area.
+    protected override void OnRenderImageMargin(ToolStripRenderEventArgs e) {
+        using (Brush brush = new SolidBrush(e.ToolStrip.BackColor))
+            e.Graphics.FillRectangle(brush, e.AffectedBounds);
+    }
+
+    public static Rectangle QuotaBoxBounds(ToolStripItem item) {
+        const int side = 16;
+        return new Rectangle(6, Math.Max(0, (item.Height - side) / 2), side, side);
+    }
+
+    public static void PaintQuotaBox(Graphics g, ToolStripMenuItem item) {
+        Rectangle rect = QuotaBoxBounds(item);
+        if (rect.Right > item.Width || rect.Bottom > item.Height) return;
+
+        SmoothingMode oldSmoothing = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        try {
+            // Let Windows supply actual contrast colors when High Contrast is on.
+            bool highContrast = SystemInformation.HighContrast;
+            Color fill = highContrast
+                ? (item.Checked ? SystemColors.Highlight : SystemColors.Window)
+                : (item.Enabled
+                  ? (item.Checked ? Color.FromArgb(63, 46, 82) : Color.FromArgb(37, 40, 47))
+                  : Color.FromArgb(66, 66, 70));
+            Color outline = highContrast
+                ? (item.Checked ? SystemColors.HighlightText : SystemColors.WindowText)
+                : (!item.Enabled ? Color.FromArgb(148, 148, 148)
+                  : (item.Selected ? Color.White
+                  : (item.Checked ? Color.FromArgb(255, 224, 160) : Color.FromArgb(238, 238, 238))));
+            using (Brush brush = new SolidBrush(fill))
+                g.FillRectangle(brush, rect);
+            using (Pen border = new Pen(outline, 1.35f))
+                g.DrawRectangle(border, rect.X + 0.65f, rect.Y + 0.65f,
+                                rect.Width - 1.3f, rect.Height - 1.3f);
+            if (item.Checked) {
+                Color tick = highContrast ? SystemColors.HighlightText
+                    : (item.Enabled ? Color.White : Color.FromArgb(195, 195, 195));
+                using (Pen pen = new Pen(tick, 2.15f)) {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    pen.LineJoin = LineJoin.Round;
+                    g.DrawLines(pen, new PointF[] {
+                        new PointF(rect.X + 3.5f, rect.Y + 8.0f),
+                        new PointF(rect.X + 6.6f, rect.Y + 11.2f),
+                        new PointF(rect.X + 12.3f, rect.Y + 4.9f)
+                    });
+                }
+            }
+        } finally { g.SmoothingMode = oldSmoothing; }
+    }
+
+    // Single contract for both popup surfaces. The Region clips the actual
+    // native drop-down HWND, not just a painted fake rounded border.
+    public static GraphicsPath RoundedMenuPath(RectangleF bounds) {
+        GraphicsPath path = new GraphicsPath();
+        float r = Math.Min(CornerRadius, Math.Min(bounds.Width,bounds.Height)/2f);
+        if(r<=0){path.AddRectangle(bounds);return path;}
+        float d=2f*r;
+        path.AddArc(bounds.Left,bounds.Top,d,d,180f,90f);
+        path.AddArc(bounds.Right-d,bounds.Top,d,d,270f,90f);
+        path.AddArc(bounds.Right-d,bounds.Bottom-d,d,d,0f,90f);
+        path.AddArc(bounds.Left,bounds.Bottom-d,d,d,90f,90f);
+        path.CloseFigure();
+        return path;
+    }
+    public static void ApplyRoundedRegion(ContextMenuStrip menu) {
+        if(menu==null||menu.IsDisposed||menu.Width<=CornerRadius*2||
+           menu.Height<=CornerRadius*2)return;
+        using(GraphicsPath p=RoundedMenuPath(new RectangleF(0f,0f,menu.Width,menu.Height))){
+            Region previous=menu.Region;
+            menu.Region=new Region(p);
+            if(previous!=null)previous.Dispose();
+        }
+    }
+    public static void ConfigureOwnerMenu(ContextMenuStrip menu){
+        if(menu==null)throw new ArgumentNullException("menu");
+        menu.BackColor=Color.FromArgb(38,41,46);
+        menu.ForeColor=Color.Gainsboro;
+        // Caller owns the renderer; this helper only owns the shared shape.
+        menu.SizeChanged+=(s,e)=>ApplyRoundedRegion(menu);
+        menu.Opening+=(s,e)=>ApplyRoundedRegion(menu);
+        ApplyRoundedRegion(menu);
+    }
+    public static Rectangle SeparatorLineBounds(ToolStrip strip,ToolStripItem item){
+        if(strip==null||item==null)return Rectangle.Empty;
+        // Full-width rule within the curved border, bypassing the default
+        // Windows image-column indentation on the left.
+        return new Rectangle(2,item.Bounds.Top+item.Height/2,
+                             Math.Max(0,strip.Width-4),1);
+    }
+    protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e){
+        if(!(e.ToolStrip is ContextMenuStrip)){base.OnRenderSeparator(e);return;}
+        Rectangle line=SeparatorLineBounds(e.ToolStrip,e.Item);
+        if(line.Width<=0)return;
+        Color ink=SystemInformation.HighContrast
+             ?SystemColors.WindowText:Color.FromArgb(105,112,124);
+        using(Brush b=new SolidBrush(ink))e.Graphics.FillRectangle(b,line);
+    }
+    protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e){
+        if(!(e.ToolStrip is ContextMenuStrip)){base.OnRenderToolStripBorder(e);return;}
+        Rectangle bounds=e.ToolStrip.ClientRectangle;
+        if(bounds.Width<3||bounds.Height<3)return;
+        SmoothingMode prev=e.Graphics.SmoothingMode;
+        e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+        try{
+            using(GraphicsPath p=RoundedMenuPath(
+                   new RectangleF(0.5f,0.5f,bounds.Width-1f,bounds.Height-1f)))
+            using(Pen outline=new Pen(SystemInformation.HighContrast
+                   ?SystemColors.WindowText:Color.FromArgb(110,118,130),1f)){
+                e.Graphics.DrawPath(outline,p);
+            }
+        }finally{e.Graphics.SmoothingMode=prev;}
+    }
+    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e) {
+        base.OnRenderMenuItemBackground(e);
+        ToolStripMenuItem item = e.Item as ToolStripMenuItem;
+        if (item != null && IsCheckItem(item)) PaintQuotaBox(e.Graphics, item);
+    }
+    protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) {
+        if (IsCheckItem(e.Item)) return;
+        base.OnRenderItemCheck(e);
+    }
+}
+
 // Native tray menu: only presentation and user-click dispatch live here.
 // The owning Host decides which operations are allowed, with its existing
 // private Job and observed/read-only guards. Testable without Host startup.
@@ -134,6 +308,10 @@ public sealed class RdcOwnerTrayMenu : IDisposable {
   DevicesItem,QuotaItem,AutoUpdateItem,StartStopItem,HelpItem,ExitItem;
  public RdcOwnerTrayMenu(Action<string> onClick) {
   if(onClick==null)throw new ArgumentNullException("onClick");
+  // Exact same palette, checkbox glyphs, full-width separators and 6px
+  // native rounded popup Region as the main-window Account menu.
+  Menu.Renderer=new RdcOwnerAccountMenuRenderer(new RdcMenuColorTable());
+  RdcOwnerAccountMenuRenderer.ConfigureOwnerMenu(Menu);
   OpenItem=Item("Открыть окно RDC Relay","OPEN",onClick);
   SwitchItem=Item("Сменить аккаунт","SWITCH_ACCOUNT",onClick);
   ReconnectItem=Item("Переподключить","RECONNECT",onClick);

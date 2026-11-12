@@ -5,10 +5,10 @@ Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 $root=Split-Path -Parent $PSScriptRoot
 $hostFile=Join-Path $root 'Source\RdcOwnerRuntime.cs'
 $source=[IO.File]::ReadAllText($hostFile,[Text.Encoding]::UTF8)
-$first=$source.IndexOf('// Native tray menu:',[StringComparison]::Ordinal)
+$first=$source.IndexOf('// Mirror of the GUI renderer, unchanged',[StringComparison]::Ordinal)
 $last=$source.IndexOf('public sealed class RdcOwnerRuntime : IDisposable {',$first,[StringComparison]::Ordinal)
 if($first -lt 0 -or $last -le $first){throw 'OWNER_TRAY_MENU_SOURCE_MARKERS_MISSING'}
-$menuSource='using System; using System.IO; using System.Text; using System.Drawing; using System.Windows.Forms;'+
+$menuSource='using System; using System.IO; using System.Text; using System.Drawing; using System.Drawing.Drawing2D; using System.Windows.Forms;'+
  [Environment]::NewLine+$source.Substring($first,$last-$first)
 Add-Type -TypeDefinition $menuSource -ReferencedAssemblies @('System.dll','System.Core.dll','System.Drawing.dll','System.Windows.Forms.dll')
 $pass=0;$fail=0

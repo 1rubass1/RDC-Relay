@@ -29,6 +29,7 @@ $names=@(
  'Test-V16TrayGuiActivation.ps1',
  'Test-V16TrayV04Visual.ps1',
  'Test-V16OwnerTrayMenu.ps1',
+ 'Test-V16OwnerMenuVisual.ps1',
  'Test-V16AccountButtonCentering.ps1',
  'Test-V16AppIconV04.ps1',
  'Test-V16ReleaseInstallPolicy.ps1','Test-V16ReleaseSetupSandbox.ps1',

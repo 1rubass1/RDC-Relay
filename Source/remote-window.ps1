@@ -522,7 +522,18 @@ public class RdcMenuColorTable : ProfessionalColorTable {
 // Account commands, so show an actual high-contrast square for the quota toggle.
 // ToolStripMenuItem still owns Checked/CheckOnClick, keyboard and accessibility.
 public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
+    // Both Account and tray share the same user-affordance painter.
+    // Names are intentionally bounded to the four known checkbox actions.
     private const string QuotaItemName = "rc1-quota-display-toggle";
+    private const string AutoUpdateItemName = "rc1-auto-update-toggle";
+    private const string TrayQuotaItemName = "rc1-tray-quota-toggle";
+    private const string TrayAutoUpdateItemName = "rc1-tray-auto-update-toggle";
+    public const int CornerRadius = 6; // RdcRoundedButton.OnPaint Rounded(r,6f)
+    private static bool IsCheckItem(ToolStripItem item) {
+        if (item == null) return false;
+        return item.Name == QuotaItemName || item.Name == AutoUpdateItemName ||
+               item.Name == TrayQuotaItemName || item.Name == TrayAutoUpdateItemName;
+    }
 
     public RdcOwnerAccountMenuRenderer(ProfessionalColorTable colors) : base(colors) { }
 
@@ -580,14 +591,75 @@ public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
         } finally { g.SmoothingMode = oldSmoothing; }
     }
 
+    // Single contract for both popup surfaces. The Region clips the actual
+    // native drop-down HWND, not just a painted fake rounded border.
+    public static GraphicsPath RoundedMenuPath(RectangleF bounds) {
+        GraphicsPath path = new GraphicsPath();
+        float r = Math.Min(CornerRadius, Math.Min(bounds.Width,bounds.Height)/2f);
+        if(r<=0){path.AddRectangle(bounds);return path;}
+        float d=2f*r;
+        path.AddArc(bounds.Left,bounds.Top,d,d,180f,90f);
+        path.AddArc(bounds.Right-d,bounds.Top,d,d,270f,90f);
+        path.AddArc(bounds.Right-d,bounds.Bottom-d,d,d,0f,90f);
+        path.AddArc(bounds.Left,bounds.Bottom-d,d,d,90f,90f);
+        path.CloseFigure();
+        return path;
+    }
+    public static void ApplyRoundedRegion(ContextMenuStrip menu) {
+        if(menu==null||menu.IsDisposed||menu.Width<=CornerRadius*2||
+           menu.Height<=CornerRadius*2)return;
+        using(GraphicsPath p=RoundedMenuPath(new RectangleF(0f,0f,menu.Width,menu.Height))){
+            Region previous=menu.Region;
+            menu.Region=new Region(p);
+            if(previous!=null)previous.Dispose();
+        }
+    }
+    public static void ConfigureOwnerMenu(ContextMenuStrip menu){
+        if(menu==null)throw new ArgumentNullException("menu");
+        menu.BackColor=Color.FromArgb(38,41,46);
+        menu.ForeColor=Color.Gainsboro;
+        // Caller owns the renderer; this helper only owns the shared shape.
+        menu.SizeChanged+=(s,e)=>ApplyRoundedRegion(menu);
+        menu.Opening+=(s,e)=>ApplyRoundedRegion(menu);
+        ApplyRoundedRegion(menu);
+    }
+    public static Rectangle SeparatorLineBounds(ToolStrip strip,ToolStripItem item){
+        if(strip==null||item==null)return Rectangle.Empty;
+        // Full-width rule within the curved border, bypassing the default
+        // Windows image-column indentation on the left.
+        return new Rectangle(2,item.Bounds.Top+item.Height/2,
+                             Math.Max(0,strip.Width-4),1);
+    }
+    protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e){
+        if(!(e.ToolStrip is ContextMenuStrip)){base.OnRenderSeparator(e);return;}
+        Rectangle line=SeparatorLineBounds(e.ToolStrip,e.Item);
+        if(line.Width<=0)return;
+        Color ink=SystemInformation.HighContrast
+             ?SystemColors.WindowText:Color.FromArgb(105,112,124);
+        using(Brush b=new SolidBrush(ink))e.Graphics.FillRectangle(b,line);
+    }
+    protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e){
+        if(!(e.ToolStrip is ContextMenuStrip)){base.OnRenderToolStripBorder(e);return;}
+        Rectangle bounds=e.ToolStrip.ClientRectangle;
+        if(bounds.Width<3||bounds.Height<3)return;
+        SmoothingMode prev=e.Graphics.SmoothingMode;
+        e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+        try{
+            using(GraphicsPath p=RoundedMenuPath(
+                   new RectangleF(0.5f,0.5f,bounds.Width-1f,bounds.Height-1f)))
+            using(Pen outline=new Pen(SystemInformation.HighContrast
+                   ?SystemColors.WindowText:Color.FromArgb(110,118,130),1f)){
+                e.Graphics.DrawPath(outline,p);
+            }
+        }finally{e.Graphics.SmoothingMode=prev;}
+    }
     protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e) {
         base.OnRenderMenuItemBackground(e);
         ToolStripMenuItem item = e.Item as ToolStripMenuItem;
-        if (item != null && item.Name == QuotaItemName) PaintQuotaBox(e.Graphics, item);
+        if (item != null && IsCheckItem(item)) PaintQuotaBox(e.Graphics, item);
     }
-
     protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) {
-        if (e.Item != null && e.Item.Name == QuotaItemName) return;
+        if (IsCheckItem(e.Item)) return;
         base.OnRenderItemCheck(e);
     }
 }
@@ -3828,6 +3900,7 @@ $accountMenu = New-Object Windows.Forms.ContextMenuStrip
 $accountMenu.BackColor = [Drawing.Color]::FromArgb(38,41,46)
 $accountMenu.ForeColor = [Drawing.Color]::Gainsboro
 $accountMenu.Renderer = if($OwnerGui){New-Object RdcOwnerAccountMenuRenderer -ArgumentList $menuColors}else{$menuRenderer}
+if($OwnerGui){[RdcOwnerAccountMenuRenderer]::ConfigureOwnerMenu($accountMenu)}
 $switchAccountItem = New-Object Windows.Forms.ToolStripMenuItem
 $switchAccountItem.Text = 'Сменить аккаунт…'
 $reconnectItem = New-Object Windows.Forms.ToolStripMenuItem

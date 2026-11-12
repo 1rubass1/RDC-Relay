@@ -32,7 +32,7 @@ Check ($src.Contains('guiWindowWarned=true; // one check per GUI generation') -a
  $src.Contains('if(RdcOwnerGuiStartupNotice.IsDue(guiSpawnUtc,DateTime.UtcNow,guiWindowWarned,hasOwnedWindow))') -and
  $src.Contains('TotalSeconds<8')) 'both startup probe and tray retry share an eight-second one-shot no-window warning gate'
 $noticeStart=$src.IndexOf('public static class RdcOwnerGuiStartupNotice {',[StringComparison]::Ordinal)
-$noticeEnd=$src.IndexOf('// Native tray menu:',$noticeStart,[StringComparison]::Ordinal)
+$noticeEnd=$src.IndexOf('// Mirror of the GUI renderer, unchanged',$noticeStart,[StringComparison]::Ordinal)
 if($noticeStart -lt 0 -or $noticeEnd -le $noticeStart){throw 'GUI_STARTUP_NOTICE_HELPER_MISSING'}
 $noticeCode="using System;"+[Environment]::NewLine+$src.Substring($noticeStart,$noticeEnd-$noticeStart)
 Add-Type -TypeDefinition $noticeCode
