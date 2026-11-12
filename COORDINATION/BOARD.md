@@ -6,7 +6,7 @@
 
 ## AI DevBook transition — session coordination (2026-11-13)
 
-Owner authorized migration of the project's **documented methodology source**, not spontaneous changes to in-progress executor permissions or code. External AI DevBook `main@5d479bffc663f17aae7f721c89d5f47de8a7ffe6` (`0.7-draft`), entry `00_START_HERE.md`. **📐 Архитектор 2: read verified** for applicable Architect/coordination/update modules. **💻 Программист 1–3, 🔍 Ревьюер 1 and other ongoing sessions: read status unknown**. They continue existing cycles under their known instructions; at the next normal Task handoff, affected receivers must actually re-read the source entry, their assigned role, and applicable changed modules before changing their method. Confirm per session; no bulk restart, no claim of automatic instruction refresh. Board tasks and approvals below are unchanged.
+Owner authorized migration of the project's **documented methodology source**, not spontaneous changes to in-progress executor permissions or code. External [AI DevBook](https://github.com/1rubass1/AI-DevBook) `main@5d479bffc663f17aae7f721c89d5f47de8a7ffe6` (`0.7-draft`), entry `00_START_HERE.md`. **📐 Архитектор 2: read verified** for applicable Architect/coordination/update modules. **💻 Программист 1–3, 🔍 Ревьюер 1 and other ongoing sessions: read status unknown**. They continue existing cycles under their known instructions; at the next normal Task handoff, affected receivers must actually re-read the source entry, their assigned role, and applicable changed modules before changing their method. Confirm per session; no bulk restart, no claim of automatic instruction refresh. Board tasks and approvals below are unchanged.
 
 ## REV-002 — independent findings (2026-10-23)
 
