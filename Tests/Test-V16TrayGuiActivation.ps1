@@ -32,7 +32,7 @@ Check ($src.Contains('guiWindowWarned=true; // one check per GUI generation') -a
  $src.Contains('if(RdcOwnerGuiStartupNotice.IsDue(guiSpawnUtc,DateTime.UtcNow,guiWindowWarned,hasOwnedWindow))') -and
  $src.Contains('TotalSeconds<8')) 'both startup probe and tray retry share an eight-second one-shot no-window warning gate'
 $noticeStart=$src.IndexOf('public static class RdcOwnerGuiStartupNotice {',[StringComparison]::Ordinal)
-$noticeEnd=$src.IndexOf('public sealed class RdcOwnerRuntime : IDisposable {',$noticeStart,[StringComparison]::Ordinal)
+$noticeEnd=$src.IndexOf('// Native tray menu:',$noticeStart,[StringComparison]::Ordinal)
 if($noticeStart -lt 0 -or $noticeEnd -le $noticeStart){throw 'GUI_STARTUP_NOTICE_HELPER_MISSING'}
 $noticeCode="using System;"+[Environment]::NewLine+$src.Substring($noticeStart,$noticeEnd-$noticeStart)
 Add-Type -TypeDefinition $noticeCode
@@ -47,7 +47,8 @@ Check (-not [RdcOwnerGuiStartupNotice]::IsDue($now,$now.AddSeconds(8),$true,$fal
  -not [RdcOwnerGuiStartupNotice]::IsDue([DateTime]::MinValue,$now,$false,$false)) 'one-shot and visible/unknown GUI state never trigger false warning'
 Check ($src.Contains('OpenGui();') -and
  $src.Contains('tray.DoubleClick+=(s,e)=>OpenGui();') -and
- $src.Contains('open.Click+=(s,e)=>OpenGui();') -and
+ $src.Contains('trayMenu=new RdcOwnerTrayMenu(HandleTrayMenuAction)') -and
+ $src.Contains('if(command=="OPEN"){OpenGui();return;}') -and
  $src.Contains('reopenSignal.WaitOne(0)')) 'tray menu, tray double-click and launcher event retain common OpenGui route'
 $start=$src.LastIndexOf('public static class RdcOwnerActivate {',[StringComparison]::Ordinal)
 if($start -lt 0){throw 'ACTIVATION_HELPER_MISSING'}

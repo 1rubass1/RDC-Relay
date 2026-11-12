@@ -125,6 +125,117 @@ public static class RdcOwnerGuiStartupNotice {
    (nowUtc-spawnedUtc).TotalSeconds>=GraceSeconds;
  }
 }
+// Native tray menu: only presentation and user-click dispatch live here.
+// The owning Host decides which operations are allowed, with its existing
+// private Job and observed/read-only guards. Testable without Host startup.
+public sealed class RdcOwnerTrayMenu : IDisposable {
+ public readonly ContextMenuStrip Menu=new ContextMenuStrip();
+ public readonly ToolStripMenuItem OpenItem,SwitchItem,ReconnectItem,
+  DevicesItem,QuotaItem,StartStopItem,HelpItem,ExitItem;
+ public RdcOwnerTrayMenu(Action<string> onClick) {
+  if(onClick==null)throw new ArgumentNullException("onClick");
+  OpenItem=Item("Открыть окно RDC Relay","OPEN",onClick);
+  SwitchItem=Item("Сменить аккаунт","SWITCH_ACCOUNT",onClick);
+  ReconnectItem=Item("Переподключить","RECONNECT",onClick);
+  DevicesItem=Item("Управление устройствами","DEVICES",onClick);
+  QuotaItem=new ToolStripMenuItem("Выводить остаток вызовов");
+  QuotaItem.Name="rc1-tray-quota-toggle";
+  QuotaItem.CheckOnClick=true;
+  QuotaItem.Click+=(s,e)=>onClick(QuotaItem.Checked?"QUOTA_ON":"QUOTA_OFF");
+  StartStopItem=new ToolStripMenuItem("Запустить");
+  StartStopItem.Name="rc1-tray-start-stop";
+  StartStopItem.Click+=(s,e)=>onClick(StartStopItem.Text=="Остановить"?"STOP":"START");
+  HelpItem=Item("Справка о программе","HELP",onClick);
+  ExitItem=new ToolStripMenuItem("Завершить RDC Relay");
+  ExitItem.Name="rc1-tray-exit";
+  Menu.Items.Add(OpenItem);
+  Menu.Items.Add(new ToolStripSeparator());
+  Menu.Items.Add(SwitchItem);
+  Menu.Items.Add(ReconnectItem);
+  Menu.Items.Add(new ToolStripSeparator());
+  Menu.Items.Add(DevicesItem);
+  Menu.Items.Add(QuotaItem);
+  Menu.Items.Add(new ToolStripSeparator());
+  Menu.Items.Add(StartStopItem);
+  Menu.Items.Add(new ToolStripSeparator());
+  Menu.Items.Add(HelpItem);
+  Menu.Items.Add(new ToolStripSeparator());
+  Menu.Items.Add(ExitItem);
+ }
+ static ToolStripMenuItem Item(string text,string verb,Action<string> onClick){
+  var item=new ToolStripMenuItem(text);
+  item.Name="rc1-tray-"+verb.ToLowerInvariant();
+  item.Click+=(s,e)=>onClick(verb);
+  return item;
+ }
+ public void Refresh(bool managed,bool observed,bool ownedRunning,
+   bool ownedReady,bool accountBusy,bool shuttingDown,bool quotaEnabled) {
+  OpenItem.Enabled=!shuttingDown;
+  SwitchItem.Enabled=managed&&!observed&&ownedRunning&&ownedReady&&!accountBusy&&!shuttingDown;
+  ReconnectItem.Enabled=managed&&!observed&&ownedRunning&&!accountBusy&&!shuttingDown;
+  DevicesItem.Enabled=(managed||observed)&&!shuttingDown;
+  QuotaItem.Enabled=managed&&!observed&&!shuttingDown;
+  QuotaItem.Checked=quotaEnabled;
+  StartStopItem.Text=ownedRunning?"Остановить":"Запустить";
+  StartStopItem.Enabled=managed&&!observed&&!accountBusy&&!shuttingDown;
+  HelpItem.Enabled=!shuttingDown;
+  ExitItem.Enabled=!shuttingDown;
+ }
+ public void Dispose(){Menu.Dispose();}
+}
+
+// Shared quota opt-out encoding: identical to rc1-owner-gui.ps1 and
+// rc1-tray-host.ps1. No secrets, network access or additional OAuth flow.
+public static class RdcOwnerTrayQuotaPreference {
+ public static string CurrentPath {
+  get {return Path.Combine(Environment.GetFolderPath(
+    Environment.SpecialFolder.LocalApplicationData),"RDCRelayOwnerPilot","quota-display.opt-in");}
+ }
+ public static bool Enabled(string path) {
+  try{
+   if(String.IsNullOrWhiteSpace(path)||!File.Exists(path))return !String.IsNullOrWhiteSpace(path);
+   var info=new FileInfo(path);
+   if(info.Length!=10&&info.Length!=11)return false;
+   if((info.Attributes&FileAttributes.ReparsePoint)!=0)return false;
+   return File.ReadAllText(path,Encoding.UTF8)=="enabled-v1";
+  }catch{return false;}
+ }
+ public static void Set(string path,bool enabled) {
+  if(String.IsNullOrWhiteSpace(path))throw new InvalidOperationException("RC1_QUOTA_SETTING_PATH_REQUIRED");
+  string absolute=Path.GetFullPath(path);
+  string dir=Path.GetDirectoryName(absolute);
+  if(String.IsNullOrEmpty(dir))throw new InvalidOperationException("RC1_QUOTA_SETTING_PARENT_REQUIRED");
+  if(Directory.Exists(dir)&&(File.GetAttributes(dir)&FileAttributes.ReparsePoint)!=0)
+   throw new InvalidOperationException("RC1_QUOTA_SETTING_REPARSE_DENIED");
+  if(enabled){
+   if(File.Exists(absolute)){
+    if((File.GetAttributes(absolute)&FileAttributes.ReparsePoint)!=0)
+     throw new InvalidOperationException("RC1_QUOTA_SETTING_REPARSE_DENIED");
+    File.Delete(absolute);
+   }
+   if(File.Exists(absolute))throw new IOException("RC1_QUOTA_SETTING_ENABLE_FAILED");
+   return;
+  }
+  if(!Directory.Exists(dir))Directory.CreateDirectory(dir);
+  if((File.GetAttributes(dir)&FileAttributes.ReparsePoint)!=0)
+   throw new InvalidOperationException("RC1_QUOTA_SETTING_REPARSE_DENIED");
+  string temp=Path.Combine(dir,"quota-display-"+Guid.NewGuid().ToString("N")+".tmp");
+  string backup=Path.Combine(dir,"quota-display-"+Guid.NewGuid().ToString("N")+".bak");
+  try{
+   File.WriteAllText(temp,"disabled-v1",new UTF8Encoding(false));
+   if(File.Exists(absolute)){
+    if((File.GetAttributes(absolute)&FileAttributes.ReparsePoint)!=0)
+     throw new InvalidOperationException("RC1_QUOTA_SETTING_REPARSE_DENIED");
+    File.Replace(temp,absolute,backup);
+   }else File.Move(temp,absolute);
+   if(File.ReadAllText(absolute,Encoding.UTF8)!="disabled-v1")
+    throw new IOException("RC1_QUOTA_SETTING_VERIFY_FAILED");
+  }finally{
+   if(File.Exists(temp))File.Delete(temp);
+   if(File.Exists(backup))File.Delete(backup);
+  }
+ }
+}
 public sealed class RdcOwnerRuntime : IDisposable {
  readonly object gate=new object();
  readonly string sourceRoot, guiScript, stateRoot, ticketFile, instance, generation, trialRoot;
@@ -158,7 +269,10 @@ public sealed class RdcOwnerRuntime : IDisposable {
  int managedStartupScanned=0;
  int managedBannerScanned=0;
  long managedLogOffset=0;
- ToolStripMenuItem trayStatusItem,trayExitItem;
+ RdcOwnerTrayMenu trayMenu;
+  ToolStripMenuItem trayExitItem;
+  int trayHelpSequence=0;
+  DateTime trayHelpExpiresUtc=DateTime.MinValue;
  bool runRootCreated=false;
  readonly int hostPid, hostSession; readonly long hostBorn;
  readonly Mutex singleton;
@@ -277,12 +391,10 @@ public sealed class RdcOwnerRuntime : IDisposable {
    if(trayVisual!=null)trayVisual.Update(remoteSupervisor.Snapshot());
    else Append("host","tray artwork missing in isolated fixture; fallback icon");
    tray.Visible=true;
-   var menu=new ContextMenuStrip();
-   var open=new ToolStripMenuItem("Открыть RDC Relay");
-   open.Click+=(s,e)=>OpenGui();
-   trayStatusItem=new ToolStripMenuItem("Статус: RC1 — Remote не подключён");
-   trayStatusItem.Enabled=false;
-   trayExitItem=new ToolStripMenuItem("Завершить RDC Relay…");
+   trayMenu=new RdcOwnerTrayMenu(HandleTrayMenuAction);
+   trayExitItem=trayMenu.ExitItem;
+   trayMenu.Menu.Opening+=(s,e)=>RefreshTrayMenu();
+   RefreshTrayMenu();
    trayExitItem.Click+=(s,e)=>{
     string question=observedMode?
      "Закрыть только RC1 Host и его GUI? Существующий Desktop Commander Remote продолжит работу.":
@@ -291,7 +403,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
      "Завершить только тестовый RC1 Host и его собственный GUI?";
     if(MessageBox.Show(question,
        "RDC Relay 1.6.0 RC1",MessageBoxButtons.YesNo,
-       MessageBoxIcon.Question)!=DialogResult.Yes)return;
+       MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)!=DialogResult.Yes)return;
     lock(gate){
      if(exitRequested)return;
      if(accountLogoutProcess!=null){
@@ -316,8 +428,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
      Append("host",observedMode?"observer detach requested":managedMode?"managed full exit requested":"fake-only graceful exit requested");
     }
    };
-   menu.Items.Add(open);menu.Items.Add(trayStatusItem);menu.Items.Add(new ToolStripSeparator());menu.Items.Add(trayExitItem);
-   tray.ContextMenuStrip=menu;
+   // Grouped native tray menu; no read-only status filler.
+   tray.ContextMenuStrip=trayMenu.Menu;
    tray.DoubleClick+=(s,e)=>OpenGui();
    trayFrameTimer.Interval=40; // 160ms color fades at 4 ticks; cached frames
    trayFrameTimer.Tick+=(s,e)=>{
@@ -479,6 +591,99 @@ public sealed class RdcOwnerRuntime : IDisposable {
   remoteSupervisor.NoteHostEvent(src+": "+message);
   if(events.Count>128)events.RemoveAt(0);
  }
+ void RefreshTrayMenu(){
+  if(trayMenu==null)return;
+  lock(gate){
+   bool running=false;
+   try{running=managedMode&&managedProcess!=null&&managedProcess.Running;}catch{}
+   trayMenu.Refresh(managedMode,observedMode,running,managedState=="Ready",
+    accountLogoutProcess!=null,disposed||exitRequested,
+    RdcOwnerTrayQuotaPreference.Enabled(RdcOwnerTrayQuotaPreference.CurrentPath));
+  }
+ }
+ static bool ConfirmTrayAction(string question,string title){
+  return MessageBox.Show(question,title,MessageBoxButtons.YesNo,
+   MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)==DialogResult.Yes;
+ }
+ void HandleTrayMenuAction(string command){
+  if(disposed||exitRequested)return;
+  if(command=="OPEN"){OpenGui();return;}
+  if(command=="HELP"){
+   // Exactly the same About dialog as the GUI '?' button; no duplicate
+   // Host-owned Help UI. The authenticated GUI consumes this one-time hint.
+   lock(gate){
+    if(disposed||exitRequested)return;
+    trayHelpSequence=trayHelpSequence==Int32.MaxValue?1:trayHelpSequence+1;
+    trayHelpExpiresUtc=DateTime.UtcNow.AddSeconds(20);
+    OpenGui();
+   }
+   return;
+  }
+  if(command=="DEVICES"){
+   if(!managedMode&&!observedMode)return;
+   // Fixed official destination: identical to authenticated OPEN_EXTERNAL.
+   try{
+    var browser=new ProcessStartInfo("https://mcp.desktopcommander.app/");
+    browser.UseShellExecute=true;
+    Process.Start(browser);
+   }catch{
+    MessageBox.Show("Не удалось открыть управление устройствами.",
+     "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+   }
+   return;
+  }
+  if(command=="QUOTA_ON"||command=="QUOTA_OFF"){
+   lock(gate){
+    if(!managedMode||observedMode||disposed||exitRequested){
+     RefreshTrayMenu();return;
+    }
+    try{
+     RdcOwnerTrayQuotaPreference.Set(RdcOwnerTrayQuotaPreference.CurrentPath,command=="QUOTA_ON");
+     Append("host","quota display preference updated by tray");
+    }catch{
+     MessageBox.Show("Не удалось сохранить настройку остатка вызовов.",
+      "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+    }
+    RefreshTrayMenu(); // always restore truth, including on any write failure
+   }
+   return;
+  }
+  if(command!="START"&&command!="STOP"&&command!="RECONNECT"&&command!="SWITCH_ACCOUNT")return;
+  // These are actual local click actions, not background state changes.
+  // Never borrow the installed Remote: all methods below retain private-Job
+  // ownership checks, including the official/logout safety boundary.
+  string prompt=command=="SWITCH_ACCOUNT"?
+   "Сменить аккаунт? Текущий управляемый Remote будет остановлен.\n"+
+   "Затем выполнится официальный выход Desktop Commander и потребуется новая авторизация.":
+   command=="RECONNECT"?
+   "Переподключить Remote? Текущий управляемый Remote будет остановлен и запущен заново.":
+   command=="STOP"?"Остановить управляемый Remote? Окно RDC Relay останется доступным.":"";
+  if(prompt!=""&&!ConfirmTrayAction(prompt,"RDC Relay"))return;
+  lock(gate){
+   if(disposed||exitRequested||!managedMode||observedMode||
+      accountLogoutProcess!=null)return;
+   bool running=false;
+   try{running=managedProcess!=null&&managedProcess.Running;}
+   catch{RefreshTrayMenu();return;}
+   if((command=="START"&&running)||
+      (command!="START"&&!running)||
+      (command=="SWITCH_ACCOUNT"&&(accountSwitchFaultLatched||managedState!="Ready"))){
+    RefreshTrayMenu();return;
+   }
+   try{
+    if(command=="START")StartManagedRemote();
+    else if(command=="STOP")StopManagedRemote();
+    else if(command=="RECONNECT"){StopManagedRemote();StartManagedRemote();}
+    else BeginManagedAccountSwitch();
+    Append("remote","tray user confirmed managed action: "+command);
+   }catch(Exception failure){
+    Append("remote","tray managed action refused: "+failure.GetType().Name);
+    MessageBox.Show("Действие не выполнено: "+failure.GetType().Name+
+      ". Проверьте состояние Remote в окне RDC Relay.",
+      "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+   }finally{RefreshTrayMenu();}
+  }
+ }
  void NotifyGuiOpenIssue(string code,string message){
   DateTime now=DateTime.UtcNow;
   if((now-lastGuiNoticeUtc).TotalSeconds<8)return;
@@ -638,7 +843,6 @@ public sealed class RdcOwnerRuntime : IDisposable {
    managedMode=true;remoteSupervisor.EnableManaged();
    autoStartPending=true;nextAutoStartUtc=DateTime.MinValue;
    tray.Text="RDC Relay 1.6.0 RC1 | Host";
-   trayStatusItem.Text="Remote: готов к управляемому запуску";
    Append("remote","managed ownership mode enabled");
   }
  }
@@ -688,8 +892,6 @@ public sealed class RdcOwnerRuntime : IDisposable {
    autoStartPending=true;nextAutoStartUtc=DateTime.MinValue;
    closeGeneration++; // old read-only GUI must exit before new ticket/GUI
    tray.Text="RDC Relay 1.6.0 RC1 | Host";
-   trayStatusItem.Text="Remote: переход к управляемому запуску";
-   trayExitItem.Text="Завершить RDC Relay…";
    Append("remote","verified external Remote and GUI gone; new Job-only session permitted");
    return true;
   }
@@ -1126,8 +1328,6 @@ public sealed class RdcOwnerRuntime : IDisposable {
    remoteSupervisor.AttachObservedReadOnly(pid);
    toolJournal.Reset();observedMode=true;
    tray.Text="RDC Relay 1.6 RC1 | наблюдение";
-   trayStatusItem.Text="Remote: существующая сессия (Adopted)";
-   trayExitItem.Text="Закрыть RC1 (Remote останется)";
    Append("remote","read-only existing Remote observer attached");
   }
  }
@@ -1193,7 +1393,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
    }},
    {"logTail",observed["tail"]},{"logCursor",observed["logCursor"]},
    {"logStreamEpoch",observed["logStreamEpoch"]},
-   {"guiPid",childPid},{"guiState",guiState},{"guiStarts",guiStarts},
+   {"trayHelpSequence",DateTime.UtcNow<=trayHelpExpiresUtc?trayHelpSequence:0},
+    {"guiPid",childPid},{"guiState",guiState},{"guiStarts",guiStarts},
    {"guiFailures",guiFailures},{"closeGeneration",closeGeneration},{"lastEventSeq",sequence},
    {"revision",sequence},{"remoteRevision",observed["revision"]},{"isActualRemote",observedMode||managedMode},
    {"capabilities",new Dictionary<string,object>{

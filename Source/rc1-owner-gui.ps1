@@ -277,6 +277,7 @@ function Start-RdcOwnerGui {
  $helpButton.Enabled=$true
  $script:ownerCloseGeneration=[int]$handshake.payload.closeGeneration
  $script:ownerEventCursor=0
+  $script:ownerTrayHelpSeenSequence=0
  $script:ownerNextVerb='GET_SNAPSHOT'
  $script:ownerPending=$null
  $script:ownerQueuedNavigation=''
@@ -497,6 +498,13 @@ function Start-RdcOwnerGui {
       }
      }
      $script:ownerNextVerb='GET_EVENTS'
+      # Show the exact existing About+Journal dialog after a verified
+      # Host tray request. The sequence blocks repeats from every poll.
+      $trayHelpSeq=[int]$snapshot.trayHelpSequence
+      if($trayHelpSeq -gt 0 -and $trayHelpSeq -ne $script:ownerTrayHelpSeenSequence){
+       $script:ownerTrayHelpSeenSequence=$trayHelpSeq
+       Show-RdcAbout
+      }
     }elseif([string]$reply.type -eq 'EVENT_BATCH'){
      $eventData=$reply.payload
      if([string]$eventData.hostGeneration -cne $script:ownerGeneration){throw 'RC1_STALE_EVENTS'}
