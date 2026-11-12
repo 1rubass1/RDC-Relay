@@ -547,7 +547,9 @@ public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
 
     public static Rectangle QuotaBoxBounds(ToolStripItem item) {
         const int side = 16;
-        return new Rectangle(6, Math.Max(0, (item.Height - side) / 2), side, side);
+        // Native WinForms image slot begins at x=5 at 96 DPI; center the
+        // 16px checkbox in the same gutter, not 1px to its right.
+        return new Rectangle(5, Math.Max(0, (item.Height - side) / 2), side, side);
     }
 
     public static void PaintQuotaBox(Graphics g, ToolStripMenuItem item) {
@@ -635,7 +637,7 @@ public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
         Rectangle line=SeparatorLineBounds(e.ToolStrip,e.Item);
         if(line.Width<=0)return;
         Color ink=SystemInformation.HighContrast
-             ?SystemColors.WindowText:Color.FromArgb(105,112,124);
+             ?SystemColors.WindowText:Color.FromArgb(188,195,207);
         using(Brush b=new SolidBrush(ink))e.Graphics.FillRectangle(b,line);
     }
     protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e){

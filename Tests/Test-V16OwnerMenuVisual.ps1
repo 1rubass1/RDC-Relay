@@ -34,10 +34,15 @@ try{
   $menu.Items.Add((New-Object Windows.Forms.ToolStripMenuItem('Сменить аккаунт'))) |Out-Null
   $menu.Items.Add((New-Object Windows.Forms.ToolStripSeparator)) |Out-Null
   $menu.Items.Add((New-Object Windows.Forms.ToolStripMenuItem('Управление устройствами'))) |Out-Null
-  $check=New-Object Windows.Forms.ToolStripMenuItem('Автообновление')
-  $check.Name=if([object]::ReferenceEquals($menu,$account)){'rc1-auto-update-toggle'}else{'rc1-tray-auto-update-toggle'}
-  $check.CheckOnClick=$true
-  [void]$menu.Items.Add($check)
+  foreach($spec in @(
+   @('Выводить остаток вызовов','rc1-quota-display-toggle','rc1-tray-quota-toggle'),
+   @('Автообновление','rc1-auto-update-toggle','rc1-tray-auto-update-toggle')
+  )){
+   $check=New-Object Windows.Forms.ToolStripMenuItem($spec[0])
+   $check.Name=if([object]::ReferenceEquals($menu,$account)){$spec[1]}else{$spec[2]}
+   $check.CheckOnClick=$true
+   [void]$menu.Items.Add($check)
+  }
   $menu.Size=[Drawing.Size]::new(248,116)
   [RdcOwnerAccountMenuRenderer]::ApplyRoundedRegion($menu)
  }
@@ -68,23 +73,54 @@ try{
   Check ($leftPixel.ToArgb() -ne $tray.BackColor.ToArgb() -and
    $rightPixel.ToArgb() -eq $leftPixel.ToArgb() -and
    $marginPixel.ToArgb() -eq $tray.BackColor.ToArgb()) 'real native separator painter produces a continuous full-width colored line'
+  $expectedInk=if([Windows.Forms.SystemInformation]::HighContrast){
+   [Drawing.SystemColors]::WindowText
+  }else{[Drawing.Color]::FromArgb(188,195,207)}
+  Check ($leftPixel.ToArgb() -eq $expectedInk.ToArgb() -and
+   ([Windows.Forms.SystemInformation]::HighContrast -or
+    ($leftPixel.R -ge 180 -and $leftPixel.G -ge 180 -and $leftPixel.B -ge 190))) 'separator is intentionally much lighter than old RGB(105,112,124), or respects High Contrast'
  }finally{$lineGraphics.Dispose();$lineBitmap.Dispose()}
  # Directly exercise the real painter's check glyph with live checked-state.
  $paint=New-Object Drawing.Bitmap(240,32)
  $graphics=[Drawing.Graphics]::FromImage($paint)
  try{
   foreach($menu in @($account,$tray)){
-   $check=$menu.Items[3]
-   $check.Size=[Drawing.Size]::new(240,32)
-   $check.Checked=$false
-   $graphics.Clear([Drawing.Color]::FromArgb(38,41,46))
-   [RdcOwnerAccountMenuRenderer]::PaintQuotaBox($graphics,$check)
-   $off=$paint.GetPixel(14,16)
-   $check.Checked=$true
-   $graphics.Clear([Drawing.Color]::FromArgb(38,41,46))
-   [RdcOwnerAccountMenuRenderer]::PaintQuotaBox($graphics,$check)
-   $on=$paint.GetPixel(14,16)
-   Check ($off.ToArgb() -ne $on.ToArgb()) ($(if([object]::ReferenceEquals($menu,$account)){'Account'}else{'Tray'})+' checkbox visibly changes with native Checked state')
+   $menu.PerformLayout()
+   $menuName=if([object]::ReferenceEquals($menu,$account)){'Account'}else{'Tray'}
+   # These WinForms rectangles are internal on ToolStripDropDownMenu;
+   # inspect the actual framework geometry, not an assumed fixed gutter.
+   $visibility=[Reflection.BindingFlags]'Instance,Public,NonPublic'
+   $imageProperty=$menu.GetType().GetProperty('ImageRectangle',$visibility)
+   $marginProperty=$menu.GetType().GetProperty('ImageMargin',$visibility)
+   if($null -eq $imageProperty -or $null -eq $marginProperty){
+    throw 'WINFORMS_IMAGE_MARGIN_GEOMETRY_UNAVAILABLE'
+   }
+   $nativeImageRect=$imageProperty.GetValue($menu,$null)
+   $nativeGutter=$marginProperty.GetValue($menu,$null)
+   foreach($check in @($menu.Items[3],$menu.Items[4])){
+    $rect=[RdcOwnerAccountMenuRenderer]::QuotaBoxBounds($check)
+    $kind=if($check.Text -eq 'Автообновление'){'Auto-update'}else{'Quota'}
+    Check ($rect.X -eq $nativeImageRect.X -and
+     $rect.Width -eq $nativeImageRect.Width -and
+     [Math]::Abs(($rect.X+$rect.Width/2.0)-
+      ($nativeGutter.X+$nativeGutter.Width/2.0)) -le 0.5) (
+      $menuName+' '+$kind+' checkbox is horizontally centered in native icon gutter')
+    Check ($rect.Height -eq 16 -and $rect.Y -ge 0 -and
+     [Math]::Abs(($rect.Y+$rect.Height/2.0)-($check.Height/2.0)) -le 0.5) (
+      $menuName+' '+$kind+' checkbox is vertically centered in its actual row')
+    $check.Size=[Drawing.Size]::new(240,32)
+    $center=[RdcOwnerAccountMenuRenderer]::QuotaBoxBounds($check)
+    $check.Checked=$false
+    $graphics.Clear([Drawing.Color]::FromArgb(38,41,46))
+    [RdcOwnerAccountMenuRenderer]::PaintQuotaBox($graphics,$check)
+    $off=$paint.GetPixel($center.X+9,$center.Y+9)
+    $check.Checked=$true
+    $graphics.Clear([Drawing.Color]::FromArgb(38,41,46))
+    [RdcOwnerAccountMenuRenderer]::PaintQuotaBox($graphics,$check)
+    $on=$paint.GetPixel($center.X+9,$center.Y+9)
+    Check ($off.ToArgb() -ne $on.ToArgb()) (
+     $menuName+' '+$kind+' checkbox painter follows actual Checked state')
+   }
   }
  }finally{$graphics.Dispose();$paint.Dispose()}
  Check ($guiText.Contains('[RdcOwnerAccountMenuRenderer]::ConfigureOwnerMenu($accountMenu)') -and
