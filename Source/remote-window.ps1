@@ -6617,9 +6617,61 @@ function Show-RdcOwnerHelp([string]$content) {
     finally { $helpDialog.Dispose() }
 }
 function Get-RdcOwnerJournalText {
-    # Use the already sanitized, bounded Owner event history, not a private
-    # legacy Remote log file. The compact main pane shows only the last
-    # viewport-sized slice; the journal window shows all retained events.
+    if($OwnerGui){
+        # A dedicated diagnostic report, NOT a copy of the compact activity
+        # eventBlocks. All values are from authenticated sanitized Host
+        # snapshots; raw Remote stdout/arguments/files must not be loaded.
+        $lines=New-Object 'System.Collections.Generic.List[string]'
+        [void]$lines.Add('RDC Relay — подробный диагностический журнал')
+        [void]$lines.Add('Отображаются обезличенные события Host и Remote; сырой stdout и содержимое файлов исключены.')
+        [void]$lines.Add('Время записей истории — получение GUI (UTC), не время выполнения команды.')
+        [void]$lines.Add('')
+        [void]$lines.Add('СОСТОЯНИЕ СЕАНСА')
+        $remoteState=[string]$script:ownerJournalRemoteState
+        if($remoteState -cnotin @('Disconnected','Connecting','AuthPending','Ready','Fault','Reconnecting')){
+            $remoteState='Unknown'
+        }
+        $ownership=[string]$script:ownerJournalOwnership
+        if($ownership -cnotin @('Unknown','Owned','Adopted')){$ownership='Unknown'}
+        $toolActivity=[string]$script:ownerJournalToolActivity
+        if($toolActivity -cnotin @('working','hold','idle')){$toolActivity='unknown'}
+        [void]$lines.Add('Remote: '+$remoteState+' | Режим: '+$ownership+' | Активность: '+$toolActivity)
+        if([int]$script:ownerJournalRemotePid -gt 0){
+            [void]$lines.Add('Процесс Remote: PID '+[int]$script:ownerJournalRemotePid)
+        }
+        if($script:ownerJournalLastSnapshotUtc -is [DateTime] -and
+           $script:ownerJournalLastSnapshotUtc -gt [DateTime]::MinValue){
+            [void]$lines.Add('Последний снимок Host: '+
+                $script:ownerJournalLastSnapshotUtc.ToUniversalTime().ToString(
+                 'yyyy-MM-dd HH:mm:ss.fff', [Globalization.CultureInfo]::InvariantCulture)+' UTC')
+        }
+        [void]$lines.Add('')
+        [void]$lines.Add('ДИАГНОСТИКА HOST (последние доступные записи)')
+        $diagCount=0
+        foreach($entry in @($script:ownerRecentDiagnostics)){
+            $value=[string]$entry
+            if(-not [string]::IsNullOrWhiteSpace($value) -and
+               $value.Length -le 140 -and
+               $value -notmatch '[\r\n\x00-\x1F]' -and
+               $value -notmatch '(?i)([A-Za-z]:\\|\\\\|https?://|@|secret|password|token|credential|private[_-]?key)'){
+                [void]$lines.Add('  • '+$value)
+                $diagCount++
+            }
+        }
+        if($diagCount -eq 0){[void]$lines.Add('  Нет доступных диагностических записей.')}
+        [void]$lines.Add('')
+        [void]$lines.Add('ИСТОРИЯ СОБЫТИЙ (до 512 последних записей текущего окна)')
+        $historyCount=0
+        foreach($entry in @($script:ownerDetailedJournal)){
+            if(-not [string]::IsNullOrWhiteSpace([string]$entry)){
+                [void]$lines.Add([string]$entry)
+                $historyCount++
+            }
+        }
+        if($historyCount -eq 0){[void]$lines.Add('  Событий пока нет.')}
+        return [string]::Join([Environment]::NewLine,$lines)
+    }
+    # Legacy view retains its historical bounded activity journal.
     $items=New-Object System.Collections.Generic.List[string]
     if($script:eventBlocks){
         foreach($entry in $script:eventBlocks){

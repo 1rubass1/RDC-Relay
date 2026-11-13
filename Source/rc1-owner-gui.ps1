@@ -42,7 +42,7 @@ function Format-Rc1JournalLine([long]$number,[string]$message) {
    'completed' {'✅ '+$done}
    'failed' {'❌ Ошибка: '+$action}
   }
-  if($target){$messageText+=' — '+$target}
+  if($target){$messageText+=' → '+$target}
   return $operation.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '+$messageText
  }
  # Remote 0.2.52 completion lines identify a tool but not its call UUID.
@@ -81,6 +81,26 @@ function Format-Rc1JournalLine([long]$number,[string]$message) {
   default { '• '+$text }
  }
  return $number.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '+$description
+}
+# Separate, bounded diagnostic history for Help -> Show Journal. Unlike the
+# lower activity pane it retains 512 recent sanitized entries, each tagged
+# with its *GUI receipt time* (not an invented Remote execution timestamp).
+# Raw Remote stdout, private paths and tool arguments never reach this data.
+function Add-Rc1OwnerDetailedEvent([string]$origin,[string]$entry) {
+ if($origin -cnotin @('Remote','Host')){return}
+ if([string]::IsNullOrWhiteSpace($entry)){return}
+ if($entry.Length -gt 320 -or $entry.Contains("`r") -or $entry.Contains("`n")){return}
+ if($entry -match '(?i)([A-Za-z]:\\|\\\\|https?://|@|authorization:\s*bearer|password\s*[=:]|api[_-]?key\s*[=:]|private[_-]?key\s*[=:])'){return}
+ if(-not $script:ownerDetailedJournal){
+  $script:ownerDetailedJournal=New-Object 'System.Collections.Generic.List[string]'
+ }
+ $received=[DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss.fff',
+  [Globalization.CultureInfo]::InvariantCulture)
+ [void]$script:ownerDetailedJournal.Add(
+  '['+$received+' UTC / получено] ['+$origin+'] '+$entry)
+ while($script:ownerDetailedJournal.Count -gt 512){
+  $script:ownerDetailedJournal.RemoveAt(0)
+ }
 }
 # These are the original, allowlisted Remote startup lines from Host. Only
 # Owner GUI's display copy is adapted: the source log and IPC snapshot remain
@@ -298,6 +318,13 @@ function Start-RdcOwnerGui {
  $script:ownerLastQuotaText=''
  $script:ownerLastLogCursor=0
  $script:ownerLastLogEpoch=-1
+ $script:ownerDetailedJournal=New-Object 'System.Collections.Generic.List[string]'
+ $script:ownerRecentDiagnostics=@()
+ $script:ownerJournalRemoteState='Unknown'
+ $script:ownerJournalRemotePid=0
+ $script:ownerJournalOwnership='Unknown'
+ $script:ownerJournalToolActivity='idle'
+ $script:ownerJournalLastSnapshotUtc=[DateTime]::MinValue
  # Owner-only compact activity journal; legacy 1.5.18 renderer remains spaced.
  $script:ownerCompactJournal=$true
  $script:ownerLastJournalCapacity=-1
@@ -378,10 +405,24 @@ function Start-RdcOwnerGui {
      Set-DividerFaultState ($toolFault -or $remoteFault)
      $script:ownerLastToolFault=$toolFault
      $script:ownerLastRemoteLinkState=$remoteLinkState
+     # Read-only Host diagnostic tail is distinct from compact tool rows.
+     $script:ownerJournalRemoteState=[string]$remoteSnapshot.state
+     $script:ownerJournalRemotePid=[int]$remoteSnapshot.processPid
+     $script:ownerJournalOwnership=[string]$remoteSnapshot.ownership
+     $script:ownerJournalToolActivity=[string]$remoteSnapshot.toolActivity
+     $script:ownerJournalLastSnapshotUtc=[DateTime]::UtcNow
+     $script:ownerRecentDiagnostics=@($remoteSnapshot.diagnostics |
+       Where-Object{
+        $v=[string]$_
+        $v.Length -gt 0 -and $v.Length -le 140 -and
+        $v -notmatch '[\r\n\x00-\x1F]' -and
+        $v -notmatch '(?i)(authorization:\s*bearer|password\s*[=:]|api[_-]?key\s*[=:]|private[_-]?key\s*[=:])'
+       })
      $epoch=[long]$remoteSnapshot.logStreamEpoch
      if($epoch -ne $script:ownerLastLogEpoch){
       $script:ownerLastLogEpoch=$epoch
       $script:ownerLastLogCursor=0
+      Add-Rc1OwnerDetailedEvent 'Host' ('Поток событий Remote: эпоха '+[string]$epoch)
       Reset-CompactLogSession
       Add-CompletedEvent $(if($script:ownerObservedMode){
        'RC1: восстановлен обезличенный журнал наблюдения Host.'
@@ -398,7 +439,9 @@ function Start-RdcOwnerGui {
       $lineCursor=[long]$Matches[1]
       if($lineCursor -le $script:ownerLastLogCursor){continue}
       if($lineCursor -gt $lastCursor){throw 'RC1_LOG_CURSOR_MISMATCH'}
-      Add-CompletedEvent (Format-Rc1JournalLine $lineCursor $line.Substring($Matches[0].Length))
+      $formatted=Format-Rc1JournalLine $lineCursor $line.Substring($Matches[0].Length)
+      Add-CompletedEvent $formatted
+      Add-Rc1OwnerDetailedEvent 'Remote' $formatted
       $script:ownerLastLogCursor=$lineCursor
       $hasNewLog=$true
      }
@@ -515,7 +558,9 @@ function Start-RdcOwnerGui {
       foreach($ev in $eventData.events){
        if([long]$ev.sequence -le $script:ownerEventCursor){throw 'RC1_DUPLICATE_EVENT'}
        $script:ownerEventCursor=[long]$ev.sequence
-       Add-CompletedEvent (Format-Rc1JournalLine ([long]$ev.sequence) ([string]$ev.text))
+       $formatted=Format-Rc1JournalLine ([long]$ev.sequence) ([string]$ev.text)
+       Add-CompletedEvent $formatted
+       Add-Rc1OwnerDetailedEvent 'Host' $formatted
       }
       $script:ownerNextVerb=if($eventData.moreAvailable){'GET_EVENTS'}else{'GET_SNAPSHOT'}
      }

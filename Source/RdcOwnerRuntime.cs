@@ -38,6 +38,28 @@ public sealed class RdcOwnerToolJournal {
  public void Reset(){pending.Clear();order.Clear();nextNumber=0;}
  static string SafeTarget(string tool,string args){
   if(args==null||args.Length>8192)return "";
+  // Numeric PID is bounded metadata; never echo stdout or process arguments.
+  if(tool=="read_process_output" || tool=="interact_with_process"){
+   var pid=System.Text.RegularExpressions.Regex.Match(args,
+    @"""pid""\s*:\s*(?<n>[1-9][0-9]{0,8})(?=\s*[,}])");
+   int number;
+   return pid.Success && int.TryParse(pid.Groups["n"].Value,out number) && number>0
+    ?"PID "+number.ToString(System.Globalization.CultureInfo.InvariantCulture):"";
+  }
+  if(tool=="read_multiple_files"){
+   // Report only the *first* safe basename, not a private list of paths.
+   var paths=System.Text.RegularExpressions.Regex.Match(args,
+    @"""paths""\s*:\s*\[\s*""(?<p>(?:\\.|[^""\\]){1,260})""");
+   if(paths.Success){
+    string value=paths.Groups["p"].Value.Replace("\\\\","\\").Replace("\\/","/");
+    int slash=value.LastIndexOfAny(new char[]{'\\','/'});
+    string name=value.Substring(slash+1);
+    if(name.Length>0 && name.Length<=54 && name[0]!='.' &&
+       System.Text.RegularExpressions.Regex.IsMatch(name,@"\A[\p{L}\p{Nd}_ .()\-]{1,54}\z") &&
+       !System.Text.RegularExpressions.Regex.IsMatch(name,@"(?i)(secret|password|token|credential|private.key)"))
+     return name+" (первый)";
+   }
+  }
   foreach(System.Text.RegularExpressions.Match m in param.Matches(args)){
    string key=m.Groups["key"].Value;
    string value=m.Groups["value"].Value.Replace("\\\\","\\").Replace("\\/","/");
@@ -58,6 +80,27 @@ public sealed class RdcOwnerToolJournal {
      if(exe.StartsWith("java"))return "Java";
      if(exe.StartsWith("cmake"))return "CMake";
     }
+    // Recognize a directly invoked executable without exposing the path
+    // or any arguments. Complex shell scripts remain unnamed rather than
+    // guessing what application will eventually be launched.
+    string direct=value.TrimStart();
+    if(direct.StartsWith("& ",StringComparison.Ordinal))direct=direct.Substring(2).TrimStart();
+    string first="";
+    if(direct.Length>1 && (direct[0]=='"' || direct[0]=='\'')){
+     int endQuote=direct.IndexOf(direct[0],1);
+     if(endQuote>1)first=direct.Substring(1,endQuote-1);
+    }else{
+     int space=direct.IndexOfAny(new char[]{' ','\t','\r','\n'});
+     first=space<0?direct:direct.Substring(0,space);
+    }
+    string binary=first.Replace('/','\\');
+    int exeSlash=binary.LastIndexOf('\\');
+    binary=binary.Substring(exeSlash+1);
+    if(binary.Length<=64 &&
+       System.Text.RegularExpressions.Regex.IsMatch(binary,@"\A[A-Za-z0-9][A-Za-z0-9_.-]{1,55}\.(?:exe|cmd|bat)\z",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase) &&
+       !System.Text.RegularExpressions.Regex.IsMatch(binary,@"(?i)(secret|password|token|credential|private)"))
+     return binary;
     return "";
    }
    if(key=="command")continue;

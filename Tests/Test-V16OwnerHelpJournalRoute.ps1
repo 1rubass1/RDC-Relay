@@ -193,6 +193,57 @@ try{
  $journalButton=$parent.GetControlFromPosition(0,2).GetControlFromPosition(0,0)
  Check ($journalButton.Enabled) 'sanitized journal enabled only when Owner capability allows'
 }finally{$allowed.Dispose()}
+# Owner-only journal is now a separate diagnostic view rather than a
+# larger copy of the compact six-line activity pane. The 1.5 legacy fallback
+# above must continue displaying its original eventBlocks unchanged.
+. $ownerPath
+$OwnerGui=$true
+$script:eventBlocks=New-Object System.Collections.ArrayList
+[void]$script:eventBlocks.Add('LOWER_PANE_ONLY_UNRELATED')
+$script:currentEvent=''
+$script:ownerDetailedJournal=New-Object 'System.Collections.Generic.List[string]'
+$script:ownerRecentDiagnostics=@(
+ 'Managed mode initialized','Managed state: Ready',
+ 'password=SHOULD_NOT_DISPLAY','C:\\Private\\secret.txt')
+$script:ownerJournalRemoteState='Ready'
+$script:ownerJournalRemotePid=17531
+$script:ownerJournalOwnership='Owned'
+$script:ownerJournalToolActivity='working'
+$script:ownerJournalLastSnapshotUtc=[DateTime]::UtcNow
+for($i=1;$i -le 540;$i++){
+ Add-Rc1OwnerDetailedEvent 'Remote' ('{0:D6} │ 🔧 Чтение файла → sample.md' -f $i)
+}
+Check ($script:ownerDetailedJournal.Count -eq 512 -and
+ $script:ownerDetailedJournal[0].Contains('000029') -and
+ $script:ownerDetailedJournal[511].Contains('000540')) 'full journal independently retains last 512 sanitized events, rather than compact 64'
+Add-Rc1OwnerDetailedEvent 'Unknown' 'INJECTED_SOURCE'
+Add-Rc1OwnerDetailedEvent 'Remote' 'password=TOP_SECRET'
+Add-Rc1OwnerDetailedEvent 'Remote' 'C:\\Private\\secret.txt'
+Check ($script:ownerDetailedJournal.Count -eq 512 -and
+ -not (@($script:ownerDetailedJournal) -join ' ').Contains('TOP_SECRET')) 'journal rejects untrusted origins, raw paths and sensitive arguments'
+$snapshot=Get-RdcOwnerJournalText
+Check ($snapshot.Contains('подробный диагностический журнал') -and
+ $snapshot.Contains('ДИАГНОСТИКА HOST') -and
+ $snapshot.Contains('Managed state: Ready') -and
+ $snapshot.Contains('Процесс Remote: PID 17531') -and
+ $snapshot.Contains('Remote: Ready | Режим: Owned | Активность: working')) 'full journal shows actual sanitized Host diagnostics, connection state and Remote PID'
+Check ($snapshot.Contains('000540') -and $snapshot.Contains('000029') -and
+ -not $snapshot.Contains('000001 │ 🔧') -and
+ -not $snapshot.Contains('LOWER_PANE_ONLY_UNRELATED')) 'full journal uses separate retained history, not lower-pane eventBlocks'
+Check (-not $snapshot.Contains('password=') -and
+ -not $snapshot.Contains('SHOULD_NOT_DISPLAY') -and
+ -not $snapshot.Contains('C:\\Private') -and
+ -not $snapshot.Contains('TOP_SECRET') -and
+ $snapshot.Contains('время выполнения команды') ) 'full diagnostic journal filters private details and labels GUI receipt timestamps honestly'
+$fullDialog=New-RdcOwnerJournalDialog $snapshot
+try{
+ $inner=@($fullDialog.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+ $journalBody=$inner.GetControlFromPosition(0,1)
+ Check ($journalBody.Text -ceq $snapshot -and
+  $journalBody.TextLength -gt 18000 -and $journalBody.ReadOnly -and
+  -not $journalBody.WordWrap) 'real journal dialog displays all retained diagnostic text without viewport clipping'
+}finally{$fullDialog.Dispose()}
+$OwnerGui=$false
 Write-Output ('RC1_HELP_JOURNAL_ROUTE_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}
 exit 0
