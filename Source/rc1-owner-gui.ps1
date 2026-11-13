@@ -6,81 +6,86 @@
 # The RC1 Host streams monotonic, sanitized event IDs. Show only the
 # fixed-width sequence and a Unicode status, never the Host/Remote prefix.
 # This formatter never receives raw Remote stdout, credentials or tool args.
+# Single action vocabulary for start, complete and failure, including
+# unpaired pinned Remote 0.2.52 markers. The phase is carried by the icon.
+function Get-Rc1ToolAction([string]$tool) {
+ switch -CaseSensitive ($tool) {
+  'read_file' {'Чтение файла';break}
+  'read_multiple_files' {'Чтение файлов';break}
+  'write_file' {'Запись файла';break}
+  'edit_block' {'Изменение файла';break}
+  'list_directory' {'Просмотр папки';break}
+  'get_file_info' {'Сведения о файле';break}
+  'start_process' {'Запуск программы';break}
+  'read_process_output' {'Вывод процесса';break}
+  'interact_with_process' {'Ввод в процесс';break}
+  'list_processes' {'Просмотр процессов';break}
+  'start_search' {'Поиск';break}
+  'get_more_search_results' {'Результаты поиска';break}
+  'stop_search' {'Остановка поиска';break}
+  'move_file' {'Перемещение файла';break}
+  'create_directory' {'Создание папки';break}
+  'get_config' {'Настройки';break}
+  default {'Операция'}
+ }
+}
 function Format-Rc1JournalLine([long]$number,[string]$message) {
  if($number -lt 0){throw 'RC1_JOURNAL_NEGATIVE_SEQUENCE'}
  $text=([string]$message).Trim()
- # The Host correlates calls using private remote IDs. Only a generated
- # operation number and bounded safe labels are accepted in the GUI.
+ $gutter=$number.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '
+ $unknown='без уточнения'
+ # Exactly one readable "action → subject" scheme for all tool phases.
+ # Never echo unvalidated raw log arguments or private identifiers.
  if($text -cmatch '\ARemote tool (started|completed|failed)\|([1-9][0-9]{0,11})\|([a-z][a-z0-9_]{1,39})\|([\p{L}\p{Nd}_ .()\-]{0,64})\z'){
-  $phase=[string]$Matches[1];$operation=[long]$Matches[2]
-  $tool=[string]$Matches[3];$target=[string]$Matches[4]
-  $action=switch -Exact ($tool){
-   'read_file' {'Чтение файла'} 'read_multiple_files' {'Чтение файлов'}
-   'write_file' {'Запись файла'} 'edit_block' {'Изменение файла'}
-   'list_directory' {'Просмотр папки'} 'get_file_info' {'Сведения о файле'}
-   'start_process' {'Запуск программы'} 'read_process_output' {'Вывод процесса'}
-   'interact_with_process' {'Ввод в процесс'} 'list_processes' {'Просмотр процессов'}
-   'start_search' {'Поиск'} 'get_more_search_results' {'Результаты поиска'}
-   'stop_search' {'Остановка поиска'} 'move_file' {'Перемещение файла'}
-   'create_directory' {'Создание папки'} 'get_config' {'Настройки'}
-   default {'Операция'}
+  $phase=[string]$Matches[1]
+  $operation=[long]$Matches[2]
+  $tool=[string]$Matches[3]
+  $target=[string]$Matches[4]
+  $action=Get-Rc1ToolAction $tool
+  # A completed start_process MCP call acknowledges the start request,
+  # NOT the later exit or ultimate success of the OS process.
+  if($phase -ceq 'completed' -and $tool -ceq 'start_process'){
+   $action='Запрос запуска программы'
   }
-  $done=switch -Exact ($tool){
-   'read_file' {'Файл прочитан'} 'read_multiple_files' {'Файлы прочитаны'}
-   'write_file' {'Файл записан'} 'edit_block' {'Файл изменён'}
-   'list_directory' {'Содержимое папки получено'}
-   'get_file_info' {'Сведения получены'} 'start_process' {'Запрос запуска обработан'}
-   'read_process_output' {'Вывод получен'} 'interact_with_process' {'Ввод обработан'}
-   'list_processes' {'Список процессов получен'}
-   'start_search' {'Поиск запущен'} 'get_more_search_results' {'Результаты получены'}
-   'stop_search' {'Поиск остановлен'} 'move_file' {'Файл перемещён'}
-   'create_directory' {'Папка создана'} 'get_config' {'Настройки получены'}
-   default {'Вызов завершён'}
+  $icon=switch -Exact ($phase) {
+   'started' {'🔧';break}
+   'completed' {'✅';break}
+   'failed' {'❌';break}
   }
-  $messageText=switch -Exact ($phase){
-   'started' {'🔧 '+$action}
-   'completed' {'✅ '+$done}
-   'failed' {'❌ Ошибка: '+$action}
-  }
-  if($target){$messageText+=' → '+$target}
-  return $operation.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '+$messageText
+  if(-not $target){$target=$unknown}
+  return $operation.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+
+   ' │ '+$icon+' '+$action+' → '+$target
  }
- # Remote 0.2.52 completion lines identify a tool but not its call UUID.
- # If several calls of that tool overlap, Host does not invent a pairing.
+ # Method-name completion is ambiguous when same-type calls overlap:
+ # make the missing subject explicit rather than inventing correlation.
  if($text -cmatch '\ARemote tool (completed|failed): ([a-z][a-z0-9_]{1,39})\z'){
   $phase=[string]$Matches[1];$tool=[string]$Matches[2]
-  $kind=switch -Exact ($tool){
-   'read_file' {'чтение файла'} 'read_multiple_files' {'чтение файлов'}
-   'write_file' {'запись файла'} 'edit_block' {'изменение файла'}
-   'list_directory' {'просмотр папки'} 'start_process' {'запуск программы'}
-   'read_process_output' {'чтение вывода'} 'interact_with_process' {'ввод в процесс'}
-   'list_processes' {'просмотр процессов'} 'start_search' {'поиск'}
-   'get_more_search_results' {'получение результатов'}
-   'get_file_info' {'сведения о файле'} 'move_file' {'перемещение файла'}
-   'create_directory' {'создание папки'} 'stop_search' {'остановка поиска'}
-   'get_config' {'чтение настроек'} default {'операция'}
+  $icon=if($phase -ceq 'completed'){'✅'}else{'❌'}
+  $action=Get-Rc1ToolAction $tool
+  if($phase -ceq 'completed' -and $tool -ceq 'start_process'){
+   $action='Запрос запуска программы'
   }
-  $status=if($phase -ceq 'completed'){'✅ Завершено: '}else{'❌ Ошибка: '}
-  return $number.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '+$status+$kind
+  return $gutter+$icon+' '+$action+' → '+$unknown
  }
- # Fail closed on malformed tool-rich rows so payloads are never reflected.
+ # Fail closed for malformed rich tool data.
  if($text.StartsWith('Remote tool ',[StringComparison]::Ordinal) -and $text.Contains('|')){
-  return $number.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ • Событие инструмента'
+  return $gutter+'• Событие инструмента → '+$unknown
  }
- $description=switch -CaseSensitive -Regex ($text) {
-  '^Remote tool started: ([a-z][a-z0-9_]{1,39})$' { '🔧 Начато: '+$Matches[1];break }
-  '^Remote tool started$' { '🔧 Начато';break }
-  '^Remote tool completed$' { '✅ Выполнено';break }
-  '^Remote tool failed$' { '❌ Ошибка выполнения';break }
-  '^Remote connected$' { '🔌 Remote подключён';break }
-  '^Authentication pending$' { '⏳ Ожидание авторизации';break }
-  '^Remote channel unavailable$' { '❌ Канал Remote недоступен';break }
-  '^Remote start failed$' { '❌ Ошибка запуска Remote';break }
-  '^Local MCP recovering$' { '⏳ Восстановление MCP';break }
-  '^Remote launcher replaced$' { '🔌 Сессия Remote обновлена';break }
-  default { '• '+$text }
+ if($text -cmatch '\ARemote tool started: ([a-z][a-z0-9_]{1,39})\z'){
+  return $gutter+'🔧 '+(Get-Rc1ToolAction ([string]$Matches[1]))+' → '+$unknown
  }
- return $number.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '+$description
+ switch -CaseSensitive ($text) {
+  'Remote tool started' {return $gutter+'🔧 Операция → '+$unknown}
+  'Remote tool completed' {return $gutter+'✅ Операция → '+$unknown}
+  'Remote tool failed' {return $gutter+'❌ Операция → '+$unknown}
+  'Remote connected' {return $gutter+'🔌 Remote → подключён'}
+  'Authentication pending' {return $gutter+'⏳ Авторизация → ожидание'}
+  'Remote channel unavailable' {return $gutter+'❌ Канал Remote → недоступен'}
+  'Remote start failed' {return $gutter+'❌ Запуск Remote → ошибка'}
+  'Local MCP recovering' {return $gutter+'⏳ MCP → восстановление'}
+  'Remote launcher replaced' {return $gutter+'🔌 Сессия Remote → обновлена'}
+  default {return $gutter+'• Событие → '+$text}
+ }
 }
 # Separate, bounded diagnostic history for Help -> Show Journal. Unlike the
 # lower activity pane it retains 512 recent sanitized entries, each tagged

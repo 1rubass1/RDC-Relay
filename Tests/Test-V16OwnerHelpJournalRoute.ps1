@@ -4,6 +4,18 @@ $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 $path=Join-Path (Split-Path -Parent $PSScriptRoot) 'Source\remote-window.ps1'
 $raw=[IO.File]::ReadAllText($path,[Text.Encoding]::UTF8)
+# Compile the exact production RichEdit and overlay scrollbar controls
+# in this isolated test, without launching the application or Remote.
+$bufferStart=$raw.IndexOf('public class RdcBufferedPanel : Panel {',[StringComparison]::Ordinal)
+$bufferEnd=$raw.IndexOf('public class RdcDividerDragPreview : Control {',$bufferStart,[StringComparison]::Ordinal)
+$logStart=$raw.IndexOf('public class RdcLogBox : RichTextBox {',[StringComparison]::Ordinal)
+$logEnd=$raw.IndexOf("'@ -ReferencedAssemblies",$logStart,[StringComparison]::Ordinal)
+if($bufferStart -lt 0 -or $bufferEnd -le $bufferStart -or
+ $logStart -lt 0 -or $logEnd -le $logStart){throw 'RC1_JOURNAL_PRODUCTION_CONTROLS_NOT_FOUND'}
+$nativeCode='using System;using System.IO;using System.Text;using System.Drawing;using System.Drawing.Drawing2D;using System.Windows.Forms;using System.Runtime.InteropServices;using System.Diagnostics;' + [Environment]::NewLine +
+ $raw.Substring($bufferStart,$bufferEnd-$bufferStart)+[Environment]::NewLine+
+ $raw.Substring($logStart,$logEnd-$logStart)
+Add-Type -TypeDefinition $nativeCode -ReferencedAssemblies @('System.dll','System.Drawing.dll','System.Windows.Forms.dll')
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
 $pass=0;$fail=0
@@ -104,33 +116,64 @@ Check ($raw.Contains('while ($script:eventBlocks.Count -gt $retained)') -and
 $journal=New-RdcOwnerJournalDialog $snapshot
 try{
  Check ($journal.Name -ceq 'rc1-journal-dialog' -and
-  $journal.Text -ceq 'RDC Relay — журнал' -and
+  $journal.Text -ceq 'RDC Relay - Журнал' -and
   $journal.Text -notmatch 'RC1|v1|1\.6' -and
   $journal.StartPosition -eq [Windows.Forms.FormStartPosition]::CenterParent -and
-  -not $journal.ShowInTaskbar) 'real journal opens in dedicated, version-free modal window'
+  -not $journal.ShowInTaskbar) 'real journal is dedicated, resizable and version-free'
  $layout=@($journal.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
- $heading=$layout.GetControlFromPosition(0,0)
- $body=$layout.GetControlFromPosition(0,1)
- $footer=$layout.GetControlFromPosition(0,2)
- $close=@($footer.Controls|Where-Object{$_.Name -ceq 'rc1-journal-close'})|Select-Object -First 1
+ $headerHost=$layout.GetControlFromPosition(0,0)
+ $heading=$headerHost.Controls['rc1-journal-heading']
+ $purpleRail=$layout.GetControlFromPosition(0,1)
+ $textHost=$layout.GetControlFromPosition(0,2)
+ $footerRail=$layout.GetControlFromPosition(0,3)
+ $footer=$layout.GetControlFromPosition(0,4)
+ $body=$textHost.Controls['rc1-journal-content']
+ $vert=$textHost.Controls['rc1-journal-vscroll']
+ $horizontal=$textHost.Controls['rc1-journal-hscroll']
+ $corner=$textHost.Controls['rc1-journal-scroll-corner']
+ $save=$footer.Controls['rc1-journal-save-txt']
+ $close=$footer.Controls['rc1-journal-close']
  Check ($heading.Text -ceq 'Журнал' -and $heading.Font.Bold -and
-  $body.Text -ceq $snapshot -and
-  $body.Name -ceq 'rc1-journal-content') 'journal dialog actually displays entire captured event snapshot'
- Check ($body.ReadOnly -and
-  -not $body.WordWrap -and
-  -not $body.DetectUrls -and
-  $body.ScrollBars -eq [Windows.Forms.RichTextBoxScrollBars]::Both -and
-  $body.Dock -eq [Windows.Forms.DockStyle]::Fill) 'journal is read-only, scrollable both directions and disables auto-open URLs'
- Check ($body.BackColor.ToArgb() -eq $journal.BackColor.ToArgb() -and
-  $body.ForeColor.ToArgb() -eq $journal.ForeColor.ToArgb() -and
+  $headerHost.BackColor.ToArgb() -eq $journal.BackColor.ToArgb() -and
+  $purpleRail.BackColor.ToArgb() -eq [Drawing.Color]::FromArgb(123,95,162).ToArgb() -and
+  $layout.RowCount -eq 5 -and $layout.RowStyles[1].Height -eq 2) 'journal has main-window header and full-width purple separator'
+ Check ($body -is [RdcLogBox] -and $textHost -is [RdcBufferedPanel] -and
+  $body.Text -ceq $snapshot -and $body.ReadOnly -and
+  -not $body.WordWrap -and -not $body.DetectUrls -and
+  $body.ScrollBars -eq [Windows.Forms.RichTextBoxScrollBars]::None -and
+  $body.BackColor.ToArgb() -eq [Drawing.Color]::FromArgb(18,20,23).ToArgb()) 'journal uses exact production RichEdit on separate dark text surface'
+ Check ($vert -is [RdcOverlayScrollBar] -and $vert.Vertical -and
+  $horizontal -is [RdcOverlayScrollBar] -and -not $horizontal.Vertical -and
+  [object]::ReferenceEquals($vert.Target,$body) -and
+  [object]::ReferenceEquals($horizontal.Target,$body) -and
+  $corner -is [Windows.Forms.Panel]) 'vertical and horizontal scrollbars reuse production draggable slider class'
+ Check ($footerRail.Height -eq 1 -and
+  $footer.BackColor.ToArgb() -eq $journal.BackColor.ToArgb() -and
+  $save.Text -ceq 'Сохранить TXT' -and
   $close.Text -ceq 'Закрыть' -and
   $journal.AcceptButton -eq $close -and
-  $journal.CancelButton -eq $close) 'journal follows dark Help styling with keyboard dismiss'
- $journal.PerformLayout();$layout.PerformLayout()
- Check ($body.ClientSize.Width -gt 320 -and $body.ClientSize.Height -gt 150 -and
-  $close.Right -le $footer.ClientSize.Width -and
-  $close.Bottom -le $footer.ClientSize.Height) 'actual journal modal content and Close footer fit without clipping'
-}finally{$journal.Dispose()}
+  $journal.CancelButton -eq $close -and $journal.Tag -ceq $snapshot) 'independent footer holds explicit TXT export and keyboard Close, not an auto-export'
+ $journal.StartPosition=[Windows.Forms.FormStartPosition]::Manual
+ $journal.Location=[Drawing.Point]::new(-10000,-10000)
+ $journal.Show()
+ [Windows.Forms.Application]::DoEvents()
+ $journal.PerformLayout();$layout.PerformLayout();$textHost.PerformLayout()
+ Check ($layout.ClientSize.Width -eq $journal.ClientSize.Width -and
+  $body.ClientSize.Width -gt 320 -and $body.ClientSize.Height -gt 150 -and
+  $vert.Bounds.X -eq $body.Width -and $vert.Width -eq 17 -and
+  $vert.Height -eq $body.Height -and
+  $horizontal.Bounds.Y -eq $body.Height -and
+  $horizontal.Width -eq $body.Width -and $horizontal.Height -eq 17 -and
+  $corner.Left -eq $body.Width -and $corner.Top -eq $body.Height) 'actual WinForms child geometry matches the main text panel and its 17px scrollbar tracks'
+ Check ($save.Bottom -le $footer.ClientSize.Height -and
+  $close.Bottom -le $footer.ClientSize.Height -and
+  $save.Left -lt $close.Left) 'save and close buttons fit in lower panel without clipping'
+ $journal.ClientSize=[Drawing.Size]::new(540,310)
+ [Windows.Forms.Application]::DoEvents()
+ Check ($vert.Left -eq $body.Width -and $vert.Height -eq $body.Height -and
+  $horizontal.Top -eq $body.Height -and $body.Width -ge 450 -and
+  $body.Height -gt 150) 'custom scrollbars reflow correctly when modal is resized near minimum'
+}finally{$journal.Close();$journal.Dispose()}
 $help=New-RdcOwnerHelpDialog 'Пример справки'
 try {
  $layout=@($help.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
@@ -238,11 +281,31 @@ Check (-not $snapshot.Contains('password=') -and
 $fullDialog=New-RdcOwnerJournalDialog $snapshot
 try{
  $inner=@($fullDialog.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
- $journalBody=$inner.GetControlFromPosition(0,1)
+ $textHost=$inner.GetControlFromPosition(0,2)
+ $journalBody=$textHost.Controls['rc1-journal-content']
+ $vert=$textHost.Controls['rc1-journal-vscroll']
+ $horz=$textHost.Controls['rc1-journal-hscroll']
  Check ($journalBody.Text -ceq $snapshot -and
   $journalBody.TextLength -gt 18000 -and $journalBody.ReadOnly -and
-  -not $journalBody.WordWrap) 'real journal dialog displays all retained diagnostic text without viewport clipping'
-}finally{$fullDialog.Dispose()}
+  -not $journalBody.WordWrap) 'real RichEdit displays the whole bounded diagnostic report'
+ $fullDialog.StartPosition=[Windows.Forms.FormStartPosition]::Manual
+ $fullDialog.Location=[Drawing.Point]::new(-10000,-10000)
+ $fullDialog.Show()
+ [Windows.Forms.Application]::DoEvents()
+ # RichEdit sometimes opens with its caret in the last line. Make the
+ # start position deterministic before testing that dragging/scrolling works.
+ $journalBody.Select(0,0)
+ $journalBody.SetViewPosition(0,0)
+ [Windows.Forms.Application]::DoEvents()
+ $top=[int]$journalBody.GetViewPosition().Y
+ $vert.ScrollToEnd()
+ [Windows.Forms.Application]::DoEvents()
+ $bottom=[int]$journalBody.GetViewPosition().Y
+ Check ($top -eq 0 -and $bottom -gt $top -and $bottom -gt 0 -and
+  $vert.Target -eq $journalBody) 'production scrollbar actually moves the lengthy journal vertically, not just decorates it'
+ Check ($journalBody.GetHorizontalMaximum() -gt 0 -and
+  $horz.Target -eq $journalBody -and $horz.Width -gt 300) 'long unwrapped lines have real horizontal scrolling range'
+}finally{$fullDialog.Close();$fullDialog.Dispose()}
 $OwnerGui=$false
 Write-Output ('RC1_HELP_JOURNAL_ROUTE_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}

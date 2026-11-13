@@ -6686,14 +6686,39 @@ function Get-RdcOwnerJournalText {
     if($items.Count -eq 0){return 'Журнал пока пуст.'}
     return [string]::Join([Environment]::NewLine,$items)
 }
+# Export only the same sanitized report that is already visible in the
+# diagnostic window. No automatic file creation or private Remote log access.
+function Save-RdcOwnerJournalTxt([Windows.Forms.Form]$parent,[string]$content) {
+    if([string]::IsNullOrWhiteSpace($content) -or $content.Length -gt 400000){
+        throw 'RC1_JOURNAL_EXPORT_BOUNDARY'
+    }
+    $picker=New-Object Windows.Forms.SaveFileDialog
+    try {
+        $picker.Title='Сохранить журнал RDC Relay'
+        $picker.Filter='Текстовый документ (*.txt)|*.txt'
+        $picker.DefaultExt='txt'
+        $picker.AddExtension=$true
+        $picker.OverwritePrompt=$true
+        $picker.FileName='RDC-Relay-journal-'+
+            [DateTime]::Now.ToString('yyyyMMdd-HHmmss',[Globalization.CultureInfo]::InvariantCulture)+'.txt'
+        if($picker.ShowDialog($parent) -ne [Windows.Forms.DialogResult]::OK){return}
+        $path=[IO.Path]::GetFullPath($picker.FileName)
+        if([IO.Path]::GetExtension($path) -ine '.txt'){throw 'RC1_JOURNAL_TXT_ONLY'}
+        if([IO.File]::Exists($path) -and
+           (([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) -ne 0)){
+            throw 'RC1_JOURNAL_EXPORT_REPARSE_DENIED'
+        }
+        [IO.File]::WriteAllText($path,$content,(New-Object Text.UTF8Encoding($true)))
+    }finally{$picker.Dispose()}
+}
 function New-RdcOwnerJournalDialog([string]$content) {
     $dialog=New-Object Windows.Forms.Form
     $dialog.Name='rc1-journal-dialog'
-    $dialog.Text='RDC Relay — журнал'
+    $dialog.Text='RDC Relay - Журнал'
     $dialog.StartPosition=[Windows.Forms.FormStartPosition]::CenterParent
     $dialog.FormBorderStyle=[Windows.Forms.FormBorderStyle]::Sizable
     $dialog.MinimumSize=[Drawing.Size]::new(520,280)
-    $dialog.ClientSize=[Drawing.Size]::new(740,420)
+    $dialog.ClientSize=[Drawing.Size]::new(740,440)
     $dialog.ShowInTaskbar=$false
     $dialog.MaximizeBox=$true
     $dialog.MinimizeBox=$false
@@ -6701,46 +6726,156 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $dialog.Font=[Drawing.Font]::new('Segoe UI',10)
     $dialog.BackColor=[Drawing.Color]::FromArgb(29,32,36)
     $dialog.ForeColor=[Drawing.Color]::Gainsboro
+    $dialog.Tag=$content # immutable snapshot, used solely by explicit Save TXT
+    # Main window rhythm: header / purple rail / dark RichEdit / footer.
     $layout=New-Object Windows.Forms.TableLayoutPanel
     $layout.Name='rc1-journal-layout'
     $layout.Dock=[Windows.Forms.DockStyle]::Fill
-    $layout.Padding=[Windows.Forms.Padding]::new(20,18,20,16)
+    $layout.Margin=[Windows.Forms.Padding]::new(0)
+    $layout.Padding=[Windows.Forms.Padding]::new(0)
+    $layout.BackColor=$dialog.BackColor
     $layout.ColumnCount=1
-    $layout.RowCount=3
-    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,36))
+    $layout.RowCount=5
+    [void]$layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,52))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,2))
     [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
-    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,50))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,1))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,62))
+    $headingHost=New-Object Windows.Forms.Panel
+    $headingHost.Name='rc1-journal-heading-panel'
+    $headingHost.Dock=[Windows.Forms.DockStyle]::Fill
+    $headingHost.Margin=[Windows.Forms.Padding]::new(0)
+    $headingHost.BackColor=$dialog.BackColor
     $heading=New-Object Windows.Forms.Label
     $heading.Name='rc1-journal-heading'
     $heading.Text='Журнал'
     $heading.Font=[Drawing.Font]::new('Segoe UI',12,[Drawing.FontStyle]::Bold)
-    $heading.AutoSize=$true
     $heading.ForeColor=$dialog.ForeColor
-    $heading.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
-    [void]$layout.Controls.Add($heading,0,0)
-    $body=New-Object Windows.Forms.RichTextBox
+    $heading.AutoSize=$true
+    $heading.Location=[Drawing.Point]::new(20,14)
+    [void]$headingHost.Controls.Add($heading)
+    [void]$layout.Controls.Add($headingHost,0,0)
+    $rail=New-Object Windows.Forms.Panel
+    $rail.Name='rc1-journal-purple-rail'
+    $rail.Dock=[Windows.Forms.DockStyle]::Fill
+    $rail.Margin=[Windows.Forms.Padding]::new(0)
+    $rail.BackColor=[Drawing.Color]::FromArgb(123,95,162)
+    [void]$layout.Controls.Add($rail,0,1)
+    $textHost=New-Object RdcBufferedPanel
+    $textHost.Name='rc1-journal-text-host'
+    $textHost.Dock=[Windows.Forms.DockStyle]::Fill
+    $textHost.Margin=[Windows.Forms.Padding]::new(0)
+    $textHost.Padding=[Windows.Forms.Padding]::new(0)
+    $textHost.BackColor=[Drawing.Color]::FromArgb(18,20,23)
+    $body=New-Object RdcLogBox
     $body.Name='rc1-journal-content'
     $body.Text=$content
     $body.ReadOnly=$true
     $body.WordWrap=$false
     $body.DetectUrls=$false
     $body.ShortcutsEnabled=$true
-    $body.ScrollBars=[Windows.Forms.RichTextBoxScrollBars]::Both
+    $body.ScrollBars=[Windows.Forms.RichTextBoxScrollBars]::None
     $body.BorderStyle=[Windows.Forms.BorderStyle]::None
-    $body.BackColor=$dialog.BackColor
-    $body.ForeColor=$dialog.ForeColor
+    $body.BackColor=$textHost.BackColor
+    $body.ForeColor=[Drawing.Color]::Gainsboro
     $body.Font=[Drawing.Font]::new($script:ownerTextFontFamily,10)
-    $body.Dock=[Windows.Forms.DockStyle]::Fill
-    $body.AccessibleName='Журнал событий RDC Relay'
-    $body.Margin=[Windows.Forms.Padding]::new(0,0,0,8)
-    [void]$layout.Controls.Add($body,0,1)
-    $footer=New-Object Windows.Forms.FlowLayoutPanel
+    $body.Dock=[Windows.Forms.DockStyle]::None
+    $body.Margin=[Windows.Forms.Padding]::new(0)
+    $body.AccessibleName='Диагностический журнал RDC Relay'
+    $journalVScroll=New-Object RdcOverlayScrollBar
+    $journalVScroll.Name='rc1-journal-vscroll'
+    $journalVScroll.Target=$body
+    $journalVScroll.Vertical=$true
+    $journalVScroll.Dock=[Windows.Forms.DockStyle]::None
+    $journalVScroll.Margin=[Windows.Forms.Padding]::new(0)
+    $journalHScroll=New-Object RdcOverlayScrollBar
+    $journalHScroll.Name='rc1-journal-hscroll'
+    $journalHScroll.Target=$body
+    $journalHScroll.Vertical=$false
+    $journalHScroll.Dock=[Windows.Forms.DockStyle]::None
+    $journalHScroll.Margin=[Windows.Forms.Padding]::new(0)
+    # Decorative corner is intentionally not a draggable splitter: unlike
+    # the main window this modal has no two-pane divider to resize.
+    $journalCorner=New-Object Windows.Forms.Panel
+    $journalCorner.Name='rc1-journal-scroll-corner'
+    $journalCorner.Dock=[Windows.Forms.DockStyle]::None
+    $journalCorner.Margin=[Windows.Forms.Padding]::new(0)
+    $journalCorner.BackColor=$textHost.BackColor
+    [void]$textHost.Controls.Add($body)
+    [void]$textHost.Controls.Add($journalVScroll)
+    [void]$textHost.Controls.Add($journalHScroll)
+    [void]$textHost.Controls.Add($journalCorner)
+    # Identical 17px overlays and RichEdit viewport geometry as the main
+    # activity pane. Resolve controls from the sender so the resize handler
+    # works after New-RdcOwnerJournalDialog has returned.
+    $textHost.Add_Resize({
+        param($sender,$e)
+        $b=$sender.Controls['rc1-journal-content']
+        $v=$sender.Controls['rc1-journal-vscroll']
+        $h=$sender.Controls['rc1-journal-hscroll']
+        $c=$sender.Controls['rc1-journal-scroll-corner']
+        if(-not $b -or -not $v -or -not $h -or -not $c){return}
+        $w=[Math]::Max(17,$sender.ClientSize.Width)
+        $height=[Math]::Max(17,$sender.ClientSize.Height)
+        $contentW=[Math]::Max(0,$w-17)
+        $contentH=[Math]::Max(0,$height-17)
+        $sender.SuspendLayout()
+        try {
+            $b.SetBounds(0,0,$contentW,$contentH)
+            $v.SetBounds($contentW,0,17,$contentH)
+            $h.SetBounds(0,$contentH,$contentW,17)
+            $c.SetBounds($contentW,$contentH,17,17)
+        }finally{$sender.ResumeLayout($false)}
+        $v.Invalidate()
+        $h.Invalidate()
+    })
+    $body.Add_ScrollActivity({
+        param($sender,$e)
+        if($sender.Parent){
+            $v=$sender.Parent.Controls['rc1-journal-vscroll']
+            $h=$sender.Parent.Controls['rc1-journal-hscroll']
+            if($v){$v.Invalidate()}
+            if($h){$h.Invalidate()}
+        }
+    })
+    [void]$layout.Controls.Add($textHost,0,2)
+    $bottomRail=New-Object Windows.Forms.Panel
+    $bottomRail.Name='rc1-journal-footer-separator'
+    $bottomRail.Dock=[Windows.Forms.DockStyle]::Fill
+    $bottomRail.Margin=[Windows.Forms.Padding]::new(0)
+    $bottomRail.BackColor=[Drawing.Color]::FromArgb(85,70,108)
+    [void]$layout.Controls.Add($bottomRail,0,3)
+    $footer=New-Object Windows.Forms.TableLayoutPanel
     $footer.Name='rc1-journal-footer'
     $footer.Dock=[Windows.Forms.DockStyle]::Fill
-    $footer.FlowDirection=[Windows.Forms.FlowDirection]::RightToLeft
-    $footer.WrapContents=$false
-    $footer.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
+    $footer.BackColor=$dialog.BackColor
+    $footer.ColumnCount=2
+    $footer.RowCount=1
     $footer.Margin=[Windows.Forms.Padding]::new(0)
+    $footer.Padding=[Windows.Forms.Padding]::new(20,13,20,11)
+    [void]$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute,100))
+    $save=New-Object Windows.Forms.Button
+    $save.Name='rc1-journal-save-txt'
+    $save.Text='Сохранить TXT'
+    $save.Size=[Drawing.Size]::new(148,34)
+    $save.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $save.ForeColor=$dialog.ForeColor
+    $save.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $save.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
+    $save.Margin=[Windows.Forms.Padding]::new(0)
+    $save.Add_Click({
+        param($sender,$e)
+        $host=$sender.FindForm()
+        try { Save-RdcOwnerJournalTxt $host ([string]$host.Tag) }
+        catch {
+            [void][Windows.Forms.MessageBox]::Show($host,
+              'Не удалось сохранить журнал. Проверьте выбранную папку.',
+              'RDC Relay',[Windows.Forms.MessageBoxButtons]::OK,
+              [Windows.Forms.MessageBoxIcon]::Warning)
+        }
+    })
     $close=New-Object Windows.Forms.Button
     $close.Name='rc1-journal-close'
     $close.Text='Закрыть'
@@ -6751,12 +6886,16 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $close.FlatStyle=[Windows.Forms.FlatStyle]::Flat
     $close.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
     $close.Margin=[Windows.Forms.Padding]::new(0)
-    [void]$footer.Controls.Add($close)
-    [void]$layout.Controls.Add($footer,0,2)
+    [void]$footer.Controls.Add($save,0,0)
+    [void]$footer.Controls.Add($close,1,0)
+    [void]$layout.Controls.Add($footer,0,4)
     $dialog.Controls.Add($layout)
+    $dialog.PerformLayout()
+    $layout.PerformLayout()
+    $textHost.PerformLayout()
     $dialog.AcceptButton=$close
     $dialog.CancelButton=$close
-    $dialog.ActiveControl=$close
+    $dialog.ActiveControl=$body
     return $dialog
 }
 function Show-RdcOwnerJournal([Windows.Forms.Form]$parent) {
