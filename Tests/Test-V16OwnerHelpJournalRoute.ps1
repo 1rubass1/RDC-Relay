@@ -4,6 +4,7 @@ $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 $path=Join-Path (Split-Path -Parent $PSScriptRoot) 'Source\remote-window.ps1'
 $raw=[IO.File]::ReadAllText($path,[Text.Encoding]::UTF8)
+. (Join-Path $PSScriptRoot 'Import-V16OwnerModalButtonType.ps1') -SourcePath $path
 # Compile the exact production RichEdit and overlay scrollbar controls
 # in this isolated test, without launching the application or Remote.
 $bufferStart=$raw.IndexOf('public class RdcBufferedPanel : Panel {',[StringComparison]::Ordinal)
@@ -137,7 +138,7 @@ try{
  Check ($heading.Text -ceq 'Журнал' -and $heading.Font.Bold -and
   $headerHost.BackColor.ToArgb() -eq $journal.BackColor.ToArgb() -and
   $purpleRail.BackColor.ToArgb() -eq [Drawing.Color]::FromArgb(123,95,162).ToArgb() -and
-  $layout.RowCount -eq 5 -and $layout.RowStyles[1].Height -eq 2) 'journal has main-window header and full-width purple separator'
+  $layout.RowCount -eq 5 -and $layout.RowStyles[1].Height -eq 1) 'journal has main-window header and full-width purple separator'
  Check ($body -is [RdcLogBox] -and $textHost -is [RdcBufferedPanel] -and
   $body.Text -ceq $snapshot -and $body.ReadOnly -and
   -not $body.WordWrap -and -not $body.DetectUrls -and
@@ -147,11 +148,13 @@ try{
   $horizontal -is [RdcOverlayScrollBar] -and -not $horizontal.Vertical -and
   [object]::ReferenceEquals($vert.Target,$body) -and
   [object]::ReferenceEquals($horizontal.Target,$body) -and
-  $corner -is [Windows.Forms.Panel]) 'vertical and horizontal scrollbars reuse production draggable slider class'
+  $corner -is [RdcJournalScrollGrip] -and
+  $corner.Cursor -eq [Windows.Forms.Cursors]::Default) 'custom sliders and visible passive journal corner reuse production art'
  Check ($footerRail.Height -eq 1 -and
   $footer.BackColor.ToArgb() -eq $journal.BackColor.ToArgb() -and
   $save.Text -ceq 'Сохранить TXT' -and
   $close.Text -ceq 'Закрыть' -and
+  $save -is [RdcModalButton] -and $close -is [RdcModalButton] -and
   $journal.AcceptButton -eq $close -and
   $journal.CancelButton -eq $close -and $journal.Tag -ceq $snapshot) 'independent footer holds explicit TXT export and keyboard Close, not an auto-export'
  $journal.StartPosition=[Windows.Forms.FormStartPosition]::Manual

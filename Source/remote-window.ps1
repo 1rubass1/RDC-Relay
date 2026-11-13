@@ -1003,7 +1003,7 @@ public class RdcRoundedButton : Control {
     protected override void OnMouseUp(MouseEventArgs e) {
         pressed = false; Invalidate(); base.OnMouseUp(e);
     }
-    private GraphicsPath Rounded(RectangleF r, float radius) {
+    private static GraphicsPath Rounded(RectangleF r, float radius) {
         GraphicsPath p = new GraphicsPath();
         float d = radius * 2f;
         p.AddArc(r.Left,r.Top,d,d,180,90);
@@ -1012,6 +1012,43 @@ public class RdcRoundedButton : Control {
         p.AddArc(r.Left,r.Bottom-d,d,d,90,90);
         p.CloseFigure();
         return p;
+    }
+
+    // Shared native-looking palette and 6px corner geometry. The main
+    // Stop/Account buttons and all Owner modal buttons call this exact
+    // painter; modal buttons intentionally have no glyph or chevron.
+    public static Color PaintChrome(Graphics graphics, int width, int height,
+        Color background, Color foreground, bool enabled, bool hovered,
+        bool pressed) {
+        graphics.Clear(background);
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        Color fill;
+        Color edge;
+        Color content;
+        if (!enabled) {
+            fill=Color.FromArgb(49,53,59);
+            edge=Color.FromArgb(82,84,88);
+            content=Color.FromArgb(132,135,139);
+        } else {
+            fill=pressed ? Color.FromArgb(42,46,51)
+                : hovered ? Color.FromArgb(61,66,72)
+                : Color.FromArgb(49,53,59);
+            edge=pressed ? Color.FromArgb(139,81,45)
+                : hovered ? Color.FromArgb(207,132,75)
+                : Color.FromArgb(191,118,67);
+            content=foreground;
+        }
+        if (width>3 && height>3) {
+            RectangleF r=new RectangleF(1f,1f,width-2f,height-2f);
+            using(GraphicsPath path=Rounded(r,6f))
+            using(SolidBrush brush=new SolidBrush(fill))
+            using(Pen pen=new Pen(edge,1f)) {
+                graphics.FillPath(brush,path);
+                graphics.DrawPath(pen,path);
+            }
+        }
+        return content;
     }
 
     private void DrawGlyph(Graphics g, Rectangle r, Color color) {
@@ -1061,46 +1098,10 @@ public class RdcRoundedButton : Control {
     }
 
     protected override void OnPaint(PaintEventArgs e) {
-        // Opaque controls do not receive the normal background paint pass.
-        // Clear the complete client area here so no stale sibling pixels can survive.
-        e.Graphics.Clear(BackColor);
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-
-        bool activeHover = Enabled && hovered;
-        bool activePress = Enabled && pressed;
-        Color fill;
-        Color edge;
-        Color content;
-
-        if (!Enabled) {
-            fill = Color.FromArgb(49,53,59);
-            edge = Color.FromArgb(82,84,88);
-            content = Color.FromArgb(132,135,139);
-        } else {
-            fill = activePress ? Color.FromArgb(42,46,51)
-                 : activeHover ? Color.FromArgb(61,66,72)
-                 : Color.FromArgb(49,53,59);
-
-            if (tone == RdcButtonTone.Neutral) {
-                edge = activePress ? Color.FromArgb(139,81,45)
-                     : activeHover ? Color.FromArgb(207,132,75)
-                     : Color.FromArgb(191,118,67);
-            } else {
-                edge = activePress ? Color.FromArgb(139,81,45)
-                     : activeHover ? Color.FromArgb(207,132,75)
-                     : Color.FromArgb(191,118,67);
-            }
-            content = ForeColor;
-        }
-
-        RectangleF r = new RectangleF(1f,1f,Width-2f,Height-2f);
-        using (GraphicsPath p = Rounded(r,6f))
-        using (SolidBrush b = new SolidBrush(fill))
-        using (Pen pen = new Pen(edge,1f)) {
-            e.Graphics.FillPath(b,p);
-            e.Graphics.DrawPath(pen,p);
-        }
+        // The modal version shares precisely this paint path and palette.
+        // Opaque backgrounds, 6px corners and 1px outline stay unchanged.
+        Color content=PaintChrome(e.Graphics,Width,Height,BackColor,ForeColor,
+                                  Enabled,hovered,pressed);
 
         TextFormatFlags flags =
             TextFormatFlags.VerticalCenter |
@@ -1136,6 +1137,88 @@ public class RdcRoundedButton : Control {
             flags | TextFormatFlags.Left);
         if (Focused && ShowFocusCues)
             ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle,-5,-5), ForeColor, BackColor);
+    }
+}
+
+// Retains native Button/DialogResult/PerformClick/Enter/Escape behavior,
+// but shares the main RdcRoundedButton's exact 6px rounded chrome. Unlike
+// the main control-panel actions, Owner modal actions have no glyphs.
+public sealed class RdcModalButton : Button {
+    private bool hovered;
+    private bool pressed;
+    public RdcModalButton() {
+        SetStyle(ControlStyles.UserPaint |
+                 ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.OptimizedDoubleBuffer |
+                 ControlStyles.ResizeRedraw |
+                 ControlStyles.Opaque,true);
+        SetStyle(ControlStyles.SupportsTransparentBackColor,false);
+        BackColor=Color.FromArgb(29,32,36);
+        ForeColor=Color.FromArgb(238,238,238);
+        Font=new Font("Segoe UI Semibold",10f,FontStyle.Regular);
+        Cursor=Cursors.Hand;
+        FlatStyle=FlatStyle.Flat;
+        UseVisualStyleBackColor=false;
+        TabStop=true;
+        AccessibleRole=AccessibleRole.PushButton;
+    }
+    protected override void OnPaintBackground(PaintEventArgs e) {
+        e.Graphics.Clear(BackColor);
+    }
+    protected override void OnPaint(PaintEventArgs e) {
+        Color textColor=RdcRoundedButton.PaintChrome(
+            e.Graphics,Width,Height,BackColor,ForeColor,Enabled,hovered,pressed);
+        TextRenderer.DrawText(e.Graphics,Text,Font,ClientRectangle,textColor,
+            TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
+            TextFormatFlags.NoPadding | TextFormatFlags.HorizontalCenter);
+        if (Focused && ShowFocusCues)
+            ControlPaint.DrawFocusRectangle(e.Graphics,
+                Rectangle.Inflate(ClientRectangle,-5,-5),ForeColor,BackColor);
+    }
+    protected override void OnEnabledChanged(EventArgs e) {
+        base.OnEnabledChanged(e);
+        Invalidate();
+    }
+    protected override void OnMouseEnter(EventArgs e) {
+        hovered=Enabled;
+        base.OnMouseEnter(e);
+        Invalidate();
+    }
+    protected override void OnMouseLeave(EventArgs e) {
+        hovered=false;
+        pressed=false;
+        base.OnMouseLeave(e);
+        Invalidate();
+    }
+    protected override void OnMouseDown(MouseEventArgs e) {
+        if (Enabled && e.Button==MouseButtons.Left) pressed=true;
+        base.OnMouseDown(e);
+        Invalidate();
+    }
+    protected override void OnMouseUp(MouseEventArgs e) {
+        pressed=false;
+        base.OnMouseUp(e);
+        Invalidate();
+    }
+    protected override void OnKeyDown(KeyEventArgs e) {
+        if (Enabled && (e.KeyCode==Keys.Space || e.KeyCode==Keys.Enter))
+            pressed=true;
+        base.OnKeyDown(e);
+        Invalidate();
+    }
+    protected override void OnKeyUp(KeyEventArgs e) {
+        pressed=false;
+        base.OnKeyUp(e);
+        Invalidate();
+    }
+    protected override void OnGotFocus(EventArgs e) {
+        base.OnGotFocus(e);
+        Invalidate();
+    }
+    protected override void OnLostFocus(EventArgs e) {
+        pressed=false;
+        base.OnLostFocus(e);
+        Invalidate();
     }
 }
 
@@ -2171,14 +2254,19 @@ public class RdcScrollCorner : Control {
         Cursor = Cursors.SizeNS;
     }
 
-    protected override void OnPaint(PaintEventArgs e) {
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        e.Graphics.Clear(Color.FromArgb(18,20,23));
+    public static void PaintGrip(Graphics graphics) {
+        // Exactly the same 17x17, three-stroke corner artwork in the main
+        // activity panel and in the Journal's independent scroll junction.
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.Clear(Color.FromArgb(18,20,23));
         using (Pen p = new Pen(Color.FromArgb(191,118,67),1.4f)) {
-            e.Graphics.DrawLine(p,10,15,15,10);
-            e.Graphics.DrawLine(p,6,15,15,6);
-            e.Graphics.DrawLine(p,2,15,15,2);
+            graphics.DrawLine(p,10,15,15,10);
+            graphics.DrawLine(p,6,15,15,6);
+            graphics.DrawLine(p,2,15,15,2);
         }
+    }
+    protected override void OnPaint(PaintEventArgs e) {
+        PaintGrip(e.Graphics);
     }
 
     protected override void OnMouseDown(MouseEventArgs e) {
@@ -2241,6 +2329,25 @@ public class RdcScrollCorner : Control {
             Invalidate();
         }
         base.OnMouseCaptureChanged(e);
+    }
+}
+
+// The Journal has a resizable Form but no activity-pane splitter.
+// Keep the same visible scroll-corner GRIP without exposing a fake
+// vertical-split drag gesture or capturing mouse input.
+public sealed class RdcJournalScrollGrip : Control {
+    public RdcJournalScrollGrip() {
+        SetStyle(ControlStyles.UserPaint |
+                 ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.OptimizedDoubleBuffer |
+                 ControlStyles.ResizeRedraw |
+                 ControlStyles.Opaque,true);
+        Cursor=Cursors.Default;
+        TabStop=false;
+        AccessibleRole=AccessibleRole.None;
+    }
+    protected override void OnPaint(PaintEventArgs e) {
+        RdcScrollCorner.PaintGrip(e.Graphics);
     }
 }
 
@@ -6220,25 +6327,17 @@ function New-RdcOwnerStopDialog {
     $buttons.WrapContents=$false
     $buttons.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
     $buttons.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
-    $no=New-Object Windows.Forms.Button
+    $no=New-Object RdcModalButton
     $no.Name='rc1-stop-remote-no'
     $no.Text='Нет'
     $no.Size=[Drawing.Size]::new(96,34)
     $no.DialogResult=[Windows.Forms.DialogResult]::No
-    $no.BackColor=[Drawing.Color]::FromArgb(57,61,70)
-    $no.ForeColor=$dialog.ForeColor
-    $no.FlatStyle=[Windows.Forms.FlatStyle]::Flat
-    $no.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
     $no.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
-    $yes=New-Object Windows.Forms.Button
+    $yes=New-Object RdcModalButton
     $yes.Name='rc1-stop-remote-yes'
     $yes.Text='Да'
     $yes.Size=[Drawing.Size]::new(96,34)
     $yes.DialogResult=[Windows.Forms.DialogResult]::Yes
-    $yes.BackColor=[Drawing.Color]::FromArgb(57,61,70)
-    $yes.ForeColor=$dialog.ForeColor
-    $yes.FlatStyle=[Windows.Forms.FlatStyle]::Flat
-    $yes.FlatAppearance.BorderColor=[Drawing.Color]::LightCoral
     $yes.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
     [void]$buttons.Controls.Add($no)
     [void]$buttons.Controls.Add($yes)
@@ -6404,17 +6503,13 @@ function New-RdcOwnerAccountSwitchDialog {
     $buttonRow.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
     [void]$buttonRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,50))
     [void]$buttonRow.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,50))
-    $site=New-Object Windows.Forms.Button
+    $site=New-Object RdcModalButton
     $site.Name='rc1-account-switch-signout-website'
     $site.Text='Выйти из аккаунта'
     $site.Size=[Drawing.Size]::new(192,34)
     $site.Anchor=([Windows.Forms.AnchorStyles]::Top -bor [Windows.Forms.AnchorStyles]::Left)
     $site.Margin=[Windows.Forms.Padding]::new(0,8,0,0)
     $site.DialogResult=[Windows.Forms.DialogResult]::None
-    $site.BackColor=[Drawing.Color]::FromArgb(57,61,70)
-    $site.ForeColor=$dialog.ForeColor
-    $site.FlatStyle=[Windows.Forms.FlatStyle]::Flat
-    $site.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
     $site.AccessibleDescription='Открывает официальный кабинет Desktop Commander. Выход из аккаунта выполняется вручную на сайте.'
     $site.Add_Click({
         # A web-navigation helper only: never log out Remote, change
@@ -6435,25 +6530,17 @@ function New-RdcOwnerAccountSwitchDialog {
     $buttons.WrapContents=$false
     $buttons.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
     $buttons.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
-    $no=New-Object Windows.Forms.Button
+    $no=New-Object RdcModalButton
     $no.Name='rc1-account-switch-no'
     $no.Text='Нет'
     $no.Size=[Drawing.Size]::new(96,34)
     $no.DialogResult=[Windows.Forms.DialogResult]::No
-    $no.BackColor=[Drawing.Color]::FromArgb(57,61,70)
-    $no.ForeColor=$dialog.ForeColor
-    $no.FlatStyle=[Windows.Forms.FlatStyle]::Flat
-    $no.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
     $no.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
-    $yes=New-Object Windows.Forms.Button
+    $yes=New-Object RdcModalButton
     $yes.Name='rc1-account-switch-yes'
     $yes.Text='Да'
     $yes.Size=[Drawing.Size]::new(96,34)
     $yes.DialogResult=[Windows.Forms.DialogResult]::Yes
-    $yes.BackColor=[Drawing.Color]::FromArgb(57,61,70)
-    $yes.ForeColor=$dialog.ForeColor
-    $yes.FlatStyle=[Windows.Forms.FlatStyle]::Flat
-    $yes.FlatAppearance.BorderColor=[Drawing.Color]::LightCoral
     $yes.Margin=[Windows.Forms.Padding]::new(8,0,0,0)
     [void]$buttons.Controls.Add($no)
     [void]$buttons.Controls.Add($yes)
@@ -6631,15 +6718,11 @@ function New-RdcOwnerHelpDialog([string]$content) {
     [void]$buttons.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute,96))
     $buttons.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
     $buttons.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
-    $showJournal=New-Object Windows.Forms.Button
+    $showJournal=New-Object RdcModalButton
     $showJournal.Name='rc1-help-show-journal'
     $showJournal.Text='Показать журнал'
     $showJournal.AccessibleName='Показать журнал событий'
     $showJournal.Size=[Drawing.Size]::new(160,34)
-    $showJournal.BackColor=[Drawing.Color]::FromArgb(57,61,70)
-    $showJournal.ForeColor=$dialog.ForeColor
-    $showJournal.FlatStyle=[Windows.Forms.FlatStyle]::Flat
-    $showJournal.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
     $showJournal.Margin=[Windows.Forms.Padding]::new(0)
     # Owner journal access follows the authenticated Host's capability;
     # legacy/non-Owner About can still show its empty journal placeholder.
@@ -6648,15 +6731,11 @@ function New-RdcOwnerHelpDialog([string]$content) {
         param($sender,$e)
         Show-RdcOwnerJournal ($sender.FindForm())
     })
-    $close=New-Object Windows.Forms.Button
+    $close=New-Object RdcModalButton
     $close.Name='rc1-help-close'
     $close.Text='Закрыть'
     $close.Size=[Drawing.Size]::new(96,34)
     $close.DialogResult=[Windows.Forms.DialogResult]::OK
-    $close.BackColor=[Drawing.Color]::FromArgb(57,61,70)
-    $close.ForeColor=$dialog.ForeColor
-    $close.FlatStyle=[Windows.Forms.FlatStyle]::Flat
-    $close.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
     $close.Margin=[Windows.Forms.Padding]::new(0)
     [void]$buttons.Controls.Add($showJournal,0,0)
     [void]$buttons.Controls.Add($close,1,0)
@@ -6815,7 +6894,7 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $layout.RowCount=5
     [void]$layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
     [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,52))
-    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,2))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,1))
     [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
     [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,1))
     [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,62))
@@ -6874,11 +6953,11 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $journalHScroll.Margin=[Windows.Forms.Padding]::new(0)
     # Decorative corner is intentionally not a draggable splitter: unlike
     # the main window this modal has no two-pane divider to resize.
-    $journalCorner=New-Object Windows.Forms.Panel
+    $journalCorner=New-Object RdcJournalScrollGrip
     $journalCorner.Name='rc1-journal-scroll-corner'
     $journalCorner.Dock=[Windows.Forms.DockStyle]::None
     $journalCorner.Margin=[Windows.Forms.Padding]::new(0)
-    $journalCorner.BackColor=$textHost.BackColor
+    # RdcJournalScrollGrip uses the exact main-panel grip painter.
     [void]$textHost.Controls.Add($body)
     [void]$textHost.Controls.Add($journalVScroll)
     [void]$textHost.Controls.Add($journalHScroll)
@@ -6933,14 +7012,10 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $footer.Padding=[Windows.Forms.Padding]::new(20,13,20,11)
     [void]$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
     [void]$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute,100))
-    $save=New-Object Windows.Forms.Button
+    $save=New-Object RdcModalButton
     $save.Name='rc1-journal-save-txt'
     $save.Text='Сохранить TXT'
     $save.Size=[Drawing.Size]::new(148,34)
-    $save.BackColor=[Drawing.Color]::FromArgb(57,61,70)
-    $save.ForeColor=$dialog.ForeColor
-    $save.FlatStyle=[Windows.Forms.FlatStyle]::Flat
-    $save.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
     $save.Margin=[Windows.Forms.Padding]::new(0)
     $save.Add_Click({
         param($sender,$e)
@@ -6954,15 +7029,11 @@ function New-RdcOwnerJournalDialog([string]$content) {
               [Windows.Forms.MessageBoxIcon]::Warning)
         }
     })
-    $close=New-Object Windows.Forms.Button
+    $close=New-Object RdcModalButton
     $close.Name='rc1-journal-close'
     $close.Text='Закрыть'
     $close.Size=[Drawing.Size]::new(96,34)
     $close.DialogResult=[Windows.Forms.DialogResult]::OK
-    $close.BackColor=[Drawing.Color]::FromArgb(57,61,70)
-    $close.ForeColor=$dialog.ForeColor
-    $close.FlatStyle=[Windows.Forms.FlatStyle]::Flat
-    $close.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
     $close.Margin=[Windows.Forms.Padding]::new(0)
     [void]$footer.Controls.Add($save,0,0)
     [void]$footer.Controls.Add($close,1,0)

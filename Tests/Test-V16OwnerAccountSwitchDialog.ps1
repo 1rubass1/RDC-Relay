@@ -3,6 +3,7 @@
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 $src=Join-Path (Split-Path -Parent $PSScriptRoot) 'Source\remote-window.ps1'
+. (Join-Path $PSScriptRoot 'Import-V16OwnerModalButtonType.ps1') -SourcePath $src
 $source=[IO.File]::ReadAllText($src,[Text.Encoding]::UTF8)
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($src,[ref]$tokens,[ref]$errors)
@@ -62,6 +63,7 @@ try{
  $buttons=@($right.Controls)
  $no=@($buttons|Where-Object{$_.Name -ceq 'rc1-account-switch-no'})|Select-Object -First 1
  $yes=@($buttons|Where-Object{$_.Name -ceq 'rc1-account-switch-yes'})|Select-Object -First 1
+ Check ($site -is [RdcModalButton] -and $no -is [RdcModalButton] -and $yes -is [RdcModalButton]) 'Account switch buttons share main rounded style'
  Check ($bottom.Name -ceq 'rc1-account-switch-bottom-row' -and
   $bottom.ColumnCount -eq 2 -and $site.Name -ceq 'rc1-account-switch-signout-website' -and
   $site.Text -ceq 'Выйти из аккаунта' -and $site.Width -eq (2 * $no.Width) -and
