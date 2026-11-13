@@ -6688,6 +6688,19 @@ function Get-RdcOwnerJournalText {
 }
 # Export only the same sanitized report that is already visible in the
 # diagnostic window. No automatic file creation or private Remote log access.
+function Write-RdcOwnerJournalTxtFile([string]$path,[string]$content) {
+    # Only the validated, already sanitized journal snapshot is exportable.
+    if([string]::IsNullOrWhiteSpace($content) -or $content.Length -gt 400000){
+        throw 'RC1_JOURNAL_EXPORT_BOUNDARY'
+    }
+    $filePath=[IO.Path]::GetFullPath($path)
+    if([IO.Path]::GetExtension($filePath) -ine '.txt'){throw 'RC1_JOURNAL_TXT_ONLY'}
+    if([IO.File]::Exists($filePath) -and
+       (([IO.File]::GetAttributes($filePath) -band [IO.FileAttributes]::ReparsePoint) -ne 0)){
+        throw 'RC1_JOURNAL_EXPORT_REPARSE_DENIED'
+    }
+    [IO.File]::WriteAllText($filePath,$content,(New-Object Text.UTF8Encoding($true)))
+}
 function Save-RdcOwnerJournalTxt([Windows.Forms.Form]$parent,[string]$content) {
     if([string]::IsNullOrWhiteSpace($content) -or $content.Length -gt 400000){
         throw 'RC1_JOURNAL_EXPORT_BOUNDARY'
@@ -6702,13 +6715,7 @@ function Save-RdcOwnerJournalTxt([Windows.Forms.Form]$parent,[string]$content) {
         $picker.FileName='RDC-Relay-journal-'+
             [DateTime]::Now.ToString('yyyyMMdd-HHmmss',[Globalization.CultureInfo]::InvariantCulture)+'.txt'
         if($picker.ShowDialog($parent) -ne [Windows.Forms.DialogResult]::OK){return}
-        $path=[IO.Path]::GetFullPath($picker.FileName)
-        if([IO.Path]::GetExtension($path) -ine '.txt'){throw 'RC1_JOURNAL_TXT_ONLY'}
-        if([IO.File]::Exists($path) -and
-           (([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) -ne 0)){
-            throw 'RC1_JOURNAL_EXPORT_REPARSE_DENIED'
-        }
-        [IO.File]::WriteAllText($path,$content,(New-Object Text.UTF8Encoding($true)))
+        Write-RdcOwnerJournalTxtFile $picker.FileName $content
     }finally{$picker.Dispose()}
 }
 function New-RdcOwnerJournalDialog([string]$content) {
@@ -6867,10 +6874,11 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $save.Margin=[Windows.Forms.Padding]::new(0)
     $save.Add_Click({
         param($sender,$e)
-        $host=$sender.FindForm()
-        try { Save-RdcOwnerJournalTxt $host ([string]$host.Tag) }
+        # PowerShell reserves $Host (case-insensitive) as a read-only automatic variable.
+        $journalForm=$sender.FindForm()
+        try { Save-RdcOwnerJournalTxt $journalForm ([string]$journalForm.Tag) }
         catch {
-            [void][Windows.Forms.MessageBox]::Show($host,
+            [void][Windows.Forms.MessageBox]::Show($journalForm,
               'Не удалось сохранить журнал. Проверьте выбранную папку.',
               'RDC Relay',[Windows.Forms.MessageBoxButtons]::OK,
               [Windows.Forms.MessageBoxIcon]::Warning)

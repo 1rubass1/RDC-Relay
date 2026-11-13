@@ -88,7 +88,8 @@ public static class RdcHelpButtonMouseTest {
   Check ($script:aboutClicks -eq 2 -and $form.ActiveControl -eq $null) 'native WM_LBUTTONDOWN/UP opens About exactly once, without residual focus'
  }finally{$form.Close();$form.Dispose()}
 }
-foreach($name in @('Get-RdcOwnerJournalText','New-RdcOwnerJournalDialog',
+foreach($name in @('Get-RdcOwnerJournalText','Write-RdcOwnerJournalTxtFile',
+ 'Save-RdcOwnerJournalTxt','New-RdcOwnerJournalDialog',
  'Show-RdcOwnerJournal','New-RdcOwnerHelpDialog')){
  $fn=$ast.Find({param($n)
   $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
@@ -174,6 +175,62 @@ try{
   $horizontal.Top -eq $body.Height -and $body.Width -ge 450 -and
   $body.Height -gt 150) 'custom scrollbars reflow correctly when modal is resized near minimum'
 }finally{$journal.Close();$journal.Dispose()}
+# Regression for a user-observed exception: PowerShell's automatic $Host
+# variable is read-only, including lowercase $host. Perform the real native
+# Save button click; intercept only the file-picker stage and exercise the
+# actual production TXT writer with an isolated temp destination.
+$saveHandler=$ast.Find({param($n)
+ $n -is [Management.Automation.Language.ScriptBlockExpressionAst] -and
+ $n.Extent.Text.Contains('Save-RdcOwnerJournalTxt $journalForm ([string]$journalForm.Tag)')
+},$true)
+Check ($null -ne $saveHandler -and
+ -not [regex]::IsMatch($raw,'(?im)^\s*\$host\s*=') -and
+ $raw.Contains('Save-RdcOwnerJournalTxt $journalForm ([string]$journalForm.Tag)')) 'Save button never assigns to read-only PowerShell automatic variable $Host'
+Check ($raw.Contains('$picker.ShowDialog($parent)') -and
+ $raw.Contains('Write-RdcOwnerJournalTxtFile $picker.FileName $content') -and
+ $raw.Contains('New-Object Text.UTF8Encoding($true)')) 'production Save dialog calls real UTF-8 TXT writer only after user selection'
+$saveFolder=Join-Path ([IO.Path]::GetTempPath()) ('RdcJournalSaveUi-'+[Guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($saveFolder)
+$script:rc1SaveTestPath=Join-Path $saveFolder 'journal-test.txt'
+$script:rc1SaveClickCount=0
+$script:rc1SaveParent=$null
+function Save-RdcOwnerJournalTxt([Windows.Forms.Form]$parent,[string]$content) {
+ $script:rc1SaveClickCount++
+ $script:rc1SaveParent=$parent
+ Write-RdcOwnerJournalTxtFile $script:rc1SaveTestPath $content
+}
+try{
+ $saveDialog=New-RdcOwnerJournalDialog ('Тестовый журнал RDC Relay'+[Environment]::NewLine+'Чтение файла → файл.txt')
+ $saveDialog.StartPosition=[Windows.Forms.FormStartPosition]::Manual
+ $saveDialog.Location=[Drawing.Point]::new(-10000,-10000)
+ try{
+  $saveDialog.Show()
+  [Windows.Forms.Application]::DoEvents()
+  $saveLayout=@($saveDialog.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+  $saveFooter=$saveLayout.GetControlFromPosition(0,4)
+  $saveButton=$saveFooter.Controls['rc1-journal-save-txt']
+  $saveButton.PerformClick()
+  [Windows.Forms.Application]::DoEvents()
+  Check ($script:rc1SaveClickCount -eq 1 -and
+   [object]::ReferenceEquals($script:rc1SaveParent,$saveDialog) -and
+   [IO.File]::Exists($script:rc1SaveTestPath)) 'native Save TXT PerformClick completes without read-only $Host exception and writes file'
+  $saved=[IO.File]::ReadAllText($script:rc1SaveTestPath,[Text.Encoding]::UTF8)
+  $bytes=[IO.File]::ReadAllBytes($script:rc1SaveTestPath)
+  Check ($saved -ceq [string]$saveDialog.Tag -and
+   $bytes.Length -gt 3 -and
+   [BitConverter]::ToString($bytes,0,3) -ceq 'EF-BB-BF') 'actual saved TXT is exact visible report, UTF-8 BOM with Cyrillic and arrow preserved'
+  $bad=Join-Path $saveFolder 'reject.pdf'
+  $refused=$false
+  try{Write-RdcOwnerJournalTxtFile $bad 'invalid extension'}catch{$refused=$true}
+  Check ($refused -and -not [IO.File]::Exists($bad)) 'writer refuses unexpected extensions without creating a file'
+  $tooLong=Join-Path $saveFolder 'too-long.txt'
+  $refused=$false
+  try{Write-RdcOwnerJournalTxtFile $tooLong ('X'*400001)}catch{$refused=$true}
+  Check ($refused -and -not [IO.File]::Exists($tooLong)) 'writer rejects oversized exports before disk access'
+ }finally{$saveDialog.Close();$saveDialog.Dispose()}
+}finally{
+ if([IO.Directory]::Exists($saveFolder)){[IO.Directory]::Delete($saveFolder,$true)}
+}
 $help=New-RdcOwnerHelpDialog 'Пример справки'
 try {
  $layout=@($help.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
