@@ -6891,12 +6891,11 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $layout.Padding=[Windows.Forms.Padding]::new(0)
     $layout.BackColor=$dialog.BackColor
     $layout.ColumnCount=1
-    $layout.RowCount=5
+    $layout.RowCount=4
     [void]$layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
     [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,52))
     [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,1))
     [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
-    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,1))
     [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,62))
     $headingHost=New-Object Windows.Forms.Panel
     $headingHost.Name='rc1-journal-heading-panel'
@@ -6996,12 +6995,8 @@ function New-RdcOwnerJournalDialog([string]$content) {
         }
     })
     [void]$layout.Controls.Add($textHost,0,2)
-    $bottomRail=New-Object Windows.Forms.Panel
-    $bottomRail.Name='rc1-journal-footer-separator'
-    $bottomRail.Dock=[Windows.Forms.DockStyle]::Fill
-    $bottomRail.Margin=[Windows.Forms.Padding]::new(0)
-    $bottomRail.BackColor=[Drawing.Color]::FromArgb(85,70,108)
-    [void]$layout.Controls.Add($bottomRail,0,3)
+    # Main-window style: no lower text/footer accent divider or 1px spacer.
+    # The footer follows the text area directly.
     $footer=New-Object Windows.Forms.TableLayoutPanel
     $footer.Name='rc1-journal-footer'
     $footer.Dock=[Windows.Forms.DockStyle]::Fill
@@ -7037,7 +7032,7 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $close.Margin=[Windows.Forms.Padding]::new(0)
     [void]$footer.Controls.Add($save,0,0)
     [void]$footer.Controls.Add($close,1,0)
-    [void]$layout.Controls.Add($footer,0,4)
+    [void]$layout.Controls.Add($footer,0,3)
     $dialog.Controls.Add($layout)
     $dialog.PerformLayout()
     $layout.PerformLayout()

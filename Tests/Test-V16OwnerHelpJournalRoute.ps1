@@ -127,8 +127,8 @@ try{
  $heading=$headerHost.Controls['rc1-journal-heading']
  $purpleRail=$layout.GetControlFromPosition(0,1)
  $textHost=$layout.GetControlFromPosition(0,2)
- $footerRail=$layout.GetControlFromPosition(0,3)
- $footer=$layout.GetControlFromPosition(0,4)
+ # No lower footer separator: row 3 holds the footer directly.
+ $footer=$layout.GetControlFromPosition(0,3)
  $body=$textHost.Controls['rc1-journal-content']
  $vert=$textHost.Controls['rc1-journal-vscroll']
  $horizontal=$textHost.Controls['rc1-journal-hscroll']
@@ -138,7 +138,8 @@ try{
  Check ($heading.Text -ceq 'Журнал' -and $heading.Font.Bold -and
   $headerHost.BackColor.ToArgb() -eq $journal.BackColor.ToArgb() -and
   $purpleRail.BackColor.ToArgb() -eq [Drawing.Color]::FromArgb(123,95,162).ToArgb() -and
-  $layout.RowCount -eq 5 -and $layout.RowStyles[1].Height -eq 1) 'journal has main-window header and full-width purple separator'
+  $layout.RowCount -eq 4 -and $layout.RowStyles.Count -eq 4 -and
+  $layout.RowStyles[1].Height -eq 1) 'journal has main-window header and full-width purple separator'
  Check ($body -is [RdcLogBox] -and $textHost -is [RdcBufferedPanel] -and
   $body.Text -ceq $snapshot -and $body.ReadOnly -and
   -not $body.WordWrap -and -not $body.DetectUrls -and
@@ -150,7 +151,8 @@ try{
   [object]::ReferenceEquals($horizontal.Target,$body) -and
   $corner -is [RdcJournalScrollGrip] -and
   $corner.Cursor -eq [Windows.Forms.Cursors]::Default) 'custom sliders and visible passive journal corner reuse production art'
- Check ($footerRail.Height -eq 1 -and
+ Check ($layout.Controls.Find('rc1-journal-footer-separator',$true).Count -eq 0 -and
+  $layout.RowStyles[3].Height -eq 62 -and
   $footer.BackColor.ToArgb() -eq $journal.BackColor.ToArgb() -and
   $save.Text -ceq 'Сохранить TXT' -and
   $close.Text -ceq 'Закрыть' -and
@@ -169,6 +171,9 @@ try{
   $horizontal.Bounds.Y -eq $body.Height -and
   $horizontal.Width -eq $body.Width -and $horizontal.Height -eq 17 -and
   $corner.Left -eq $body.Width -and $corner.Top -eq $body.Height) 'actual WinForms child geometry matches the main text panel and its 17px scrollbar tracks'
+ Check ($footer.Top -eq $textHost.Bottom -and
+  $textHost.Bottom -eq $layout.ClientSize.Height-$footer.Height -and
+  $footer.Left -eq $textHost.Left -and $footer.Width -eq $textHost.Width) 'journal footer is immediately adjacent to text surface, with no accent rail or 1px gap'
  Check ($save.Bottom -le $footer.ClientSize.Height -and
   $close.Bottom -le $footer.ClientSize.Height -and
   $save.Left -lt $close.Left) 'save and close buttons fit in lower panel without clipping'
@@ -210,7 +215,7 @@ try{
   $saveDialog.Show()
   [Windows.Forms.Application]::DoEvents()
   $saveLayout=@($saveDialog.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
-  $saveFooter=$saveLayout.GetControlFromPosition(0,4)
+  $saveFooter=$saveLayout.GetControlFromPosition(0,3)
   $saveButton=$saveFooter.Controls['rc1-journal-save-txt']
   $saveButton.PerformClick()
   [Windows.Forms.Application]::DoEvents()
