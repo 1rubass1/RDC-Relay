@@ -21,6 +21,7 @@ try{
   Check $ok ('guarded original action '+$name)
  }
  $owner=Get-Content -LiteralPath (Join-Path $src 'rc1-owner-gui.ps1') -Raw -Encoding UTF8
+ $source=Get-Content -LiteralPath $file -Raw -Encoding UTF8
  Check ($owner.Contains('$finish.Enabled=$script:ownerManagedMode') -and
    $owner.Contains('$accountButton.Enabled=$true') -and
    $owner.Contains('$script:ownerCanSwitchAccount=[bool]$initialCapabilities.switchAccount') -and
@@ -31,9 +32,14 @@ try{
         $owner.Contains('Add-CompletedEvent') -and $owner.Contains('Reset-CompactLogSession')) 'GUI rehydrates bounded Host snapshot in exact observer/fake mode'
  Check ($owner.Contains('RC1_LOG_CURSOR_REGRESSED') -and $owner.Contains('RC1_LOG_CURSOR_MISMATCH') -and
         $owner.Contains('RC1_INVALID_LOG_TAIL')) 'GUI rejects missing/out-of-order fake log lines'
+ # G121 removed the context-menu journal item; the About modal now owns
+ # "Показать журнал" and is gated by the exact same sanitized Host capability.
  Check ($owner.Contains('$devicesItem.Enabled=[bool]$initialCapabilities.deviceManagementLink') -and
-   $owner.Contains('$openLogItem.Enabled=[bool]$initialCapabilities.sanitizedJournal') -and
-   $owner.Contains('OPEN_EXTERNAL') -and $owner.Contains('RC1_NAVIGATION_NOT_APPROVED')) 'safe devices and sanitized journal routed through Host-verified capabilities'
+   $owner.Contains('$script:ownerJournalAllowed=[bool]$initialCapabilities.sanitizedJournal') -and
+   $owner.Contains('$script:ownerJournalAllowed=[bool]$snapshot.capabilities.sanitizedJournal') -and
+   $source.Contains('$showJournal.Enabled=(-not $OwnerGui) -or [bool]$script:ownerJournalAllowed') -and
+   -not ([regex]::IsMatch($owner,'(?m)^\s*\$openLogItem\s*(?:\.|\[|=)')) -and
+   $owner.Contains('OPEN_EXTERNAL') -and $owner.Contains('RC1_NAVIGATION_NOT_APPROVED')) 'safe devices and current About journal routed through Host-verified capabilities'
  $source=Get-Content -LiteralPath $file -Raw -Encoding UTF8
  Check ($source.Contains('Закрытие окна закрывает только GUI; Host и Remote продолжают работать.') -and
  $source.Contains('Режим проверки: Desktop Commander Remote не подключён.') -and

@@ -31,6 +31,60 @@ $script:enableUpdateNotice = -not $OwnerGui
 $script:ownerUpdateDemoMode=[bool]($OwnerGui -and -not $SelfTest)
 if($script:ownerUpdateDemoMode){$script:enableUpdateNotice=$true}
 $script:updateInstallRequested = $false
+# Per-user auto-update startup-install preference. Missing marker = ON.
+# The passive version notice and explicit update-button action NEVER consult
+# this setting; a denied RC1 installer remains denied regardless of this value.
+$script:autoUpdatePreferencePath=Join-Path (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RDCRelayOwnerPilot') 'auto-update.opt-out'
+function Test-RdcAutoUpdateEnabled([string]$path) {
+    try {
+        if([string]::IsNullOrWhiteSpace($path)){return $false}
+        if(-not [IO.File]::Exists($path)){return $true}
+        $file=Get-Item -LiteralPath $path -Force -ErrorAction Stop
+        if(($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+           ($file.Length -ne 10 -and $file.Length -ne 11)){return $false}
+        return [IO.File]::ReadAllText($path,[Text.Encoding]::UTF8) -ceq 'enabled-v1'
+    }catch{return $false}
+}
+function Set-RdcAutoUpdateEnabled([string]$path,[bool]$enabled) {
+    if([string]::IsNullOrWhiteSpace($path)){throw 'RC1_AUTO_UPDATE_PATH_REQUIRED'}
+    $dir=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($path))
+    if(-not $dir){throw 'RC1_AUTO_UPDATE_PARENT_REQUIRED'}
+    if([IO.Directory]::Exists($dir) -and
+      ([IO.File]::GetAttributes($dir) -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+        throw 'RC1_AUTO_UPDATE_REPARSE_DENIED'
+    }
+    if($enabled){
+        if([IO.File]::Exists($path)){
+            if(([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+                throw 'RC1_AUTO_UPDATE_REPARSE_DENIED'
+            }
+            [IO.File]::Delete($path)
+        }
+        if([IO.File]::Exists($path)){throw 'RC1_AUTO_UPDATE_ENABLE_FAILED'}
+        return
+    }
+    if(-not [IO.Directory]::Exists($dir)){[void][IO.Directory]::CreateDirectory($dir)}
+    if(([IO.File]::GetAttributes($dir) -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+        throw 'RC1_AUTO_UPDATE_REPARSE_DENIED'
+    }
+    $temp=Join-Path $dir ('auto-update-'+[Guid]::NewGuid().ToString('N')+'.tmp')
+    $backup=Join-Path $dir ('auto-update-'+[Guid]::NewGuid().ToString('N')+'.bak')
+    try {
+        [IO.File]::WriteAllText($temp,'disabled-v1',(New-Object Text.UTF8Encoding($false)))
+        if([IO.File]::Exists($path)){
+            if(([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+                throw 'RC1_AUTO_UPDATE_REPARSE_DENIED'
+            }
+            [IO.File]::Replace($temp,$path,$backup)
+        }else{[IO.File]::Move($temp,$path)}
+        if([IO.File]::ReadAllText($path,[Text.Encoding]::UTF8) -cne 'disabled-v1'){
+            throw 'RC1_AUTO_UPDATE_VERIFY_FAILED'
+        }
+    }finally{
+        if([IO.File]::Exists($temp)){[IO.File]::Delete($temp)}
+        if([IO.File]::Exists($backup)){[IO.File]::Delete($backup)}
+    }
+}
 $desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'RDCRelay.ico'
@@ -468,7 +522,18 @@ public class RdcMenuColorTable : ProfessionalColorTable {
 // Account commands, so show an actual high-contrast square for the quota toggle.
 // ToolStripMenuItem still owns Checked/CheckOnClick, keyboard and accessibility.
 public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
+    // Both Account and tray share the same user-affordance painter.
+    // Names are intentionally bounded to the four known checkbox actions.
     private const string QuotaItemName = "rc1-quota-display-toggle";
+    private const string AutoUpdateItemName = "rc1-auto-update-toggle";
+    private const string TrayQuotaItemName = "rc1-tray-quota-toggle";
+    private const string TrayAutoUpdateItemName = "rc1-tray-auto-update-toggle";
+    public const int CornerRadius = 6; // RdcRoundedButton.OnPaint Rounded(r,6f)
+    private static bool IsCheckItem(ToolStripItem item) {
+        if (item == null) return false;
+        return item.Name == QuotaItemName || item.Name == AutoUpdateItemName ||
+               item.Name == TrayQuotaItemName || item.Name == TrayAutoUpdateItemName;
+    }
 
     public RdcOwnerAccountMenuRenderer(ProfessionalColorTable colors) : base(colors) { }
 
@@ -482,7 +547,10 @@ public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
 
     public static Rectangle QuotaBoxBounds(ToolStripItem item) {
         const int side = 16;
-        return new Rectangle(6, Math.Max(0, (item.Height - side) / 2), side, side);
+        // Optical alignment from the real popup: move the square 3px
+        // toward the label and 1px upward against the baseline. Both
+        // Owner GUI and tray use exactly this same row-local geometry.
+        return new Rectangle(8, Math.Max(0, (item.Height - side) / 2 - 1), side, side);
     }
 
     public static void PaintQuotaBox(Graphics g, ToolStripMenuItem item) {
@@ -526,15 +594,120 @@ public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
         } finally { g.SmoothingMode = oldSmoothing; }
     }
 
-    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e) {
-        base.OnRenderMenuItemBackground(e);
-        ToolStripMenuItem item = e.Item as ToolStripMenuItem;
-        if (item != null && item.Name == QuotaItemName) PaintQuotaBox(e.Graphics, item);
+    // Single contract for both popup surfaces. The Region clips the actual
+    // native drop-down HWND, not just a painted fake rounded border.
+    public static GraphicsPath RoundedMenuPath(RectangleF bounds) {
+        GraphicsPath path = new GraphicsPath();
+        float r = Math.Min(CornerRadius, Math.Min(bounds.Width,bounds.Height)/2f);
+        if(r<=0){path.AddRectangle(bounds);return path;}
+        float d=2f*r;
+        path.AddArc(bounds.Left,bounds.Top,d,d,180f,90f);
+        path.AddArc(bounds.Right-d,bounds.Top,d,d,270f,90f);
+        path.AddArc(bounds.Right-d,bounds.Bottom-d,d,d,0f,90f);
+        path.AddArc(bounds.Left,bounds.Bottom-d,d,d,90f,90f);
+        path.CloseFigure();
+        return path;
     }
-
+    public static void ApplyRoundedRegion(ContextMenuStrip menu) {
+        if(menu==null||menu.IsDisposed||menu.Width<=CornerRadius*2||
+           menu.Height<=CornerRadius*2)return;
+        using(GraphicsPath p=RoundedMenuPath(new RectangleF(0f,0f,menu.Width,menu.Height))){
+            Region previous=menu.Region;
+            menu.Region=new Region(p);
+            if(previous!=null)previous.Dispose();
+        }
+    }
+    public static void ConfigureOwnerMenu(ContextMenuStrip menu){
+        if(menu==null)throw new ArgumentNullException("menu");
+        menu.BackColor=Color.FromArgb(38,41,46);
+        menu.ForeColor=Color.Gainsboro;
+        // Caller owns the renderer; this helper only owns the shared shape.
+        menu.SizeChanged+=(s,e)=>ApplyRoundedRegion(menu);
+        menu.Opening+=(s,e)=>ApplyRoundedRegion(menu);
+        ApplyRoundedRegion(menu);
+    }
+    public static Rectangle SeparatorLineBounds(ToolStrip strip,ToolStripItem item){
+        if(strip==null||item==null)return Rectangle.Empty;
+        // OnRenderSeparator receives an ITEM-LOCAL graphics surface:
+        // using item.Bounds.Top (menu coordinates) silently clips the
+        // whole line out of the actual popup. Separator items start at
+        // menu x=2 and end 2px from the opposite edge by native layout.
+        return new Rectangle(0,item.Height/2,Math.Max(0,item.Width),1);
+    }
+    protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e){
+        if(!(e.ToolStrip is ContextMenuStrip)){base.OnRenderSeparator(e);return;}
+        Rectangle line=SeparatorLineBounds(e.ToolStrip,e.Item);
+        if(line.Width<=0)return;
+        Color ink=SystemInformation.HighContrast
+             ?SystemColors.WindowText:Color.FromArgb(188,195,207);
+        using(Brush b=new SolidBrush(ink))e.Graphics.FillRectangle(b,line);
+    }
+    protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e){
+        if(!(e.ToolStrip is ContextMenuStrip)){base.OnRenderToolStripBorder(e);return;}
+        Rectangle bounds=e.ToolStrip.ClientRectangle;
+        if(bounds.Width<3||bounds.Height<3)return;
+        SmoothingMode prev=e.Graphics.SmoothingMode;
+        e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+        try{
+            using(GraphicsPath p=RoundedMenuPath(
+                   new RectangleF(0.5f,0.5f,bounds.Width-1f,bounds.Height-1f)))
+            using(Pen outline=new Pen(SystemInformation.HighContrast
+                   ?SystemColors.WindowText:Color.FromArgb(110,118,130),1f)){
+                e.Graphics.DrawPath(outline,p);
+            }
+        }finally{e.Graphics.SmoothingMode=prev;}
+    }
+    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e) {
+        if(!(e.ToolStrip is ContextMenuStrip)){
+            base.OnRenderMenuItemBackground(e);
+            return;
+        }
+        ToolStripMenuItem item=e.Item as ToolStripMenuItem;
+        if(item==null){base.OnRenderMenuItemBackground(e);return;}
+        // Paint *every* row on its item-local surface; inherited native
+        // Professional hover rendering varies with system menus. One
+        // explicit purple selection formula now serves Account and tray.
+        using(Brush background=new SolidBrush(e.ToolStrip.BackColor))
+            e.Graphics.FillRectangle(background,new Rectangle(Point.Empty,item.Size));
+        if(item.Selected && item.Enabled){
+            if(SystemInformation.HighContrast)base.OnRenderMenuItemBackground(e);
+            else{
+                SmoothingMode prior=e.Graphics.SmoothingMode;
+                e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+                try{
+                    // Selection outline is intentionally RECTANGULAR; only
+                    // the outer menu window retains the 6px rounded region.
+                    RectangleF selected = new RectangleF(
+                        2.5f, 0.5f, Math.Max(0,item.Width-5f),
+                        Math.Max(0,item.Height-1f));
+                    using(Brush fill=new SolidBrush(Color.FromArgb(128,91,67,126)))
+                    using(Pen edge=new Pen(Color.FromArgb(123,95,162),1f)){
+                        e.Graphics.FillRectangle(fill,selected);
+                        e.Graphics.DrawRectangle(edge,selected.X,selected.Y,
+                                                 selected.Width,selected.Height);
+                    }
+                }finally{e.Graphics.SmoothingMode=prior;}
+            }
+        }
+        if(IsCheckItem(item))PaintQuotaBox(e.Graphics,item);
+    }
     protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) {
-        if (e.Item != null && e.Item.Name == QuotaItemName) return;
+        if (IsCheckItem(e.Item)) return;
         base.OnRenderItemCheck(e);
+    }
+}
+
+// Native ContextMenuStrip ignores direct Padding assignments in its
+// ToolStripDropDownMenu layout. Override DefaultPadding instead so first and
+// last rows clear the outer popup's 6px rounded corners by one extra pixel.
+public sealed class RdcOwnerPaddedContextMenuStrip : ContextMenuStrip {
+    public const int ExtraEdgeSpace = RdcOwnerAccountMenuRenderer.CornerRadius + 1;
+    protected override Padding DefaultPadding {
+        get {
+            Padding original = base.DefaultPadding;
+            return new Padding(original.Left, original.Top + ExtraEdgeSpace,
+                               original.Right, original.Bottom + ExtraEdgeSpace);
+        }
     }
 }
 
@@ -2536,6 +2709,11 @@ public sealed class RdcGpuDividerHost : ElementHost {
     private int lastPopupW = -1;
     private int lastPopupH = -1;
     private System.Windows.Forms.Form ownerForm;
+    // WinForms modal loops can leave a small owner area visible. The WPF
+    // particle popup is a separate owned HWND; mere occlusion/opacity checks
+    // cannot guarantee it stays below nested Help/Journal windows.
+    private int modalLoopDepth;
+    private bool modalHooksAttached;
 
     const int GWL_EXSTYLE = -20;
     const int GWLP_HWNDPARENT = -8;
@@ -2653,7 +2831,41 @@ public sealed class RdcGpuDividerHost : ElementHost {
         }
     }
 
+    private bool OwnerHasModalDialog() {
+        if (modalLoopDepth > 0) return true;
+        if (ownerForm == null || ownerForm.IsDisposed) return false;
+        // Safety net for a modal that was shown before a visibility probe, or
+        // while the dispatcher is transitioning between nested modal loops.
+        foreach (System.Windows.Forms.Form dialog in
+                 System.Windows.Forms.Application.OpenForms) {
+            if (dialog == null || dialog.IsDisposed || !dialog.Modal ||
+                !dialog.Visible || dialog == ownerForm) continue;
+            System.Windows.Forms.Form parent = dialog.Owner;
+            for (int depth=0; parent!=null && depth<16; depth++) {
+                if (parent == ownerForm) return true;
+                parent = parent.Owner;
+            }
+        }
+        return false;
+    }
+
+    private void ThreadModalEntered(object sender,EventArgs e) {
+        modalLoopDepth++;
+        // Physically close the independent popup HWND. Hiding its WPF root
+        // via Opacity alone can leave one DWM-composited frame above a modal.
+        SetRenderingPaused(true);
+        ClosePopup();
+    }
+
+    private void ThreadModalLeft(object sender,EventArgs e) {
+        if (modalLoopDepth > 0) modalLoopDepth--;
+        // An outer Help dialog may remain open after Journal/Save closes.
+        // OwnerHasModalDialog prevents resuming until the entire nest exits.
+        UpdateRenderingVisibility();
+    }
+
     private bool ShouldPauseRendering() {
+        if (OwnerHasModalDialog()) return true;
         if (ownerForm == null ||
             ownerForm.IsDisposed ||
             ownerForm.Handle == IntPtr.Zero)
@@ -2774,6 +2986,14 @@ public sealed class RdcGpuDividerHost : ElementHost {
     }
 
     private void SetRenderingPaused(bool paused) {
+        bool modalOpen = OwnerHasModalDialog();
+        // A restore, geometry event, or test hook must never force the
+        // independent WPF window open while a modal is still on screen.
+        if (modalOpen) paused = true;
+        if (paused && modalOpen) {
+            popupRoot.Opacity = 0.0;
+            ClosePopup();
+        }
         if (renderPaused == paused)
             return;
 
@@ -2885,6 +3105,13 @@ public sealed class RdcGpuDividerHost : ElementHost {
     }
 
     private void EnsurePopupOpen() {
+        // Never re-create a top-level decorative HWND inside a nested modal
+        // loop (or while any owned Form.Modal is still visible).
+        if (OwnerHasModalDialog()) {
+            popupRoot.Opacity=0.0;
+            ClosePopup();
+            return;
+        }
         particlePopup.Width=Math.Max(1.0,root.ActualWidth);
 
         if (!particlePopup.IsOpen)
@@ -3225,6 +3452,14 @@ public sealed class RdcGpuDividerHost : ElementHost {
                 ownerForm.Deactivate+=OwnerDeactivated;
             }
 
+            // WinForms modal-loop notifications fire even when a native
+            // SaveFileDialog is nested inside the Journal Form. Subscribe
+            // once while the ElementHost is loaded; Dispose unsubscribes.
+            if (!modalHooksAttached) {
+                System.Windows.Forms.Application.EnterThreadModal+=ThreadModalEntered;
+                System.Windows.Forms.Application.LeaveThreadModal+=ThreadModalLeft;
+                modalHooksAttached=true;
+            }
             // Create the popup once during normal UI startup, then keep the
             // HWND alive for the lifetime of the window. Activity only changes
             // opacity/shader constants and therefore cannot steal foreground.
@@ -3290,6 +3525,9 @@ public sealed class RdcGpuDividerHost : ElementHost {
     public double RecoveryBlend { get { return recoveryBlend; } }
     public bool RecoveryActive { get { return recoveryActive; } }
     public bool RenderingPaused { get { return renderPaused; } }
+    // Read-only visual test hooks: never affect RPC/Remote state or focus.
+    public bool ParticlePopupOpenForTest { get { return particlePopup.IsOpen; } }
+    public int ModalDepthForTest { get { return modalLoopDepth; } }
     public bool PassConfigurationValid {
         get {
             return
@@ -3531,6 +3769,11 @@ public sealed class RdcGpuDividerHost : ElementHost {
             animationTimer.Tick-=Animate;
             visibilityTimer.Stop();
             visibilityTimer.Tick-=VisibilityTimer_Tick;
+            if (modalHooksAttached) {
+                System.Windows.Forms.Application.EnterThreadModal-=ThreadModalEntered;
+                System.Windows.Forms.Application.LeaveThreadModal-=ThreadModalLeft;
+                modalHooksAttached=false;
+            }
             if (ownerForm!=null) {
                 ownerForm.LocationChanged-=OwnerGeometryChanged;
                 ownerForm.SizeChanged-=OwnerGeometryChanged;
@@ -3688,8 +3931,8 @@ $title.AutoSize = $true
 $title.Margin = [Windows.Forms.Padding]::new(0,3,8,0)
 $title.TextAlign = 'MiddleLeft'
 $title.Font = New-Object Drawing.Font('Segoe UI',13,[Drawing.FontStyle]::Bold)
-# The Help affordance belongs to the application title, not among the
-# remote-control actions. Windows provides the familiar blue question glyph.
+# Keep the familiar Windows question glyph. In Owner RC1 the Help action
+# belongs at the far right of the existing 38px footer, not in the title row.
 $titleHost = New-Object Windows.Forms.FlowLayoutPanel
 $titleHost.Name='rc1-title-help-row'
 $titleHost.Dock=[Windows.Forms.DockStyle]::Fill
@@ -3723,12 +3966,26 @@ $helpButton.BackColor=$form.BackColor
 $helpButton.ForeColor=$form.ForeColor
 $helpButton.Text=''
 $helpButton.Image=([Drawing.SystemIcons]::Question).ToBitmap()
+if($OwnerGui){
+    # The existing footer stays 38px tall. Shrink ONLY the native button and
+    # its Windows question bitmap to fit the 25px inner footer height.
+    $helpImageSource=$helpButton.Image
+    $helpImage=New-Object Drawing.Bitmap(22,22)
+    $helpGraphics=[Drawing.Graphics]::FromImage($helpImage)
+    try {
+        $helpGraphics.InterpolationMode=[Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $helpGraphics.DrawImage($helpImageSource,0,0,22,22)
+    }finally{$helpGraphics.Dispose();$helpImageSource.Dispose()}
+    $helpButton.Image=$helpImage
+}
 $helpButton.ImageAlign=[Drawing.ContentAlignment]::MiddleCenter
-$helpButton.Size=[Drawing.Size]::new(32,32)
-$helpButton.Margin=[Windows.Forms.Padding]::new(0)
+$helpButton.Size=if($OwnerGui){[Drawing.Size]::new(24,24)}else{[Drawing.Size]::new(32,32)}
+$helpButton.Margin=if($OwnerGui){[Windows.Forms.Padding]::new(1,0,0,0)}else{[Windows.Forms.Padding]::new(0)}
 $helpButton.Padding=[Windows.Forms.Padding]::new(0)
 $helpButton.FlatStyle=[Windows.Forms.FlatStyle]::Flat
 $helpButton.FlatAppearance.BorderSize=0
+$helpButton.FlatAppearance.MouseOverBackColor=$helpButton.BackColor
+$helpButton.FlatAppearance.MouseDownBackColor=$helpButton.BackColor
 $helpButton.UseVisualStyleBackColor=$false
 $helpButton.Cursor=[Windows.Forms.Cursors]::Hand
 $helpButton.AccessibleRole=[Windows.Forms.AccessibleRole]::PushButton
@@ -3737,7 +3994,7 @@ $finish.TabIndex = 0
 $accountButton.TabIndex = 1
 $helpButton.TabIndex = 2
 [void]$titleHost.Controls.Add($title)
-[void]$titleHost.Controls.Add($helpButton)
+if(-not $OwnerGui){[void]$titleHost.Controls.Add($helpButton)}
 
 $actions = New-Object Windows.Forms.FlowLayoutPanel
 $actions.Dock = 'Fill'
@@ -3756,10 +4013,11 @@ $tip.SetToolTip($helpButton,'Справка / О программе')
 $menuColors = New-Object RdcMenuColorTable
 $menuRenderer = New-Object Windows.Forms.ToolStripProfessionalRenderer -ArgumentList $menuColors
 
-$accountMenu = New-Object Windows.Forms.ContextMenuStrip
+$accountMenu = if($OwnerGui){New-Object RdcOwnerPaddedContextMenuStrip}else{New-Object Windows.Forms.ContextMenuStrip}
 $accountMenu.BackColor = [Drawing.Color]::FromArgb(38,41,46)
 $accountMenu.ForeColor = [Drawing.Color]::Gainsboro
 $accountMenu.Renderer = if($OwnerGui){New-Object RdcOwnerAccountMenuRenderer -ArgumentList $menuColors}else{$menuRenderer}
+if($OwnerGui){[RdcOwnerAccountMenuRenderer]::ConfigureOwnerMenu($accountMenu)}
 $switchAccountItem = New-Object Windows.Forms.ToolStripMenuItem
 $switchAccountItem.Text = 'Сменить аккаунт…'
 $reconnectItem = New-Object Windows.Forms.ToolStripMenuItem
@@ -3781,6 +4039,17 @@ $quotaAuthItem.CheckOnClick=[bool]$OwnerGui
 $quotaAuthItem.Visible=[bool]$OwnerGui
 $quotaAuthItem.Enabled=$false
 if($OwnerGui){[void]$accountMenu.Items.Add($quotaAuthItem)}
+$autoUpdateAuthItem=New-Object Windows.Forms.ToolStripMenuItem
+$autoUpdateAuthItem.Text='Автообновление'
+$autoUpdateAuthItem.Name='rc1-auto-update-toggle'
+$autoUpdateAuthItem.AccessibleDescription='Автоматическая установка при запуске; проверка версии и кнопка обновления остаются доступными.'
+$autoUpdateAuthItem.CheckOnClick=[bool]$OwnerGui
+$autoUpdateAuthItem.Visible=[bool]$OwnerGui
+$autoUpdateAuthItem.Enabled=[bool]$OwnerGui
+if($OwnerGui){
+    $autoUpdateAuthItem.Checked=[bool](Test-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath)
+    [void]$accountMenu.Items.Add($autoUpdateAuthItem)
+}
 
 $top.Controls.Add($statusDot,0,0)
 $top.SetRowSpan($statusDot,2)
@@ -3792,11 +4061,23 @@ $bottom = New-Object Windows.Forms.TableLayoutPanel
 $bottom.Dock = 'Bottom'
 $bottom.Height = 38
 $bottom.BackColor = $form.BackColor
-$bottom.Padding = New-Object Windows.Forms.Padding(12,7,12,6)
-$bottom.ColumnCount = 2
+# Owner: 7px breathing room above, below and right of the 24px Help button.
+# Keep the bar height unchanged; only its internal right padding differs.
+$bottom.Padding = if($OwnerGui){[Windows.Forms.Padding]::new(12,7,7,6)}else{[Windows.Forms.Padding]::new(12,7,12,6)}
+$bottom.ColumnCount = if($OwnerGui){3}else{2}
 $bottom.RowCount = 1
+if($OwnerGui){
+    # The legacy implicit auto row can calculate as 100px and clip controls.
+    # Fix ONLY the Owner inner row at 25px; outer footer remains 38px.
+    [void]$bottom.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,25)))
+}
 [void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent,100)))
 [void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,$(if($OwnerGui){110}else{440}))))
+if($OwnerGui){
+    # Fixed 25px right cell: 1px gap + 24px Help button. Update animation
+    # only expands the adjacent column, without shifting the Help button.
+    [void]$bottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,25)))
+}
 $accentOrange = [Drawing.Color]::FromArgb(191,118,67)
 $accentPurple = [Drawing.Color]::FromArgb(74,55,103)
 $statusGreen = [Drawing.Color]::LightGreen
@@ -3904,6 +4185,10 @@ if($OwnerGui){$tip.SetToolTip($quotaLabel,'Последний подтвержд
 
 $bottom.Controls.Add($infoHost,0,0)
 $bottom.Controls.Add($hintHost,1,0)
+if($OwnerGui){
+    $helpButton.Anchor=[Windows.Forms.AnchorStyles]::None
+    $bottom.Controls.Add($helpButton,2,0)
+}
 # Owner-only subtle, non-layout animation of the version in the far corner.
 # No motion in high-contrast mode. The stable updater footer is unaffected.
 if($OwnerGui){
@@ -5818,7 +6103,8 @@ function Start-RuntimeInitialization {
     $updaterPath = Join-Path $root 'update.ps1'
     # -SkipUpdate only suppresses the automatic startup check after an update.
     # An explicit click on the update notice must ALWAYS run the updater.
-    if ((-not $SkipUpdate -or $script:updateInstallRequested) -and
+    if (($script:updateInstallRequested -or
+         (-not $SkipUpdate -and (Test-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath))) -and
         (Test-Path -LiteralPath $updaterPath)) {
         try {
             Set-State 'Проверка обновлений…' 'Проверяю установленную версию; окно остаётся доступным.' ([Drawing.Color]::Khaki)
@@ -6014,6 +6300,21 @@ $quotaAuthItem.Add_Click({
     # The Tray Host retains its original automatic per-account OAuth and
     # 30-minute quota poll. Do not launch a second browser client from GUI:
     # on reenable the Host's next 15-second tick resumes that workflow.
+})
+$autoUpdateAuthItem.Add_Click({
+    if(-not $OwnerGui){return}
+    try{
+        Set-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath ([bool]$autoUpdateAuthItem.Checked)
+    }catch{
+        $autoUpdateAuthItem.Checked=[bool](Test-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath)
+        [void][Windows.Forms.MessageBox]::Show('Не удалось сохранить настройку автообновления.',
+            'RDC Relay',[Windows.Forms.MessageBoxButtons]::OK,[Windows.Forms.MessageBoxIcon]::Warning)
+    }
+})
+$accountMenu.Add_Opening({
+    if($OwnerGui){
+        $autoUpdateAuthItem.Checked=[bool](Test-RdcAutoUpdateEnabled $script:autoUpdatePreferencePath)
+    }
 })
 $accountButton.Add_Click({
     $accountMenu.Show($accountButton,(New-Object Drawing.Point(0,$accountButton.Height)))
@@ -6236,7 +6537,12 @@ $verifyDeviceItem.Add_Click({
     try { Start-Process 'https://mcp.desktopcommander.app/device/verify' } catch {}
 })
 # Direct Help action: no intermediate context menu.
-$helpButton.Add_Click({ Show-RdcAbout })
+# Do not change focus during MouseDown: WinForms may then suppress the Click.
+# Clear the focus only AFTER opening About, once the normal Click has fired.
+$helpButton.Add_Click({
+    try { Show-RdcAbout }
+    finally { $form.ActiveControl=$null }
+})
 
 # Keep all existing mode-specific Help content, but present it in an
 # Owner-only dark scrollable dialog instead of a light system MessageBox.
@@ -6335,6 +6641,9 @@ function New-RdcOwnerHelpDialog([string]$content) {
     $showJournal.FlatStyle=[Windows.Forms.FlatStyle]::Flat
     $showJournal.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
     $showJournal.Margin=[Windows.Forms.Padding]::new(0)
+    # Owner journal access follows the authenticated Host's capability;
+    # legacy/non-Owner About can still show its empty journal placeholder.
+    $showJournal.Enabled=(-not $OwnerGui) -or [bool]$script:ownerJournalAllowed
     $showJournal.Add_Click({
         param($sender,$e)
         Show-RdcOwnerJournal ($sender.FindForm())
@@ -6378,9 +6687,61 @@ function Show-RdcOwnerHelp([string]$content) {
     finally { $helpDialog.Dispose() }
 }
 function Get-RdcOwnerJournalText {
-    # Use the already sanitized, bounded Owner event history, not a private
-    # legacy Remote log file. The compact main pane shows only the last
-    # viewport-sized slice; the journal window shows all retained events.
+    if($OwnerGui){
+        # A dedicated diagnostic report, NOT a copy of the compact activity
+        # eventBlocks. All values are from authenticated sanitized Host
+        # snapshots; raw Remote stdout/arguments/files must not be loaded.
+        $lines=New-Object 'System.Collections.Generic.List[string]'
+        [void]$lines.Add('RDC Relay — подробный диагностический журнал')
+        [void]$lines.Add('Отображаются обезличенные события Host и Remote; сырой stdout и содержимое файлов исключены.')
+        [void]$lines.Add('Время записей истории — получение GUI (UTC), не время выполнения команды.')
+        [void]$lines.Add('')
+        [void]$lines.Add('СОСТОЯНИЕ СЕАНСА')
+        $remoteState=[string]$script:ownerJournalRemoteState
+        if($remoteState -cnotin @('Disconnected','Connecting','AuthPending','Ready','Fault','Reconnecting')){
+            $remoteState='Unknown'
+        }
+        $ownership=[string]$script:ownerJournalOwnership
+        if($ownership -cnotin @('Unknown','Owned','Adopted')){$ownership='Unknown'}
+        $toolActivity=[string]$script:ownerJournalToolActivity
+        if($toolActivity -cnotin @('working','hold','idle')){$toolActivity='unknown'}
+        [void]$lines.Add('Remote: '+$remoteState+' | Режим: '+$ownership+' | Активность: '+$toolActivity)
+        if([int]$script:ownerJournalRemotePid -gt 0){
+            [void]$lines.Add('Процесс Remote: PID '+[int]$script:ownerJournalRemotePid)
+        }
+        if($script:ownerJournalLastSnapshotUtc -is [DateTime] -and
+           $script:ownerJournalLastSnapshotUtc -gt [DateTime]::MinValue){
+            [void]$lines.Add('Последний снимок Host: '+
+                $script:ownerJournalLastSnapshotUtc.ToUniversalTime().ToString(
+                 'yyyy-MM-dd HH:mm:ss.fff', [Globalization.CultureInfo]::InvariantCulture)+' UTC')
+        }
+        [void]$lines.Add('')
+        [void]$lines.Add('ДИАГНОСТИКА HOST (последние доступные записи)')
+        $diagCount=0
+        foreach($entry in @($script:ownerRecentDiagnostics)){
+            $value=[string]$entry
+            if(-not [string]::IsNullOrWhiteSpace($value) -and
+               $value.Length -le 140 -and
+               $value -notmatch '[\r\n\x00-\x1F]' -and
+               $value -notmatch '(?i)([A-Za-z]:\\|\\\\|https?://|@|secret|password|token|credential|private[_-]?key)'){
+                [void]$lines.Add('  • '+$value)
+                $diagCount++
+            }
+        }
+        if($diagCount -eq 0){[void]$lines.Add('  Нет доступных диагностических записей.')}
+        [void]$lines.Add('')
+        [void]$lines.Add('ИСТОРИЯ СОБЫТИЙ (до 512 последних записей текущего окна)')
+        $historyCount=0
+        foreach($entry in @($script:ownerDetailedJournal)){
+            if(-not [string]::IsNullOrWhiteSpace([string]$entry)){
+                [void]$lines.Add([string]$entry)
+                $historyCount++
+            }
+        }
+        if($historyCount -eq 0){[void]$lines.Add('  Событий пока нет.')}
+        return [string]::Join([Environment]::NewLine,$lines)
+    }
+    # Legacy view retains its historical bounded activity journal.
     $items=New-Object System.Collections.Generic.List[string]
     if($script:eventBlocks){
         foreach($entry in $script:eventBlocks){
@@ -6395,14 +6756,46 @@ function Get-RdcOwnerJournalText {
     if($items.Count -eq 0){return 'Журнал пока пуст.'}
     return [string]::Join([Environment]::NewLine,$items)
 }
+# Export only the same sanitized report that is already visible in the
+# diagnostic window. No automatic file creation or private Remote log access.
+function Write-RdcOwnerJournalTxtFile([string]$path,[string]$content) {
+    # Only the validated, already sanitized journal snapshot is exportable.
+    if([string]::IsNullOrWhiteSpace($content) -or $content.Length -gt 400000){
+        throw 'RC1_JOURNAL_EXPORT_BOUNDARY'
+    }
+    $filePath=[IO.Path]::GetFullPath($path)
+    if([IO.Path]::GetExtension($filePath) -ine '.txt'){throw 'RC1_JOURNAL_TXT_ONLY'}
+    if([IO.File]::Exists($filePath) -and
+       (([IO.File]::GetAttributes($filePath) -band [IO.FileAttributes]::ReparsePoint) -ne 0)){
+        throw 'RC1_JOURNAL_EXPORT_REPARSE_DENIED'
+    }
+    [IO.File]::WriteAllText($filePath,$content,(New-Object Text.UTF8Encoding($true)))
+}
+function Save-RdcOwnerJournalTxt([Windows.Forms.Form]$parent,[string]$content) {
+    if([string]::IsNullOrWhiteSpace($content) -or $content.Length -gt 400000){
+        throw 'RC1_JOURNAL_EXPORT_BOUNDARY'
+    }
+    $picker=New-Object Windows.Forms.SaveFileDialog
+    try {
+        $picker.Title='Сохранить журнал RDC Relay'
+        $picker.Filter='Текстовый документ (*.txt)|*.txt'
+        $picker.DefaultExt='txt'
+        $picker.AddExtension=$true
+        $picker.OverwritePrompt=$true
+        $picker.FileName='RDC-Relay-journal-'+
+            [DateTime]::Now.ToString('yyyyMMdd-HHmmss',[Globalization.CultureInfo]::InvariantCulture)+'.txt'
+        if($picker.ShowDialog($parent) -ne [Windows.Forms.DialogResult]::OK){return}
+        Write-RdcOwnerJournalTxtFile $picker.FileName $content
+    }finally{$picker.Dispose()}
+}
 function New-RdcOwnerJournalDialog([string]$content) {
     $dialog=New-Object Windows.Forms.Form
     $dialog.Name='rc1-journal-dialog'
-    $dialog.Text='RDC Relay — журнал'
+    $dialog.Text='RDC Relay - Журнал'
     $dialog.StartPosition=[Windows.Forms.FormStartPosition]::CenterParent
     $dialog.FormBorderStyle=[Windows.Forms.FormBorderStyle]::Sizable
     $dialog.MinimumSize=[Drawing.Size]::new(520,280)
-    $dialog.ClientSize=[Drawing.Size]::new(740,420)
+    $dialog.ClientSize=[Drawing.Size]::new(740,440)
     $dialog.ShowInTaskbar=$false
     $dialog.MaximizeBox=$true
     $dialog.MinimizeBox=$false
@@ -6410,46 +6803,157 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $dialog.Font=[Drawing.Font]::new('Segoe UI',10)
     $dialog.BackColor=[Drawing.Color]::FromArgb(29,32,36)
     $dialog.ForeColor=[Drawing.Color]::Gainsboro
+    $dialog.Tag=$content # immutable snapshot, used solely by explicit Save TXT
+    # Main window rhythm: header / purple rail / dark RichEdit / footer.
     $layout=New-Object Windows.Forms.TableLayoutPanel
     $layout.Name='rc1-journal-layout'
     $layout.Dock=[Windows.Forms.DockStyle]::Fill
-    $layout.Padding=[Windows.Forms.Padding]::new(20,18,20,16)
+    $layout.Margin=[Windows.Forms.Padding]::new(0)
+    $layout.Padding=[Windows.Forms.Padding]::new(0)
+    $layout.BackColor=$dialog.BackColor
     $layout.ColumnCount=1
-    $layout.RowCount=3
-    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,36))
+    $layout.RowCount=5
+    [void]$layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,52))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,2))
     [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
-    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,50))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,1))
+    [void]$layout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,62))
+    $headingHost=New-Object Windows.Forms.Panel
+    $headingHost.Name='rc1-journal-heading-panel'
+    $headingHost.Dock=[Windows.Forms.DockStyle]::Fill
+    $headingHost.Margin=[Windows.Forms.Padding]::new(0)
+    $headingHost.BackColor=$dialog.BackColor
     $heading=New-Object Windows.Forms.Label
     $heading.Name='rc1-journal-heading'
     $heading.Text='Журнал'
     $heading.Font=[Drawing.Font]::new('Segoe UI',12,[Drawing.FontStyle]::Bold)
-    $heading.AutoSize=$true
     $heading.ForeColor=$dialog.ForeColor
-    $heading.Margin=[Windows.Forms.Padding]::new(0,0,0,0)
-    [void]$layout.Controls.Add($heading,0,0)
-    $body=New-Object Windows.Forms.RichTextBox
+    $heading.AutoSize=$true
+    $heading.Location=[Drawing.Point]::new(20,14)
+    [void]$headingHost.Controls.Add($heading)
+    [void]$layout.Controls.Add($headingHost,0,0)
+    $rail=New-Object Windows.Forms.Panel
+    $rail.Name='rc1-journal-purple-rail'
+    $rail.Dock=[Windows.Forms.DockStyle]::Fill
+    $rail.Margin=[Windows.Forms.Padding]::new(0)
+    $rail.BackColor=[Drawing.Color]::FromArgb(123,95,162)
+    [void]$layout.Controls.Add($rail,0,1)
+    $textHost=New-Object RdcBufferedPanel
+    $textHost.Name='rc1-journal-text-host'
+    $textHost.Dock=[Windows.Forms.DockStyle]::Fill
+    $textHost.Margin=[Windows.Forms.Padding]::new(0)
+    $textHost.Padding=[Windows.Forms.Padding]::new(0)
+    $textHost.BackColor=[Drawing.Color]::FromArgb(18,20,23)
+    $body=New-Object RdcLogBox
     $body.Name='rc1-journal-content'
     $body.Text=$content
     $body.ReadOnly=$true
     $body.WordWrap=$false
     $body.DetectUrls=$false
     $body.ShortcutsEnabled=$true
-    $body.ScrollBars=[Windows.Forms.RichTextBoxScrollBars]::Both
+    $body.ScrollBars=[Windows.Forms.RichTextBoxScrollBars]::None
     $body.BorderStyle=[Windows.Forms.BorderStyle]::None
-    $body.BackColor=$dialog.BackColor
-    $body.ForeColor=$dialog.ForeColor
+    $body.BackColor=$textHost.BackColor
+    $body.ForeColor=[Drawing.Color]::Gainsboro
     $body.Font=[Drawing.Font]::new($script:ownerTextFontFamily,10)
-    $body.Dock=[Windows.Forms.DockStyle]::Fill
-    $body.AccessibleName='Журнал событий RDC Relay'
-    $body.Margin=[Windows.Forms.Padding]::new(0,0,0,8)
-    [void]$layout.Controls.Add($body,0,1)
-    $footer=New-Object Windows.Forms.FlowLayoutPanel
+    $body.Dock=[Windows.Forms.DockStyle]::None
+    $body.Margin=[Windows.Forms.Padding]::new(0)
+    $body.AccessibleName='Диагностический журнал RDC Relay'
+    $journalVScroll=New-Object RdcOverlayScrollBar
+    $journalVScroll.Name='rc1-journal-vscroll'
+    $journalVScroll.Target=$body
+    $journalVScroll.Vertical=$true
+    $journalVScroll.Dock=[Windows.Forms.DockStyle]::None
+    $journalVScroll.Margin=[Windows.Forms.Padding]::new(0)
+    $journalHScroll=New-Object RdcOverlayScrollBar
+    $journalHScroll.Name='rc1-journal-hscroll'
+    $journalHScroll.Target=$body
+    $journalHScroll.Vertical=$false
+    $journalHScroll.Dock=[Windows.Forms.DockStyle]::None
+    $journalHScroll.Margin=[Windows.Forms.Padding]::new(0)
+    # Decorative corner is intentionally not a draggable splitter: unlike
+    # the main window this modal has no two-pane divider to resize.
+    $journalCorner=New-Object Windows.Forms.Panel
+    $journalCorner.Name='rc1-journal-scroll-corner'
+    $journalCorner.Dock=[Windows.Forms.DockStyle]::None
+    $journalCorner.Margin=[Windows.Forms.Padding]::new(0)
+    $journalCorner.BackColor=$textHost.BackColor
+    [void]$textHost.Controls.Add($body)
+    [void]$textHost.Controls.Add($journalVScroll)
+    [void]$textHost.Controls.Add($journalHScroll)
+    [void]$textHost.Controls.Add($journalCorner)
+    # Identical 17px overlays and RichEdit viewport geometry as the main
+    # activity pane. Resolve controls from the sender so the resize handler
+    # works after New-RdcOwnerJournalDialog has returned.
+    $textHost.Add_Resize({
+        param($sender,$e)
+        $b=$sender.Controls['rc1-journal-content']
+        $v=$sender.Controls['rc1-journal-vscroll']
+        $h=$sender.Controls['rc1-journal-hscroll']
+        $c=$sender.Controls['rc1-journal-scroll-corner']
+        if(-not $b -or -not $v -or -not $h -or -not $c){return}
+        $w=[Math]::Max(17,$sender.ClientSize.Width)
+        $height=[Math]::Max(17,$sender.ClientSize.Height)
+        $contentW=[Math]::Max(0,$w-17)
+        $contentH=[Math]::Max(0,$height-17)
+        $sender.SuspendLayout()
+        try {
+            $b.SetBounds(0,0,$contentW,$contentH)
+            $v.SetBounds($contentW,0,17,$contentH)
+            $h.SetBounds(0,$contentH,$contentW,17)
+            $c.SetBounds($contentW,$contentH,17,17)
+        }finally{$sender.ResumeLayout($false)}
+        $v.Invalidate()
+        $h.Invalidate()
+    })
+    $body.Add_ScrollActivity({
+        param($sender,$e)
+        if($sender.Parent){
+            $v=$sender.Parent.Controls['rc1-journal-vscroll']
+            $h=$sender.Parent.Controls['rc1-journal-hscroll']
+            if($v){$v.Invalidate()}
+            if($h){$h.Invalidate()}
+        }
+    })
+    [void]$layout.Controls.Add($textHost,0,2)
+    $bottomRail=New-Object Windows.Forms.Panel
+    $bottomRail.Name='rc1-journal-footer-separator'
+    $bottomRail.Dock=[Windows.Forms.DockStyle]::Fill
+    $bottomRail.Margin=[Windows.Forms.Padding]::new(0)
+    $bottomRail.BackColor=[Drawing.Color]::FromArgb(85,70,108)
+    [void]$layout.Controls.Add($bottomRail,0,3)
+    $footer=New-Object Windows.Forms.TableLayoutPanel
     $footer.Name='rc1-journal-footer'
     $footer.Dock=[Windows.Forms.DockStyle]::Fill
-    $footer.FlowDirection=[Windows.Forms.FlowDirection]::RightToLeft
-    $footer.WrapContents=$false
-    $footer.Padding=[Windows.Forms.Padding]::new(0,8,0,0)
+    $footer.BackColor=$dialog.BackColor
+    $footer.ColumnCount=2
+    $footer.RowCount=1
     $footer.Margin=[Windows.Forms.Padding]::new(0)
+    $footer.Padding=[Windows.Forms.Padding]::new(20,13,20,11)
+    [void]$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+    [void]$footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute,100))
+    $save=New-Object Windows.Forms.Button
+    $save.Name='rc1-journal-save-txt'
+    $save.Text='Сохранить TXT'
+    $save.Size=[Drawing.Size]::new(148,34)
+    $save.BackColor=[Drawing.Color]::FromArgb(57,61,70)
+    $save.ForeColor=$dialog.ForeColor
+    $save.FlatStyle=[Windows.Forms.FlatStyle]::Flat
+    $save.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
+    $save.Margin=[Windows.Forms.Padding]::new(0)
+    $save.Add_Click({
+        param($sender,$e)
+        # PowerShell reserves $Host (case-insensitive) as a read-only automatic variable.
+        $journalForm=$sender.FindForm()
+        try { Save-RdcOwnerJournalTxt $journalForm ([string]$journalForm.Tag) }
+        catch {
+            [void][Windows.Forms.MessageBox]::Show($journalForm,
+              'Не удалось сохранить журнал. Проверьте выбранную папку.',
+              'RDC Relay',[Windows.Forms.MessageBoxButtons]::OK,
+              [Windows.Forms.MessageBoxIcon]::Warning)
+        }
+    })
     $close=New-Object Windows.Forms.Button
     $close.Name='rc1-journal-close'
     $close.Text='Закрыть'
@@ -6460,12 +6964,16 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $close.FlatStyle=[Windows.Forms.FlatStyle]::Flat
     $close.FlatAppearance.BorderColor=[Drawing.Color]::FromArgb(139,145,158)
     $close.Margin=[Windows.Forms.Padding]::new(0)
-    [void]$footer.Controls.Add($close)
-    [void]$layout.Controls.Add($footer,0,2)
+    [void]$footer.Controls.Add($save,0,0)
+    [void]$footer.Controls.Add($close,1,0)
+    [void]$layout.Controls.Add($footer,0,4)
     $dialog.Controls.Add($layout)
+    $dialog.PerformLayout()
+    $layout.PerformLayout()
+    $textHost.PerformLayout()
     $dialog.AcceptButton=$close
     $dialog.CancelButton=$close
-    $dialog.ActiveControl=$close
+    $dialog.ActiveControl=$body
     return $dialog
 }
 function Show-RdcOwnerJournal([Windows.Forms.Form]$parent) {
@@ -6949,9 +7457,9 @@ if ($SelfTest) {
     Set-FinishButtonMode $true
     if ($accountButton.Text -notlike 'Аккаунт*') { throw 'Account button missing' }
     if ($helpButton.Text -ne '' -or -not $helpButton.Image -or
-        $helpButton.Parent -ne $titleHost -or
+        $helpButton.Parent -ne $(if($OwnerGui){$bottom}else{$titleHost}) -or
         $helpButton.AccessibleName -ne 'Справка / О программе') {
-        throw 'Native title Help button missing'
+        throw 'Native Help button missing from expected header/footer host'
     }
     if ($accountMenu.Items.Count -lt 4) { throw 'Account menu missing' }
     if ($reconnectItem.Text -ne 'Переподключить') { throw 'Reconnect account action missing' }

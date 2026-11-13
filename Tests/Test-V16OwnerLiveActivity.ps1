@@ -51,6 +51,64 @@ $s.AddSyntheticLogLine('Remote tool started')
 Check (($s.Snapshot()).toolActivity -ceq 'working') 'long confirmed tool call stays animated beyond 60s without a completion marker'
 $s.ManagedStatus(0,$false,'Disconnected','fixture disconnected')
 Check (($s.Snapshot()).toolActivity -ceq 'idle') 'owned disconnect clears activity'
+# The G122 Host and the GUI divider/tray must share the ORIGINAL adaptive
+# inter-call gap heuristic: 10..30 seconds, not independent cosmetic timers.
+$adaptive=New-Object RdcOwnerRemoteState
+$adaptive.EnableManaged()
+$adaptive.ManagedStatus(98766,$true,'Ready','synthetic gap adaptation')
+$minField=([RdcOwnerRemoteState]).GetField('activityHoldSeconds',$flags)
+$gapField=([RdcOwnerRemoteState]).GetField('activityGapEwmaSeconds',$flags)
+$completedField=([RdcOwnerRemoteState]).GetField('lastToolCompletedUtc',$flags)
+$holdUntilField=([RdcOwnerRemoteState]).GetField('activityHoldUntilUtc',$flags)
+Check ($null -ne $minField -and $null -ne $gapField -and
+ $null -ne $completedField -and $null -ne $holdUntilField -and
+ [Math]::Abs([double]$minField.GetValue($adaptive)-10.0) -lt 0.001) 'shared Hold starts at original divider minimum 10 seconds'
+$adaptive.AddSyntheticLogLine('Remote tool started')
+$adaptive.AddSyntheticLogLine('Remote tool completed')
+$completedField.SetValue($adaptive,[DateTime]::UtcNow.AddSeconds(-16))
+$adaptive.AddSyntheticLogLine('Remote tool started')
+$duration=[double]$minField.GetValue($adaptive)
+Check ($duration -gt 10.0 -and $duration -le 30.0 -and
+ ($adaptive.Snapshot()).toolActivity -ceq 'working') 'new tool start adapts timer to 16s gap without interrupting working'
+$adaptive.AddSyntheticLogLine('Remote tool completed')
+$remaining=([DateTime]$holdUntilField.GetValue($adaptive)-[DateTime]::UtcNow).TotalSeconds
+Check ($remaining -ge ($duration-1.0) -and $remaining -le ($duration+0.1) -and
+ ($adaptive.Snapshot()).toolActivity -ceq 'hold') 'completed call enters adaptive hold shared by divider and tray'
+for($i=0;$i -lt 7;$i++){
+ $completedField.SetValue($adaptive,[DateTime]::UtcNow.AddSeconds(-23))
+ $adaptive.AddSyntheticLogLine('Remote tool started')
+ $adaptive.AddSyntheticLogLine('Remote tool completed')
+}
+Check ([Math]::Abs([double]$minField.GetValue($adaptive)-30.0) -lt 0.001) 'frequent 23s inter-call gaps clamp adaptive hold to 30s maximum'
+$completedField.SetValue($adaptive,[DateTime]::UtcNow.AddSeconds(-31))
+$adaptive.AddSyntheticLogLine('Remote tool started')
+Check ([Math]::Abs([double]$minField.GetValue($adaptive)-30.0) -lt 0.001) 'very long 31s gaps ignored, cannot inflate hold'
+$adaptive.AddSyntheticLogLine('Remote tool completed')
+$adaptive.AddSyntheticLogLine('Remote tool started')
+Check ([Math]::Abs([double]$minField.GetValue($adaptive)-30.0) -lt 0.001) 'sub-50ms gaps ignored'
+$adaptive.AddSyntheticLogLine('Remote tool completed')
+$holdUntilField.SetValue($adaptive,[DateTime]::UtcNow.AddMilliseconds(-50))
+Check (($adaptive.Snapshot()).toolActivity -ceq 'idle') 'adaptive hold expiry automatically returns both views to idle without timer'
+$adaptive.AddSyntheticLogLine('Remote tool started')
+$adaptive.AddSyntheticLogLine('Remote tool started')
+$adaptive.AddSyntheticLogLine('Remote tool completed')
+Check (($adaptive.Snapshot()).toolActivity -ceq 'working') 'overlapping calls remain working until final completion'
+$adaptive.AddSyntheticLogLine('Remote tool completed')
+Check (($adaptive.Snapshot()).toolActivity -ceq 'hold') 'last overlapping completion starts one shared hold'
+$adaptive.AddSyntheticLogLine('Remote tool started')
+$adaptive.AddSyntheticLogLine('Remote tool failed')
+Check (($adaptive.Snapshot()).toolActivity -ceq 'idle' -and
+ ($adaptive.Snapshot()).toolFault) 'failure clears inter-call hold and exposes tool fault'
+$adaptive.ManagedStatus(0,$false,'Disconnected','synthetic shutdown')
+Check (($adaptive.Snapshot()).toolActivity -ceq 'idle' -and
+ [Math]::Abs([double]$minField.GetValue($adaptive)-10.0) -lt 0.001 -and
+ [Math]::Abs([double]$gapField.GetValue($adaptive)-3.0) -lt 0.001) 'verified Remote stop resets activity and adaptive timers'
+Check ([RdcOwnerTrayVisual]::Semantic('Ready','working') -ceq 'working' -and
+ [RdcOwnerTrayVisual]::Semantic('Ready','hold') -ceq 'working' -and
+ [RdcOwnerTrayVisual]::Semantic('Ready','idle') -ceq 'ready') 'tray and GUI divider share exact Host working/hold/idle semantics'
+Check ([RdcOwnerTrayVisual]::Semantic('Fault','hold') -ceq 'fault' -and
+ [RdcOwnerTrayVisual]::Semantic('Connecting','hold') -ceq 'connecting' -and
+ [RdcOwnerTrayVisual]::Semantic('Disconnected','hold') -ceq 'offline') 'connection/fault precedence beats uncertain hold'
 $o=New-Object RdcOwnerRemoteState
 $o.AttachObservedReadOnly(24680)
 $o.AddObservedMarker('Remote tool started')
