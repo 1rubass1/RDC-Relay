@@ -2709,6 +2709,11 @@ public sealed class RdcGpuDividerHost : ElementHost {
     private int lastPopupW = -1;
     private int lastPopupH = -1;
     private System.Windows.Forms.Form ownerForm;
+    // WinForms modal loops can leave a small owner area visible. The WPF
+    // particle popup is a separate owned HWND; mere occlusion/opacity checks
+    // cannot guarantee it stays below nested Help/Journal windows.
+    private int modalLoopDepth;
+    private bool modalHooksAttached;
 
     const int GWL_EXSTYLE = -20;
     const int GWLP_HWNDPARENT = -8;
@@ -2826,7 +2831,41 @@ public sealed class RdcGpuDividerHost : ElementHost {
         }
     }
 
+    private bool OwnerHasModalDialog() {
+        if (modalLoopDepth > 0) return true;
+        if (ownerForm == null || ownerForm.IsDisposed) return false;
+        // Safety net for a modal that was shown before a visibility probe, or
+        // while the dispatcher is transitioning between nested modal loops.
+        foreach (System.Windows.Forms.Form dialog in
+                 System.Windows.Forms.Application.OpenForms) {
+            if (dialog == null || dialog.IsDisposed || !dialog.Modal ||
+                !dialog.Visible || dialog == ownerForm) continue;
+            System.Windows.Forms.Form parent = dialog.Owner;
+            for (int depth=0; parent!=null && depth<16; depth++) {
+                if (parent == ownerForm) return true;
+                parent = parent.Owner;
+            }
+        }
+        return false;
+    }
+
+    private void ThreadModalEntered(object sender,EventArgs e) {
+        modalLoopDepth++;
+        // Physically close the independent popup HWND. Hiding its WPF root
+        // via Opacity alone can leave one DWM-composited frame above a modal.
+        SetRenderingPaused(true);
+        ClosePopup();
+    }
+
+    private void ThreadModalLeft(object sender,EventArgs e) {
+        if (modalLoopDepth > 0) modalLoopDepth--;
+        // An outer Help dialog may remain open after Journal/Save closes.
+        // OwnerHasModalDialog prevents resuming until the entire nest exits.
+        UpdateRenderingVisibility();
+    }
+
     private bool ShouldPauseRendering() {
+        if (OwnerHasModalDialog()) return true;
         if (ownerForm == null ||
             ownerForm.IsDisposed ||
             ownerForm.Handle == IntPtr.Zero)
@@ -2947,6 +2986,14 @@ public sealed class RdcGpuDividerHost : ElementHost {
     }
 
     private void SetRenderingPaused(bool paused) {
+        bool modalOpen = OwnerHasModalDialog();
+        // A restore, geometry event, or test hook must never force the
+        // independent WPF window open while a modal is still on screen.
+        if (modalOpen) paused = true;
+        if (paused && modalOpen) {
+            popupRoot.Opacity = 0.0;
+            ClosePopup();
+        }
         if (renderPaused == paused)
             return;
 
@@ -3058,6 +3105,13 @@ public sealed class RdcGpuDividerHost : ElementHost {
     }
 
     private void EnsurePopupOpen() {
+        // Never re-create a top-level decorative HWND inside a nested modal
+        // loop (or while any owned Form.Modal is still visible).
+        if (OwnerHasModalDialog()) {
+            popupRoot.Opacity=0.0;
+            ClosePopup();
+            return;
+        }
         particlePopup.Width=Math.Max(1.0,root.ActualWidth);
 
         if (!particlePopup.IsOpen)
@@ -3398,6 +3452,14 @@ public sealed class RdcGpuDividerHost : ElementHost {
                 ownerForm.Deactivate+=OwnerDeactivated;
             }
 
+            // WinForms modal-loop notifications fire even when a native
+            // SaveFileDialog is nested inside the Journal Form. Subscribe
+            // once while the ElementHost is loaded; Dispose unsubscribes.
+            if (!modalHooksAttached) {
+                System.Windows.Forms.Application.EnterThreadModal+=ThreadModalEntered;
+                System.Windows.Forms.Application.LeaveThreadModal+=ThreadModalLeft;
+                modalHooksAttached=true;
+            }
             // Create the popup once during normal UI startup, then keep the
             // HWND alive for the lifetime of the window. Activity only changes
             // opacity/shader constants and therefore cannot steal foreground.
@@ -3463,6 +3525,9 @@ public sealed class RdcGpuDividerHost : ElementHost {
     public double RecoveryBlend { get { return recoveryBlend; } }
     public bool RecoveryActive { get { return recoveryActive; } }
     public bool RenderingPaused { get { return renderPaused; } }
+    // Read-only visual test hooks: never affect RPC/Remote state or focus.
+    public bool ParticlePopupOpenForTest { get { return particlePopup.IsOpen; } }
+    public int ModalDepthForTest { get { return modalLoopDepth; } }
     public bool PassConfigurationValid {
         get {
             return
@@ -3704,6 +3769,11 @@ public sealed class RdcGpuDividerHost : ElementHost {
             animationTimer.Tick-=Animate;
             visibilityTimer.Stop();
             visibilityTimer.Tick-=VisibilityTimer_Tick;
+            if (modalHooksAttached) {
+                System.Windows.Forms.Application.EnterThreadModal-=ThreadModalEntered;
+                System.Windows.Forms.Application.LeaveThreadModal-=ThreadModalLeft;
+                modalHooksAttached=false;
+            }
             if (ownerForm!=null) {
                 ownerForm.LocationChanged-=OwnerGeometryChanged;
                 ownerForm.SizeChanged-=OwnerGeometryChanged;
