@@ -1,4 +1,4 @@
-# G106: audit Owner-only semantic emoji palette with disposable RichEdit controls.
+﻿# G106: audit Owner-only semantic emoji palette with disposable RichEdit controls.
 # No installation, Host, Remote, browser or network access.
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
@@ -121,6 +121,48 @@ foreach($ownerMode in @($true,$false)){
    $box.SelectionFont.FontFamily.Name -ceq 'Consolas') ($isOwner+' surrounding body text remains neutral monospaced')
  }finally{$box.Dispose();$body.Dispose()}
 }
+# First-pane six-row Desktop Commander art has two independent colors.
+# Check the actual production call AND the real RichEdit selection formatting.
+$bannerCall='(?s)\[void\]\$headerLog\.StyleStartupBanner\(\s*\$accentOrange,\s*\[Drawing\.Color\]::FromArgb\(123,95,162\)\s*\)'
+Check ([regex]::IsMatch($source,$bannerCall)) 'main header passes orange for DESKTOP and purple for COMMANDER'
+$artBox=New-Object RdcLogBox
+$artFont=New-Object Drawing.Font('Consolas',9)
+try{
+ $artBox.Font=$artFont
+ $artBox.Size=[Drawing.Size]::new(850,280)
+ $artBox.WordWrap=$false
+ [void]$artBox.Handle
+ $artRow=('A'*61)+('B'*12)
+ $artBox.Text=(($artRow+"`n")*6)+'Remote Connection'
+ $original=$artBox.Text
+ $artBox.Select(0,$artBox.TextLength)
+ $artBox.SelectionColor=[Drawing.Color]::Gainsboro
+ $styleOk=$artBox.StyleStartupBanner([Drawing.Color]::FromArgb(191,118,67),
+   [Drawing.Color]::FromArgb(123,95,162))
+ Check $styleOk 'production RichEdit recognizes six-row startup pseudographics'
+ $cursor=0
+ $allOrange=$true
+ $allPurple=$true
+ for($row=0;$row -lt 6;$row++){
+  $i=$artBox.Text.IndexOf($artRow,$cursor,[StringComparison]::Ordinal)
+  if($i -lt 0){$allOrange=$false;$allPurple=$false;break}
+  $artBox.Select($i,1)
+  if($artBox.SelectionColor.ToArgb() -ne [Drawing.Color]::FromArgb(191,118,67).ToArgb()){$allOrange=$false}
+  $artBox.Select($i+60,1)
+  if($artBox.SelectionColor.ToArgb() -ne [Drawing.Color]::FromArgb(191,118,67).ToArgb()){$allOrange=$false}
+  $artBox.Select($i+61,1)
+  if($artBox.SelectionColor.ToArgb() -ne [Drawing.Color]::FromArgb(123,95,162).ToArgb()){$allPurple=$false}
+  $artBox.Select($i+72,1)
+  if($artBox.SelectionColor.ToArgb() -ne [Drawing.Color]::FromArgb(123,95,162).ToArgb()){$allPurple=$false}
+  $cursor=$i+$artRow.Length
+ }
+ Check $allOrange 'DESKTOP left half of all six art rows is exact accent orange, including split boundary'
+ Check $allPurple 'COMMANDER right half of all six art rows is exact accent purple, including split boundary'
+ $markerStart=$artBox.Text.IndexOf('Remote Connection',[StringComparison]::Ordinal)
+ $artBox.Select($markerStart,1)
+ Check ($artBox.Text -ceq $original -and
+  $artBox.SelectionColor.ToArgb() -eq [Drawing.Color]::Gainsboro.ToArgb()) 'banner recoloring preserves all characters and surrounding header colors'
+}finally{$artBox.Dispose();$artFont.Dispose()}
 Write-Output ('RC1_OWNER_EMOJI_PALETTE_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}
 exit 0

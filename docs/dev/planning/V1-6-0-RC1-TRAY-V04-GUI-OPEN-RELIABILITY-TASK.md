@@ -1,6 +1,6 @@
 # RDC Relay 1.6.0 RC1 — tray v04 integration and reliable GUI reopening
 
-**Date:** 2026-11-11. **Tracking:** [GitHub Issue #24](https://github.com/1rubass1/RDC-Relay/issues/24). **Status:** task added to the ongoing tray work; implementation and owner visual acceptance PENDING. **This is NOT a completed fix or a release.**
+**Date:** 2026-11-11. **Tracking:** [GitHub Issue #24](https://github.com/1rubass1/RDC-Relay/issues/24). **Status:** owner confirmed tray artwork/motion approved; GUI-open corrective implementation started in Draft PR #25. Full tray rendering, Windows build and installed acceptance NOT CHECKED. **This is NOT a completed fix or a release.**
 
 **Owners of work:** Designer DES-002 owns approval/final export of icon frames; Programmer owns Host/NotifyIcon integration and UI activation fix; independent Reviewer validates. Avoid parallel edits to Designer's in-progress files and to another Programmer's tray implementation.
 
@@ -15,7 +15,7 @@ Owner supplied `Desktop/RDC Relay - Значок 04/Трей/` on STARMER. **The
 
 Reference in project: `docs/dev/design/icon-concepts-2026-11-11/TRAY-HANDOFF.md`, `tray-v04-preview-01/REVIEW.md`, `COORDINATION/BOARD.md` DES-002, `docs/dev/architecture/TRAY-LIFECYCLE-DESIGN.md`.
 
-**Do not treat these as final production icons until owner approves** 16/20 px legibility, the center, palette and animation. The source folder itself must not be moved or modified in place; only approved, hash-checked copies should enter a private RC1 build. Existing *main application* icon v04 stays unchanged.
+**Owner explicitly approved this design on 2026-11-11** and authorized integration. The older preview REVIEW.md wording 'pending visual approval' is superseded; 16/20 px physical Windows tray QA is still mandatory. Do not alter the approved forms, palette or motion. The source folder itself must not be moved or modified in place; only approved, hash-checked copies should enter a private RC1 build. Existing *main application* icon v04 stays unchanged.
 
 ## Scope A — tray icon states (after design approval)
 
@@ -30,7 +30,7 @@ Use exactly the approved states and transitions, driven by authoritative sanitiz
 | `Ready` and `toolActivity=working` | `working` | orange halves, pulsing purple center |
 | `Fault` | `fault` | grey halves, constant red center |
 
-Keep link health ahead of tool activity; individual tool failures do not trigger a connection-fault icon. Do not extend the working animation on `toolActivity=hold`. Respect OS reduced-motion settings (static first frame), avoid repainting at excessive cadence, minimize allocations and safely dispose retired `Icon` objects; `NotifyIcon.Icon` needs a Windows `Icon` resource, not an SVG or PNG path. Preview values **800 ms half-swap / 1,800 ms center pulse** are *not yet owner-approved timings*. Tooltip indicates the stable state, not each animation frame. Form X and Host exit retain the existing separate lifecycle rules.
+Keep link health ahead of tool activity; individual tool failures do not trigger a connection-fault icon. Do not extend the working animation on `toolActivity=hold`. Respect OS reduced-motion settings (static first frame), avoid repainting at excessive cadence, minimize allocations and safely dispose retired `Icon` objects; `NotifyIcon.Icon` needs a Windows `Icon` resource, not an SVG or PNG path. Approved design uses **800 ms half-swap / 1,800 ms center pulse**. Implement the preview timing subject to Windows reduced-motion fallback. Tooltip indicates the stable state, not each animation frame. Form X and Host exit retain the existing separate lifecycle rules.
 
 ## Scope B — blocking incident fix: reliable «Открыть RDC Relay» from tray and launcher
 
@@ -62,4 +62,4 @@ Important Win32 guidance: [SetForegroundWindow](https://learn.microsoft.com/en-u
 
 ## Current boundary
 
-This document is a scoped implementation ticket. No tray runtime code was changed, no icon preview was falsely marked final, no new installer was published, no installed 1.5.18, remote, shortcut or registry was touched. Parallel Designer uncommitted work remains isolated.
+STARMER recovered on 2026-11-11. **G122 implementation is now in [Draft PR #25](https://github.com/1rubass1/RDC-Relay/pull/25):** the approved 64 PNG assets were read in place, validated, and compiled into a 29-frame, SHA-attested multi-resolution Windows ICO binary. The six Host-state icon modes and exact preview fades/pulse, static reduced-motion fallback, DPI-aware small icon selection and cached resource disposal are implemented. Live Host GUI reactivation checks exact owned identity, HWND, restore/foreground outcome and taskbar fallback. Visual **21/21**, activation **12/12**, full safe regression **54/54**, standalone Setup **19/19** all PASS. A private, **not-installed** candidate has been built in the isolated ignored `dist`. **Pending before merge or Owner install:** disposable fake Host/GUI OS smoke, independent Reviewer, and physical Windows tray visual acceptance. No main-worktree Designer edits, installed 1.5.18, live Remote, shortcuts or registry were touched.

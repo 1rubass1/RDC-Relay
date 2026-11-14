@@ -20,7 +20,7 @@ internal static class RdcRc1CandidateSetup {
   "Source/RdcOwnerWire.cs","Source/RdcOwnerRuntime.cs","Source/RdcOwnerProcess.cs",
   "Source/RdcOwnerTicketStore.cs","Source/RdcOwnerRemoteState.cs",
   "Source/RdcOwnerManagedProcess.cs",
-  "Source/rc1-candidate.json","Source/RDCRelay.ico",
+  "Source/rc1-candidate.json","Source/RDCRelay.ico","Source/RdcTrayV04.bin",
   "Source/divider-caustic.ps","Source/divider-caustic-detail.ps",
   "Source/divider-particles.ps","Source/divider-particles-core.ps",
   "Source/update-notice.ps1","Source/update.ps1","RdcOwnerRuntime.dll",

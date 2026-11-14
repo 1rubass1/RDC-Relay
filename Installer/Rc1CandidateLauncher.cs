@@ -72,7 +72,7 @@ internal static class RdcRc1CandidateLauncher {
    foreach(string name in new []{"rc1-tray-host.ps1","rc1-owner-gui.ps1",
        "rc1-remote-observer.ps1","rc1-quota-client.ps1","remote-window.ps1",
        "RdcOwnerRuntime.cs","RdcOwnerWire.cs","RdcOwnerTicketStore.cs",
-       "RdcOwnerRemoteState.cs","RdcOwnerProcess.cs","RdcOwnerManagedProcess.cs"}) {
+       "RdcOwnerRemoteState.cs","RdcOwnerProcess.cs","RdcOwnerManagedProcess.cs","RdcTrayV04.bin"}) {
     string file=Path.Combine(source,name);
     if(!File.Exists(file)||(File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0)
      throw new InvalidOperationException("RC1_MISSING_OR_LINKED_SOURCE:"+name);

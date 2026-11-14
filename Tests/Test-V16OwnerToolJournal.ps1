@@ -48,6 +48,30 @@ $failLine=$j.Format('❌ Tool call gamma failed: FORBIDDEN','Remote tool failed'
 Check ($failLine -ceq 'Remote tool failed|3|read_file|') 'failed operation linked without raw error payload'
 $j.Reset()
 Check ($j.Format('🔧 Received tool call delta: edit_block {"file_path":"D:\\Src\\main.cpp"}','Remote tool started: edit_block') -ceq 'Remote tool started|1|edit_block|main.cpp') 'new session resets operation sequence'
+# Extra details are allowed only when the pinned Remote log contains
+# strict, bounded metadata; never show command arguments, full paths or stdout.
+$j.Reset()
+$pidStart=$j.Format('🔧 Received tool call proc-1: read_process_output {"pid":17412,"ignored":"TOP_SECRET"}','Remote tool started: read_process_output')
+Check ($pidStart -ceq 'Remote tool started|1|read_process_output|PID 17412' -and
+ $pidStart -notmatch 'TOP_SECRET|proc-1') 'process output shows actual PID only, never log arguments'
+Check ($j.Format('✅ Tool call read_process_output completed: PRIVATE','Remote tool completed') -ceq
+ 'Remote tool completed|1|read_process_output|PID 17412') 'process-output completion retains actual correlated PID'
+$j.Reset()
+$exe=$j.Format('🔧 Received tool call exe-1: start_process {"command":"C:\\Apps\\notepad.exe -p CONFIDENTIAL"}','Remote tool started: start_process')
+Check ($exe -ceq 'Remote tool started|1|start_process|notepad.exe' -and
+ $exe -notmatch 'Apps|CONFIDENTIAL') 'direct executable uses basename only, not private path or arguments'
+$j.Reset()
+$multi=$j.Format('🔧 Received tool call multi-1: read_multiple_files {"paths":["D:\\Work\\one.md","D:\\Work\\two.md"]}','Remote tool started: read_multiple_files')
+Check ($multi -ceq 'Remote tool started|1|read_multiple_files|one.md (первый)' -and
+ $multi -notmatch 'Work|two.md') 'multiple-file read identifies only first safe filename'
+$j.Reset()
+$sensitive=$j.Format('🔧 Received tool call read-secret: read_multiple_files {"paths":["D:\\Work\\passwords.txt"]}','Remote tool started: read_multiple_files')
+Check ($sensitive -ceq 'Remote tool started|1|read_multiple_files|' -and
+ $sensitive -notmatch 'passwords') 'sensitive filename stays hidden even for plural file list'
+$j.Reset()
+$invalidPid=$j.Format('🔧 Received tool call no-pid: interact_with_process {"pid":0,"text":"NEVER_ECHO"}','Remote tool started: interact_with_process')
+Check ($invalidPid -ceq 'Remote tool started|1|interact_with_process|' -and
+ $invalidPid -notmatch 'NEVER_ECHO') 'invalid PID or process input never reaches GUI'
 $o=New-Object RdcOwnerRemoteState
 $o.AttachObservedReadOnly(24680)
 $o.AddObservedMarker('Remote tool started|1|read_file|report.txt')

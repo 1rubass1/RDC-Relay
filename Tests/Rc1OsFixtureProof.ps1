@@ -3,8 +3,10 @@
 # of the user's own ACL-protected proof is NOT cryptographically prevented.
 # No Remote, process kill, recursive deletion or historical TEMP cleanup.
 $Rc1OsNames=@('remote-window.ps1','rc1-tray-host.ps1','rc1-owner-gui.ps1',
+ 'rc1-quota-client.ps1',
  'RdcOwnerWire.cs','RdcOwnerRuntime.cs','RdcOwnerTicketStore.cs',
- 'RdcOwnerRemoteState.cs','RdcOwnerProcess.cs','RdcOwnerManagedProcess.cs','rc1-candidate.json','RDCRelay.ico',
+ 'RdcOwnerRemoteState.cs','RdcOwnerProcess.cs','RdcOwnerManagedProcess.cs',
+ 'rc1-candidate.json','RDCRelay.ico','RdcTrayV04.bin',
  'divider-caustic.ps','divider-caustic-detail.ps','divider-particles.ps',
  'divider-particles-core.ps','update-notice.ps1','update.ps1')
 function Get-Rc1Paths([string]$runId) {

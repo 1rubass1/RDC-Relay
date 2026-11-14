@@ -3,6 +3,7 @@
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 $src=Join-Path (Split-Path -Parent $PSScriptRoot) 'Source\remote-window.ps1'
+. (Join-Path $PSScriptRoot 'Import-V16OwnerModalButtonType.ps1') -SourcePath $src
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($src,[ref]$tokens,[ref]$errors)
 $pass=0;$fail=0
@@ -39,6 +40,7 @@ try{
  $buttons=$layout.GetControlFromPosition(0,1)
  $no=@($buttons.Controls|Where-Object{$_.Name -ceq 'rc1-stop-remote-no'})|Select-Object -First 1
  $yes=@($buttons.Controls|Where-Object{$_.Name -ceq 'rc1-stop-remote-yes'})|Select-Object -First 1
+ Check ($no -is [RdcModalButton] -and $yes -is [RdcModalButton]) 'Stop actions share main rounded button style'
  Check ($layout.RowCount -eq 2 -and $row.ColumnCount -eq 2 -and
   $warning.Image.Width -eq 32 -and $warning.Image.Height -eq 32 -and
   -not $warning.TabStop) 'compact layout uses account-style standard warning icon'
@@ -69,6 +71,7 @@ try {
  $buttons=$layout.GetControlFromPosition(0,1)
  $no=@($buttons.Controls|Where-Object{$_.Name -ceq 'rc1-reconnect-remote-no'})|Select-Object -First 1
  $yes=@($buttons.Controls|Where-Object{$_.Name -ceq 'rc1-reconnect-remote-yes'})|Select-Object -First 1
+ Check ($no -is [RdcModalButton] -and $yes -is [RdcModalButton]) 'Reconnect actions share main rounded button style'
  Check ($reconnect.Name -ceq 'rc1-reconnect-remote-confirmation' -and
   $reconnect.Text -ceq 'Переподключение Remote' -and
   $reconnect.ClientSize.Width -eq 480 -and $reconnect.ClientSize.Height -eq 168 -and
@@ -138,6 +141,7 @@ try{
  $buttons=$layout.GetControlFromPosition(0,2)
  $close=@($buttons.Controls|Where-Object{$_.Name -ceq 'rc1-help-close'})|Select-Object -First 1
  $journalButton=@($buttons.Controls|Where-Object{$_.Name -ceq 'rc1-help-show-journal'})|Select-Object -First 1
+ Check ($journalButton -is [RdcModalButton] -and $close -is [RdcModalButton]) 'Help actions use common modal button style'
  Check ($help.Name -ceq 'rc1-help-dialog' -and
   $help.Text -ceq 'RDC Relay — справка' -and
   $help.FormBorderStyle -eq [Windows.Forms.FormBorderStyle]::FixedDialog -and

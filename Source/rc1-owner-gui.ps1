@@ -6,81 +6,106 @@
 # The RC1 Host streams monotonic, sanitized event IDs. Show only the
 # fixed-width sequence and a Unicode status, never the Host/Remote prefix.
 # This formatter never receives raw Remote stdout, credentials or tool args.
+# Single action vocabulary for start, complete and failure, including
+# unpaired pinned Remote 0.2.52 markers. The phase is carried by the icon.
+function Get-Rc1ToolAction([string]$tool) {
+ switch -CaseSensitive ($tool) {
+  'read_file' {'Чтение файла';break}
+  'read_multiple_files' {'Чтение файлов';break}
+  'write_file' {'Запись файла';break}
+  'edit_block' {'Изменение файла';break}
+  'list_directory' {'Просмотр папки';break}
+  'get_file_info' {'Сведения о файле';break}
+  'start_process' {'Запуск программы';break}
+  'read_process_output' {'Вывод процесса';break}
+  'interact_with_process' {'Ввод в процесс';break}
+  'list_processes' {'Просмотр процессов';break}
+  'start_search' {'Поиск';break}
+  'get_more_search_results' {'Результаты поиска';break}
+  'stop_search' {'Остановка поиска';break}
+  'move_file' {'Перемещение файла';break}
+  'create_directory' {'Создание папки';break}
+  'get_config' {'Настройки';break}
+  default {'Операция'}
+ }
+}
 function Format-Rc1JournalLine([long]$number,[string]$message) {
  if($number -lt 0){throw 'RC1_JOURNAL_NEGATIVE_SEQUENCE'}
  $text=([string]$message).Trim()
- # The Host correlates calls using private remote IDs. Only a generated
- # operation number and bounded safe labels are accepted in the GUI.
+ $gutter=$number.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '
+ $unknown='без уточнения'
+ # Exactly one readable "action → subject" scheme for all tool phases.
+ # Never echo unvalidated raw log arguments or private identifiers.
  if($text -cmatch '\ARemote tool (started|completed|failed)\|([1-9][0-9]{0,11})\|([a-z][a-z0-9_]{1,39})\|([\p{L}\p{Nd}_ .()\-]{0,64})\z'){
-  $phase=[string]$Matches[1];$operation=[long]$Matches[2]
-  $tool=[string]$Matches[3];$target=[string]$Matches[4]
-  $action=switch -Exact ($tool){
-   'read_file' {'Чтение файла'} 'read_multiple_files' {'Чтение файлов'}
-   'write_file' {'Запись файла'} 'edit_block' {'Изменение файла'}
-   'list_directory' {'Просмотр папки'} 'get_file_info' {'Сведения о файле'}
-   'start_process' {'Запуск программы'} 'read_process_output' {'Вывод процесса'}
-   'interact_with_process' {'Ввод в процесс'} 'list_processes' {'Просмотр процессов'}
-   'start_search' {'Поиск'} 'get_more_search_results' {'Результаты поиска'}
-   'stop_search' {'Остановка поиска'} 'move_file' {'Перемещение файла'}
-   'create_directory' {'Создание папки'} 'get_config' {'Настройки'}
-   default {'Операция'}
+  $phase=[string]$Matches[1]
+  $operation=[long]$Matches[2]
+  $tool=[string]$Matches[3]
+  $target=[string]$Matches[4]
+  $action=Get-Rc1ToolAction $tool
+  # A completed start_process MCP call acknowledges the start request,
+  # NOT the later exit or ultimate success of the OS process.
+  if($phase -ceq 'completed' -and $tool -ceq 'start_process'){
+   $action='Запрос запуска программы'
   }
-  $done=switch -Exact ($tool){
-   'read_file' {'Файл прочитан'} 'read_multiple_files' {'Файлы прочитаны'}
-   'write_file' {'Файл записан'} 'edit_block' {'Файл изменён'}
-   'list_directory' {'Содержимое папки получено'}
-   'get_file_info' {'Сведения получены'} 'start_process' {'Запрос запуска обработан'}
-   'read_process_output' {'Вывод получен'} 'interact_with_process' {'Ввод обработан'}
-   'list_processes' {'Список процессов получен'}
-   'start_search' {'Поиск запущен'} 'get_more_search_results' {'Результаты получены'}
-   'stop_search' {'Поиск остановлен'} 'move_file' {'Файл перемещён'}
-   'create_directory' {'Папка создана'} 'get_config' {'Настройки получены'}
-   default {'Вызов завершён'}
+  $icon=switch -Exact ($phase) {
+   'started' {'🔧';break}
+   'completed' {'✅';break}
+   'failed' {'❌';break}
   }
-  $messageText=switch -Exact ($phase){
-   'started' {'🔧 '+$action}
-   'completed' {'✅ '+$done}
-   'failed' {'❌ Ошибка: '+$action}
-  }
-  if($target){$messageText+=' — '+$target}
-  return $operation.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '+$messageText
+  if(-not $target){$target=$unknown}
+  return $operation.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+
+   ' │ '+$icon+' '+$action+' → '+$target
  }
- # Remote 0.2.52 completion lines identify a tool but not its call UUID.
- # If several calls of that tool overlap, Host does not invent a pairing.
+ # Method-name completion is ambiguous when same-type calls overlap:
+ # make the missing subject explicit rather than inventing correlation.
  if($text -cmatch '\ARemote tool (completed|failed): ([a-z][a-z0-9_]{1,39})\z'){
   $phase=[string]$Matches[1];$tool=[string]$Matches[2]
-  $kind=switch -Exact ($tool){
-   'read_file' {'чтение файла'} 'read_multiple_files' {'чтение файлов'}
-   'write_file' {'запись файла'} 'edit_block' {'изменение файла'}
-   'list_directory' {'просмотр папки'} 'start_process' {'запуск программы'}
-   'read_process_output' {'чтение вывода'} 'interact_with_process' {'ввод в процесс'}
-   'list_processes' {'просмотр процессов'} 'start_search' {'поиск'}
-   'get_more_search_results' {'получение результатов'}
-   'get_file_info' {'сведения о файле'} 'move_file' {'перемещение файла'}
-   'create_directory' {'создание папки'} 'stop_search' {'остановка поиска'}
-   'get_config' {'чтение настроек'} default {'операция'}
+  $icon=if($phase -ceq 'completed'){'✅'}else{'❌'}
+  $action=Get-Rc1ToolAction $tool
+  if($phase -ceq 'completed' -and $tool -ceq 'start_process'){
+   $action='Запрос запуска программы'
   }
-  $status=if($phase -ceq 'completed'){'✅ Завершено: '}else{'❌ Ошибка: '}
-  return $number.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '+$status+$kind
+  return $gutter+$icon+' '+$action+' → '+$unknown
  }
- # Fail closed on malformed tool-rich rows so payloads are never reflected.
+ # Fail closed for malformed rich tool data.
  if($text.StartsWith('Remote tool ',[StringComparison]::Ordinal) -and $text.Contains('|')){
-  return $number.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ • Событие инструмента'
+  return $gutter+'• Событие инструмента → '+$unknown
  }
- $description=switch -CaseSensitive -Regex ($text) {
-  '^Remote tool started: ([a-z][a-z0-9_]{1,39})$' { '🔧 Начато: '+$Matches[1];break }
-  '^Remote tool started$' { '🔧 Начато';break }
-  '^Remote tool completed$' { '✅ Выполнено';break }
-  '^Remote tool failed$' { '❌ Ошибка выполнения';break }
-  '^Remote connected$' { '🔌 Remote подключён';break }
-  '^Authentication pending$' { '⏳ Ожидание авторизации';break }
-  '^Remote channel unavailable$' { '❌ Канал Remote недоступен';break }
-  '^Remote start failed$' { '❌ Ошибка запуска Remote';break }
-  '^Local MCP recovering$' { '⏳ Восстановление MCP';break }
-  '^Remote launcher replaced$' { '🔌 Сессия Remote обновлена';break }
-  default { '• '+$text }
+ if($text -cmatch '\ARemote tool started: ([a-z][a-z0-9_]{1,39})\z'){
+  return $gutter+'🔧 '+(Get-Rc1ToolAction ([string]$Matches[1]))+' → '+$unknown
  }
- return $number.ToString('D6',[Globalization.CultureInfo]::InvariantCulture)+' │ '+$description
+ switch -CaseSensitive ($text) {
+  'Remote tool started' {return $gutter+'🔧 Операция → '+$unknown}
+  'Remote tool completed' {return $gutter+'✅ Операция → '+$unknown}
+  'Remote tool failed' {return $gutter+'❌ Операция → '+$unknown}
+  'Remote connected' {return $gutter+'🔌 Remote → подключён'}
+  'Authentication pending' {return $gutter+'⏳ Авторизация → ожидание'}
+  'Remote channel unavailable' {return $gutter+'❌ Канал Remote → недоступен'}
+  'Remote start failed' {return $gutter+'❌ Запуск Remote → ошибка'}
+  'Local MCP recovering' {return $gutter+'⏳ MCP → восстановление'}
+  'Remote launcher replaced' {return $gutter+'🔌 Сессия Remote → обновлена'}
+  default {return $gutter+'• Событие → '+$text}
+ }
+}
+# Separate, bounded diagnostic history for Help -> Show Journal. Unlike the
+# lower activity pane it retains 512 recent sanitized entries, each tagged
+# with its *GUI receipt time* (not an invented Remote execution timestamp).
+# Raw Remote stdout, private paths and tool arguments never reach this data.
+function Add-Rc1OwnerDetailedEvent([string]$origin,[string]$entry) {
+ if($origin -cnotin @('Remote','Host')){return}
+ if([string]::IsNullOrWhiteSpace($entry)){return}
+ if($entry.Length -gt 320 -or $entry.Contains("`r") -or $entry.Contains("`n")){return}
+ if($entry -match '(?i)([A-Za-z]:\\|\\\\|https?://|@|authorization:\s*bearer|password\s*[=:]|api[_-]?key\s*[=:]|private[_-]?key\s*[=:])'){return}
+ if(-not $script:ownerDetailedJournal){
+  $script:ownerDetailedJournal=New-Object 'System.Collections.Generic.List[string]'
+ }
+ $received=[DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss.fff',
+  [Globalization.CultureInfo]::InvariantCulture)
+ [void]$script:ownerDetailedJournal.Add(
+  '['+$received+' UTC / получено] ['+$origin+'] '+$entry)
+ while($script:ownerDetailedJournal.Count -gt 512){
+  $script:ownerDetailedJournal.RemoveAt(0)
+ }
 }
 # These are the original, allowlisted Remote startup lines from Host. Only
 # Owner GUI's display copy is adapted: the source log and IPC snapshot remain
@@ -262,18 +287,22 @@ function Start-RdcOwnerGui {
  $accountButton.Enabled=$true
  $quotaAuthItem.Enabled=$script:ownerManagedMode
  $accountButton.AccessibleDescription='Аккаунт: переход к управлению устройствами без изменения Remote.'
+ # Handshake capability values must be validated before any binding.
+ $initialCapabilities=$handshake.payload.capabilities
+ if(-not $initialCapabilities){throw 'RC1_OWNER_CAPABILITIES_MISSING'}
  $script:ownerCanSwitchAccount=[bool]$initialCapabilities.switchAccount
  $switchAccountItem.Enabled=$script:ownerCanSwitchAccount
  $reconnectItem.Enabled=$false
- $initialCapabilities=$handshake.payload.capabilities
- if(-not $initialCapabilities){throw 'RC1_OWNER_CAPABILITIES_MISSING'}
  $devicesItem.Enabled=[bool]$initialCapabilities.deviceManagementLink
  $verifyDeviceItem.Enabled=$false # RC1 manual verification removed
- $openLogItem.Enabled=[bool]$initialCapabilities.sanitizedJournal
- $openLogItem.Text='Показать журнал RC1'
+ $script:ownerJournalAllowed=[bool]$initialCapabilities.sanitizedJournal
+ # G121 removed the Help context menu and $openLogItem. The About dialog
+ # now creates its own "Показать журнал" control over sanitized Owner events.
+ # Never access an obsolete control here: this prevented Owner GUI startup.
  $helpButton.Enabled=$true
  $script:ownerCloseGeneration=[int]$handshake.payload.closeGeneration
  $script:ownerEventCursor=0
+  $script:ownerTrayHelpSeenSequence=0
  $script:ownerNextVerb='GET_SNAPSHOT'
  $script:ownerPending=$null
  $script:ownerQueuedNavigation=''
@@ -294,6 +323,13 @@ function Start-RdcOwnerGui {
  $script:ownerLastQuotaText=''
  $script:ownerLastLogCursor=0
  $script:ownerLastLogEpoch=-1
+ $script:ownerDetailedJournal=New-Object 'System.Collections.Generic.List[string]'
+ $script:ownerRecentDiagnostics=@()
+ $script:ownerJournalRemoteState='Unknown'
+ $script:ownerJournalRemotePid=0
+ $script:ownerJournalOwnership='Unknown'
+ $script:ownerJournalToolActivity='idle'
+ $script:ownerJournalLastSnapshotUtc=[DateTime]::MinValue
  # Owner-only compact activity journal; legacy 1.5.18 renderer remains spaced.
  $script:ownerCompactJournal=$true
  $script:ownerLastJournalCapacity=-1
@@ -341,7 +377,7 @@ function Start-RdcOwnerGui {
      # Permissions come from Host, never from a GUI-local PID/ownership guess.
      $devicesItem.Enabled=[bool]$snapshot.capabilities.deviceManagementLink
      $verifyDeviceItem.Enabled=[bool]$snapshot.capabilities.deviceVerificationLink
-     $openLogItem.Enabled=[bool]$snapshot.capabilities.sanitizedJournal
+     $script:ownerJournalAllowed=[bool]$snapshot.capabilities.sanitizedJournal
      $script:ownerCanSwitchAccount=[bool]$snapshot.capabilities.switchAccount
      $switchAccountItem.Enabled=$script:ownerCanSwitchAccount
      if($script:ownerManagedMode){
@@ -374,10 +410,24 @@ function Start-RdcOwnerGui {
      Set-DividerFaultState ($toolFault -or $remoteFault)
      $script:ownerLastToolFault=$toolFault
      $script:ownerLastRemoteLinkState=$remoteLinkState
+     # Read-only Host diagnostic tail is distinct from compact tool rows.
+     $script:ownerJournalRemoteState=[string]$remoteSnapshot.state
+     $script:ownerJournalRemotePid=[int]$remoteSnapshot.processPid
+     $script:ownerJournalOwnership=[string]$remoteSnapshot.ownership
+     $script:ownerJournalToolActivity=[string]$remoteSnapshot.toolActivity
+     $script:ownerJournalLastSnapshotUtc=[DateTime]::UtcNow
+     $script:ownerRecentDiagnostics=@($remoteSnapshot.diagnostics |
+       Where-Object{
+        $v=[string]$_
+        $v.Length -gt 0 -and $v.Length -le 140 -and
+        $v -notmatch '[\r\n\x00-\x1F]' -and
+        $v -notmatch '(?i)(authorization:\s*bearer|password\s*[=:]|api[_-]?key\s*[=:]|private[_-]?key\s*[=:])'
+       })
      $epoch=[long]$remoteSnapshot.logStreamEpoch
      if($epoch -ne $script:ownerLastLogEpoch){
       $script:ownerLastLogEpoch=$epoch
       $script:ownerLastLogCursor=0
+      Add-Rc1OwnerDetailedEvent 'Host' ('Поток событий Remote: эпоха '+[string]$epoch)
       Reset-CompactLogSession
       Add-CompletedEvent $(if($script:ownerObservedMode){
        'RC1: восстановлен обезличенный журнал наблюдения Host.'
@@ -394,7 +444,9 @@ function Start-RdcOwnerGui {
       $lineCursor=[long]$Matches[1]
       if($lineCursor -le $script:ownerLastLogCursor){continue}
       if($lineCursor -gt $lastCursor){throw 'RC1_LOG_CURSOR_MISMATCH'}
-      Add-CompletedEvent (Format-Rc1JournalLine $lineCursor $line.Substring($Matches[0].Length))
+      $formatted=Format-Rc1JournalLine $lineCursor $line.Substring($Matches[0].Length)
+      Add-CompletedEvent $formatted
+      Add-Rc1OwnerDetailedEvent 'Remote' $formatted
       $script:ownerLastLogCursor=$lineCursor
       $hasNewLog=$true
      }
@@ -494,6 +546,13 @@ function Start-RdcOwnerGui {
       }
      }
      $script:ownerNextVerb='GET_EVENTS'
+      # Show the exact existing About+Journal dialog after a verified
+      # Host tray request. The sequence blocks repeats from every poll.
+      $trayHelpSeq=[int]$snapshot.trayHelpSequence
+      if($trayHelpSeq -gt 0 -and $trayHelpSeq -ne $script:ownerTrayHelpSeenSequence){
+       $script:ownerTrayHelpSeenSequence=$trayHelpSeq
+       Show-RdcAbout
+      }
     }elseif([string]$reply.type -eq 'EVENT_BATCH'){
      $eventData=$reply.payload
      if([string]$eventData.hostGeneration -cne $script:ownerGeneration){throw 'RC1_STALE_EVENTS'}
@@ -504,7 +563,9 @@ function Start-RdcOwnerGui {
       foreach($ev in $eventData.events){
        if([long]$ev.sequence -le $script:ownerEventCursor){throw 'RC1_DUPLICATE_EVENT'}
        $script:ownerEventCursor=[long]$ev.sequence
-       Add-CompletedEvent (Format-Rc1JournalLine ([long]$ev.sequence) ([string]$ev.text))
+       $formatted=Format-Rc1JournalLine ([long]$ev.sequence) ([string]$ev.text)
+       Add-CompletedEvent $formatted
+       Add-Rc1OwnerDetailedEvent 'Host' $formatted
       }
       $script:ownerNextVerb=if($eventData.moreAvailable){'GET_EVENTS'}else{'GET_SNAPSHOT'}
      }

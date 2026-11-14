@@ -63,7 +63,7 @@ Write-Host 'Compiling shaders...'
 # during release packaging or it would silently overwrite the approved icon.
 $sourceIcon = Join-Path $assetsDir 'RDCRelay.ico'
 $runtimeIcon = Join-Path $sourceDir 'RDCRelay.ico'
-$approvedIconSha = '6421F60D00030F21F958B81118B36ACCF08155CE2A887EEEB329B60044A06FA8'
+$approvedIconSha = '5FF100E2AB72453E081AF5C0157BAF41C8BCA57130C4CC42C8BDE9C612FCF1DC'
 foreach ($item in @($sourceIcon,$runtimeIcon)) {
     if (-not [IO.File]::Exists($item) -or
         (Get-FileHash -Algorithm SHA256 -LiteralPath $item).Hash -cne $approvedIconSha) {
