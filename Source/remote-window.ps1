@@ -5469,9 +5469,10 @@ function Render-CompactLog {
                 $headerLog.SelectionColor = [Drawing.Color]::Gainsboro
             }
             if ($headerDisplay -like '*Remote Connection*') {
+                # DESKTOP = orange (left artwork); COMMANDER = purple (right).
                 [void]$headerLog.StyleStartupBanner(
-                    [Drawing.Color]::FromArgb(123,95,162),
-                    $accentOrange
+                    $accentOrange,
+                    [Drawing.Color]::FromArgb(123,95,162)
                 )
             }
             # RC1: preserve compact banner and box borders but never compress
@@ -7664,11 +7665,11 @@ if ($SelfTest) {
     $bannerProbe.ForeColor = [Drawing.Color]::Gainsboro
     $probeLine = ('A' * 61) + ('B' * 12)
     $bannerProbe.Text = (($probeLine + $nl) * 6) + 'Remote Connection'
-    if (-not $bannerProbe.StyleStartupBanner([Drawing.Color]::FromArgb(123,95,162),[Drawing.Color]::FromArgb(191,118,67))) { throw 'Startup banner styling failed' }
+    if (-not $bannerProbe.StyleStartupBanner([Drawing.Color]::FromArgb(191,118,67),[Drawing.Color]::FromArgb(123,95,162))) { throw 'Startup banner styling failed' }
     $bannerProbe.Select(0,1)
-    if ($bannerProbe.SelectionColor.ToArgb() -ne [Drawing.Color]::FromArgb(123,95,162).ToArgb()) { throw 'Startup banner purple color mismatch' }
+    if ($bannerProbe.SelectionColor.ToArgb() -ne [Drawing.Color]::FromArgb(191,118,67).ToArgb()) { throw 'Startup banner DESKTOP orange color mismatch' }
     $bannerProbe.Select(61,1)
-    if ($bannerProbe.SelectionColor.ToArgb() -ne [Drawing.Color]::FromArgb(191,118,67).ToArgb()) { throw 'Startup banner orange color mismatch' }
+    if ($bannerProbe.SelectionColor.ToArgb() -ne [Drawing.Color]::FromArgb(123,95,162).ToArgb()) { throw 'Startup banner COMMANDER purple color mismatch' }
     $bannerProbe.Dispose()
     if ($hintSep.Text -ne '•') { throw 'Bottom separator missing' }
     if ($runtimeSep.Text -ne '|') { throw 'Runtime separator missing' }
