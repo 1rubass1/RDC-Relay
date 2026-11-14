@@ -1264,6 +1264,7 @@ public class RdcDividerDragPreview : Control {
     private Bitmap logImage;
     private Bitmap upperVScrollImage;
     private Bitmap lowerVScrollImage;
+    private bool lowerRailDecorative;
     private Bitmap hScrollImage;
     private Bitmap cornerImage;
     private int dividerY;
@@ -1426,6 +1427,8 @@ public class RdcDividerDragPreview : Control {
         DisposeVerticalImages();
         upperVScrollImage = RenderControl(upperVScroll);
         lowerVScrollImage = RenderControl(lowerVScroll);
+        RdcOverlayScrollBar lower = lowerVScroll as RdcOverlayScrollBar;
+        lowerRailDecorative = lower != null && lower.DecorativeFullTrack;
         Invalidate();
     }
 
@@ -1462,6 +1465,8 @@ public class RdcDividerDragPreview : Control {
         logImage = CaptureControl(log);
         upperVScrollImage = RenderControl(upperVScroll);
         lowerVScrollImage = RenderControl(lowerVScroll);
+        RdcOverlayScrollBar lower = lowerVScroll as RdcOverlayScrollBar;
+        lowerRailDecorative = lower != null && lower.DecorativeFullTrack;
         hScrollImage = CaptureControl(hScroll);
         cornerImage = CaptureControl(corner);
 
@@ -1696,7 +1701,9 @@ public class RdcDividerDragPreview : Control {
                 new Point(cx+4,Math.Max(0,bottomBarTop-10))
             };
             e.Graphics.FillPolygon(arrows,up);
-            e.Graphics.FillPolygon(arrows,down);
+            // The Owner activity pane has a decorative full-height rail;
+            // do not flash a navigation arrow during the divider morph.
+            if (!lowerRailDecorative) e.Graphics.FillPolygon(arrows,down);
         }
 
         // Fade only the temporary pin around the divider crossing. The fade
@@ -2463,6 +2470,10 @@ public class RdcOverlayScrollBar : Control {
         new System.Diagnostics.Stopwatch();
     public Control Target { get; set; }
     public bool Vertical { get; set; }
+    // Opt-in for the compact lower Owner activity pane ONLY. The orange
+    // capsule fills the entire track, irrespective of live text line count.
+    // Keep the control/bitmap for the divider animation; it is not a scrollbar.
+    public bool DecorativeFullTrack { get; set; }
     public bool IsDragging { get { return dragging; } }
 
     public bool IsAtEnd {
@@ -2548,6 +2559,12 @@ public class RdcOverlayScrollBar : Control {
             track = new Rectangle(arrow,2,Math.Max(1,Width-arrow*2),Math.Max(1,Height-4));
         }
 
+        // A display-only activity rail never gets shorter at specific text
+        // offsets or after automatic compact-journal row recalculation.
+        if (Vertical && DecorativeFullTrack) {
+            thumb = track;
+            return;
+        }
         int trackLen = Vertical ? track.Height : track.Width;
         int thumbLen;
         int travel;
@@ -2618,7 +2635,9 @@ public class RdcOverlayScrollBar : Control {
         using (SolidBrush hb = new SolidBrush(thumbColor))
             e.Graphics.FillPath(hb,hp);
 
-        using (SolidBrush ab = new SolidBrush(Color.FromArgb(112,115,120))) {
+        // Direction arrows imply scroll commands. Only real bars have them;
+        // the Owner activity rail is decorative, including during hover.
+        if (!DecorativeFullTrack) using (SolidBrush ab = new SolidBrush(Color.FromArgb(112,115,120))) {
             if (Vertical) {
                 Point[] up = { new Point(Width/2,5), new Point(Width/2-4,10), new Point(Width/2+4,10) };
                 Point[] dn = { new Point(Width/2,Height-5), new Point(Width/2-4,Height-10), new Point(Width/2+4,Height-10) };
@@ -2697,6 +2716,9 @@ public class RdcOverlayScrollBar : Control {
     }
 
     protected override void OnMouseDown(MouseEventArgs e) {
+        // No click/page/thumb navigation in the compact activity indicator.
+        // IsAtEnd and the RichEdit keep their original smart-follow contract.
+        if (DecorativeFullTrack) { base.OnMouseDown(e); return; }
         Rectangle dec,inc,track,thumb; Geometry(out dec,out inc,out track,out thumb);
         Point p=e.Location;
         if (dec.Contains(p)) SendScroll(SB_LINEUP,0);
@@ -2716,6 +2738,7 @@ public class RdcOverlayScrollBar : Control {
     }
 
     protected override void OnMouseMove(MouseEventArgs e) {
+        if (DecorativeFullTrack) { base.OnMouseMove(e); return; }
         Rectangle dec,inc,track,thumb; Geometry(out dec,out inc,out track,out thumb);
         hoverThumb=thumb.Contains(e.Location);
         if (dragging) {
@@ -2755,6 +2778,7 @@ public class RdcOverlayScrollBar : Control {
     }
 
     protected override void OnMouseUp(MouseEventArgs e) {
+        if (DecorativeFullTrack) { base.OnMouseUp(e); return; }
         if (dragging) {
             int finalPos = dragLogicalPos;
             dragging=false;
@@ -4553,6 +4577,9 @@ $log.Add_LinkClicked({ try { Start-Process $_.LinkText } catch {} })
 $vScroll = New-Object RdcOverlayScrollBar
 $vScroll.Target = $log
 $vScroll.Vertical = $true
+# Compact lower panel: full-length orange status rail, not an interactive
+# navigation scrollbar. The object remains for all existing preview effects.
+if($OwnerGui){$vScroll.DecorativeFullTrack = $true}
 $vScroll.Dock = 'None'
 $vScroll.Margin = New-Object Windows.Forms.Padding(0)
 
