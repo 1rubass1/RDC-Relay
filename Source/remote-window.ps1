@@ -1264,6 +1264,7 @@ public class RdcDividerDragPreview : Control {
     private Bitmap logImage;
     private Bitmap upperVScrollImage;
     private Bitmap lowerVScrollImage;
+    private bool lowerRailDecorative;
     private Bitmap hScrollImage;
     private Bitmap cornerImage;
     private int dividerY;
@@ -1426,6 +1427,8 @@ public class RdcDividerDragPreview : Control {
         DisposeVerticalImages();
         upperVScrollImage = RenderControl(upperVScroll);
         lowerVScrollImage = RenderControl(lowerVScroll);
+        RdcOverlayScrollBar lower = lowerVScroll as RdcOverlayScrollBar;
+        lowerRailDecorative = lower != null && lower.DecorativeFullTrack;
         Invalidate();
     }
 
@@ -1462,6 +1465,8 @@ public class RdcDividerDragPreview : Control {
         logImage = CaptureControl(log);
         upperVScrollImage = RenderControl(upperVScroll);
         lowerVScrollImage = RenderControl(lowerVScroll);
+        RdcOverlayScrollBar lower = lowerVScroll as RdcOverlayScrollBar;
+        lowerRailDecorative = lower != null && lower.DecorativeFullTrack;
         hScrollImage = CaptureControl(hScroll);
         cornerImage = CaptureControl(corner);
 
@@ -1680,10 +1685,15 @@ public class RdcDividerDragPreview : Control {
             }
         }
 
-        // Match the real RdcOverlayScrollBar arrow geometry exactly so the
-        // switch into/out of drag preview does not visibly change scale.
+        // The real upper scrollbar retains normal gray navigation arrows;
+        // the lower inactive rail uses its own darker track-gray arrows.
+        // Keep both when fading the divider so no bright arrow flashes.
         using (SolidBrush arrows = new SolidBrush(
-            Color.FromArgb(rulerAlpha,112,115,120))) {
+            Color.FromArgb(rulerAlpha,112,115,120)))
+        using (SolidBrush lowerArrows = new SolidBrush(
+            Color.FromArgb(rulerAlpha,lowerRailDecorative
+                ? RdcOverlayScrollBar.TrackBackground
+                : Color.FromArgb(112,115,120)))) {
             int cx = contentWidth + scrollSize/2;
             Point[] up = {
                 new Point(cx,5),
@@ -1696,9 +1706,8 @@ public class RdcDividerDragPreview : Control {
                 new Point(cx+4,Math.Max(0,bottomBarTop-10))
             };
             e.Graphics.FillPolygon(arrows,up);
-            // Both understated gray arrows remain visible during the divider
-            // animation, including above the non-interactive lower rail.
-            e.Graphics.FillPolygon(arrows,down);
+            // Its glyph is decorative; match the lower track even here.
+            e.Graphics.FillPolygon(lowerArrows,down);
         }
 
         // Fade only the temporary pin around the divider crossing. The fade
@@ -2432,7 +2441,7 @@ public sealed class RdcJournalScrollGrip : Control {
 public class RdcOverlayScrollBar : Control {
     // Shared normal scrollbar track color. Reused for the Owner-only
     // decorative rail so the experiment matches the track pixel-for-pixel.
-    private static readonly Color TrackBackground = Color.FromArgb(50,52,56);
+    public static readonly Color TrackBackground = Color.FromArgb(50,52,56);
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT {
         public int X;
@@ -2636,9 +2645,11 @@ public class RdcOverlayScrollBar : Control {
         using (SolidBrush hb = new SolidBrush(thumbColor))
             e.Graphics.FillPath(hb,hp);
 
-        // Keep the same restrained gray arrow glyphs as the real scrollbar.
-        // DecorativeFullTrack remains non-interactive despite this artwork.
-        using (SolidBrush ab = new SolidBrush(Color.FromArgb(112,115,120))) {
+        // Darker arrows match the inert lower rail; live scrollbars keep
+        // their usual brighter gray navigation glyphs and behavior.
+        Color arrowColor = DecorativeFullTrack
+            ? TrackBackground : Color.FromArgb(112,115,120);
+        using (SolidBrush ab = new SolidBrush(arrowColor)) {
             if (Vertical) {
                 Point[] up = { new Point(Width/2,5), new Point(Width/2-4,10), new Point(Width/2+4,10) };
                 Point[] dn = { new Point(Width/2,Height-5), new Point(Width/2-4,Height-10), new Point(Width/2+4,Height-10) };

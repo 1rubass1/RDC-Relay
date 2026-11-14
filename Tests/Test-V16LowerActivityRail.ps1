@@ -35,8 +35,9 @@ function Paint-Rail([Windows.Forms.Control]$control){
 Check ($source.Contains('if($OwnerGui){$vScroll.DecorativeFullTrack = $true}') -and
  -not $source.Contains('$headerVScroll.DecorativeFullTrack = $true') -and
  -not $source.Contains('$journalVScroll.DecorativeFullTrack = $true')) 'only Owner lower main rail opts into decorative full-track mode'
-Check ($cs.Contains('e.Graphics.FillPolygon(arrows,down);') -and
- -not $cs.Contains('lowerRailDecorative')) 'divider preview keeps both gray arrow glyphs during the fade animation'
+Check ($cs.Contains('e.Graphics.FillPolygon(lowerArrows,down);') -and
+ $cs.Contains('lowerRailDecorative = lower != null && lower.DecorativeFullTrack;') -and
+ $cs.Contains('RdcOverlayScrollBar.TrackBackground')) 'divider preview keeps lower dark-gray arrow and real upper gray arrow through fade'
 $owner=New-Object Windows.Forms.Form
 $owner.ShowInTaskbar=$false
 $owner.StartPosition=[Windows.Forms.FormStartPosition]::Manual
@@ -102,11 +103,11 @@ try{
  try{
   $bg=[Drawing.Color]::FromArgb(18,20,23).ToArgb()
   $arrowGray=[Drawing.Color]::FromArgb(112,115,120).ToArgb()
- Check ($visual.GetPixel(8,7).ToArgb() -eq $arrowGray -and
-   $visual.GetPixel(8,173).ToArgb() -eq $arrowGray -and
-   $standard.GetPixel(8,7).ToArgb() -eq $arrowGray -and
-   $standard.GetPixel(8,173).ToArgb() -eq $arrowGray) 'gray top and bottom arrows match native scrollbar, despite non-interactive lower status rail'
   $trackGray=[Drawing.Color]::FromArgb(50,52,56).ToArgb()
+  Check ($visual.GetPixel(8,7).ToArgb() -eq $trackGray -and
+   $visual.GetPixel(8,173).ToArgb() -eq $trackGray -and
+   $standard.GetPixel(8,7).ToArgb() -eq $arrowGray -and
+   $standard.GetPixel(8,173).ToArgb() -eq $arrowGray) 'inactive lower arrows exactly match its dark gray track, while genuine scrollbar arrows remain brighter'
   $regularOrange=[Drawing.Color]::FromArgb(191,118,67).ToArgb()
   Check ($visual.GetPixel(8,35).ToArgb() -eq $trackGray -and
    $visual.GetPixel(8,89).ToArgb() -eq $trackGray -and
@@ -115,23 +116,24 @@ try{
    $standard.GetPixel(8,89).ToArgb() -eq $trackGray) 'ordinary upper scrollbar keeps orange thumb and identical gray background track'
  }finally{$visual.Dispose();$standard.Dispose()}
  $preview.CaptureFinalScrollbars($upper,$lower)
- Check ($lower.DecorativeFullTrack -and -not $lower.IsDragging -and
-  $upper.GetType() -eq $lower.GetType()) 'lower gray rail remains status-only while sharing native scrollbar paint and preview capture'
+ $field=[RdcDividerDragPreview].GetField('lowerRailDecorative',[Reflection.BindingFlags]'Instance,NonPublic')
+ Check ([bool]$field.GetValue($preview) -and $lower.DecorativeFullTrack -and
+  -not $lower.IsDragging -and $upper.GetType() -eq $lower.GetType()) 'preview receives the lower-only decorative state from live scrollbar capture'
  $preview.UpdateDivider(100)
  $painted=Paint-Rail $preview
  try{
   $bottomY=$preview.Height-17
   $x=$preview.Width-9
-  Check ($painted.GetPixel($x,$bottomY-7).ToArgb() -ne [Drawing.Color]::FromArgb(18,20,23).ToArgb() -and
-   $painted.GetPixel($x,7).ToArgb() -ne [Drawing.Color]::FromArgb(18,20,23).ToArgb()) 'divider animation shows both gray arrows while full-length rail remains fixed'
+  Check ($painted.GetPixel($x,$bottomY-7).ToArgb() -eq $trackGray -and
+   $painted.GetPixel($x,7).ToArgb() -eq $arrowGray) 'during divider transition bottom arrow stays track-gray and upper arrow stays native lighter gray'
  }finally{$painted.Dispose()}
  $lower.DecorativeFullTrack=$false
  $preview.CaptureFinalScrollbars($upper,$lower)
- Check (-not $lower.DecorativeFullTrack -and
-  -not $standard.IsDisposed) 'legacy and non-decorative scrollbar previews still work independently'
+ Check (-not [bool]$field.GetValue($preview) -and
+  -not $lower.DecorativeFullTrack -and -not $standard.IsDisposed) 'non-decorative preview correctly reverts to normal arrow palette'
  $normal=Paint-Rail $preview
  try{
-  Check ($normal.GetPixel($preview.Width-9,$preview.Height-17-7).ToArgb() -ne [Drawing.Color]::FromArgb(18,20,23).ToArgb()) 'non-owner/native drag preview retains lower directional arrow'
+  Check ($normal.GetPixel($preview.Width-9,$preview.Height-17-7).ToArgb() -eq $arrowGray) 'legacy/non-owner drag preview retains the original lighter gray lower arrow'
  }finally{$normal.Dispose()}
 }finally{
  $preview.Dispose()
