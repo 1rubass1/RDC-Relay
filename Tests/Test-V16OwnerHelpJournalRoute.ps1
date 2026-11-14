@@ -406,8 +406,9 @@ try{
  $menu=$journalBody.ContextMenuStrip
  $menu.Show($journalBody,[Drawing.Point]::new(8,8))
  [Windows.Forms.Application]::DoEvents()
+ # SourceControl can become null when an off-screen menu loses popup focus.
+ # Production uses the stable Tag reference, never transient SourceControl.
  Check ($menu.Items['rc1-journal-copy'].Enabled -and
-  $menu.SourceControl -eq $journalBody -and
   [object]::ReferenceEquals($menu.Tag,$journalBody) -and
   $raw.Contains('$editor.Copy()')) 'right-click journal menu binds Copy to the selected RichEdit text without reading the system clipboard'
  $menu.Items['rc1-journal-select-all'].PerformClick()

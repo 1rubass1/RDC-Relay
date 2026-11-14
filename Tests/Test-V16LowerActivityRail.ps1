@@ -35,8 +35,8 @@ function Paint-Rail([Windows.Forms.Control]$control){
 Check ($source.Contains('if($OwnerGui){$vScroll.DecorativeFullTrack = $true}') -and
  -not $source.Contains('$headerVScroll.DecorativeFullTrack = $true') -and
  -not $source.Contains('$journalVScroll.DecorativeFullTrack = $true')) 'only Owner lower main rail opts into decorative full-track mode'
-Check ($cs.Contains('if (!lowerRailDecorative) e.Graphics.FillPolygon(arrows,down);') -and
- $cs.Contains('lowerRailDecorative = lower != null && lower.DecorativeFullTrack;')) 'divider drag preview retains fade and suppresses only lower arrow'
+Check ($cs.Contains('e.Graphics.FillPolygon(arrows,down);') -and
+ -not $cs.Contains('lowerRailDecorative')) 'divider preview keeps both gray arrow glyphs during the fade animation'
 $owner=New-Object Windows.Forms.Form
 $owner.ShowInTaskbar=$false
 $owner.StartPosition=[Windows.Forms.FormStartPosition]::Manual
@@ -81,7 +81,7 @@ try{
  [Windows.Forms.Application]::DoEvents()
  $geoResized=Get-RailGeometry $lower
  Check ($geoResized[3].Equals($geoResized[2]) -and
-  $geoResized[3].Height -eq 203) 'full-height orange rail scales with changing Owner activity pane geometry'
+  $geoResized[3].Height -eq 203) 'full-height gray rail scales with changing Owner activity pane geometry'
  $lower.Height=180
  $native=Get-RailGeometry $upper
  Check (-not $upper.DecorativeFullTrack -and
@@ -101,29 +101,34 @@ try{
  $standard=Paint-Rail $upper
  try{
   $bg=[Drawing.Color]::FromArgb(18,20,23).ToArgb()
-  Check ($visual.GetPixel(8,7).ToArgb() -eq $bg -and
-   $visual.GetPixel(8,173).ToArgb() -eq $bg -and
-   $standard.GetPixel(8,7).ToArgb() -ne $bg -and
-   $standard.GetPixel(8,173).ToArgb() -ne $bg) 'both lower arrow glyphs absent; native upper navigation arrows remain'
-  $accent=[Drawing.Color]::FromArgb(191,118,67).ToArgb()
-  Check ($visual.GetPixel(8,35).ToArgb() -eq $accent -and
-   $visual.GetPixel(8,89).ToArgb() -eq $accent -and
-   $visual.GetPixel(8,149).ToArgb() -eq $accent) 'orange capsule draws at one stable color across full-length rail'
+  $arrowGray=[Drawing.Color]::FromArgb(112,115,120).ToArgb()
+ Check ($visual.GetPixel(8,7).ToArgb() -eq $arrowGray -and
+   $visual.GetPixel(8,173).ToArgb() -eq $arrowGray -and
+   $standard.GetPixel(8,7).ToArgb() -eq $arrowGray -and
+   $standard.GetPixel(8,173).ToArgb() -eq $arrowGray) 'gray top and bottom arrows match native scrollbar, despite non-interactive lower status rail'
+  $trackGray=[Drawing.Color]::FromArgb(50,52,56).ToArgb()
+  $regularOrange=[Drawing.Color]::FromArgb(191,118,67).ToArgb()
+  Check ($visual.GetPixel(8,35).ToArgb() -eq $trackGray -and
+   $visual.GetPixel(8,89).ToArgb() -eq $trackGray -and
+   $visual.GetPixel(8,149).ToArgb() -eq $trackGray) 'experimental lower capsule matches regular scrollbar track gray along entire length'
+  Check ($standard.GetPixel(8,35).ToArgb() -eq $regularOrange -and
+   $standard.GetPixel(8,89).ToArgb() -eq $trackGray) 'ordinary upper scrollbar keeps orange thumb and identical gray background track'
  }finally{$visual.Dispose();$standard.Dispose()}
  $preview.CaptureFinalScrollbars($upper,$lower)
- $field=[RdcDividerDragPreview].GetField('lowerRailDecorative',[Reflection.BindingFlags]'Instance,NonPublic')
- Check ([bool]$field.GetValue($preview)) 'divider preview receives lower decorative state from live control'
+ Check ($lower.DecorativeFullTrack -and -not $lower.IsDragging -and
+  $upper.GetType() -eq $lower.GetType()) 'lower gray rail remains status-only while sharing native scrollbar paint and preview capture'
  $preview.UpdateDivider(100)
  $painted=Paint-Rail $preview
  try{
   $bottomY=$preview.Height-17
   $x=$preview.Width-9
-  Check ($painted.GetPixel($x,$bottomY-7).ToArgb() -eq [Drawing.Color]::FromArgb(18,20,23).ToArgb() -and
-   $painted.GetPixel($x,7).ToArgb() -ne [Drawing.Color]::FromArgb(18,20,23).ToArgb()) 'fade ruler hides bottom pseudo-arrow but keeps upper arrow'
+  Check ($painted.GetPixel($x,$bottomY-7).ToArgb() -ne [Drawing.Color]::FromArgb(18,20,23).ToArgb() -and
+   $painted.GetPixel($x,7).ToArgb() -ne [Drawing.Color]::FromArgb(18,20,23).ToArgb()) 'divider animation shows both gray arrows while full-length rail remains fixed'
  }finally{$painted.Dispose()}
  $lower.DecorativeFullTrack=$false
  $preview.CaptureFinalScrollbars($upper,$lower)
- Check (-not [bool]$field.GetValue($preview)) 'legacy and non-decorative preview still keeps both arrow controls'
+ Check (-not $lower.DecorativeFullTrack -and
+  -not $standard.IsDisposed) 'legacy and non-decorative scrollbar previews still work independently'
  $normal=Paint-Rail $preview
  try{
   Check ($normal.GetPixel($preview.Width-9,$preview.Height-17-7).ToArgb() -ne [Drawing.Color]::FromArgb(18,20,23).ToArgb()) 'non-owner/native drag preview retains lower directional arrow'

@@ -1264,7 +1264,6 @@ public class RdcDividerDragPreview : Control {
     private Bitmap logImage;
     private Bitmap upperVScrollImage;
     private Bitmap lowerVScrollImage;
-    private bool lowerRailDecorative;
     private Bitmap hScrollImage;
     private Bitmap cornerImage;
     private int dividerY;
@@ -1427,8 +1426,6 @@ public class RdcDividerDragPreview : Control {
         DisposeVerticalImages();
         upperVScrollImage = RenderControl(upperVScroll);
         lowerVScrollImage = RenderControl(lowerVScroll);
-        RdcOverlayScrollBar lower = lowerVScroll as RdcOverlayScrollBar;
-        lowerRailDecorative = lower != null && lower.DecorativeFullTrack;
         Invalidate();
     }
 
@@ -1465,8 +1462,6 @@ public class RdcDividerDragPreview : Control {
         logImage = CaptureControl(log);
         upperVScrollImage = RenderControl(upperVScroll);
         lowerVScrollImage = RenderControl(lowerVScroll);
-        RdcOverlayScrollBar lower = lowerVScroll as RdcOverlayScrollBar;
-        lowerRailDecorative = lower != null && lower.DecorativeFullTrack;
         hScrollImage = CaptureControl(hScroll);
         cornerImage = CaptureControl(corner);
 
@@ -1701,9 +1696,9 @@ public class RdcDividerDragPreview : Control {
                 new Point(cx+4,Math.Max(0,bottomBarTop-10))
             };
             e.Graphics.FillPolygon(arrows,up);
-            // The Owner activity pane has a decorative full-height rail;
-            // do not flash a navigation arrow during the divider morph.
-            if (!lowerRailDecorative) e.Graphics.FillPolygon(arrows,down);
+            // Both understated gray arrows remain visible during the divider
+            // animation, including above the non-interactive lower rail.
+            e.Graphics.FillPolygon(arrows,down);
         }
 
         // Fade only the temporary pin around the divider crossing. The fade
@@ -2435,6 +2430,9 @@ public sealed class RdcJournalScrollGrip : Control {
 }
 
 public class RdcOverlayScrollBar : Control {
+    // Shared normal scrollbar track color. Reused for the Owner-only
+    // decorative rail so the experiment matches the track pixel-for-pixel.
+    private static readonly Color TrackBackground = Color.FromArgb(50,52,56);
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT {
         public int X;
@@ -2623,10 +2621,13 @@ public class RdcOverlayScrollBar : Control {
         Geometry(out dec,out inc,out track,out thumb);
 
         using (GraphicsPath tp = Rounded(track, Math.Min(6, Math.Min(track.Width,track.Height)/2)))
-        using (SolidBrush tb = new SolidBrush(Color.FromArgb(50,52,56)))
+        using (SolidBrush tb = new SolidBrush(TrackBackground))
             e.Graphics.FillPath(tb,tp);
 
-        Color thumbColor = dragging
+        // In the compact Owner pane the full-height pseudo-thumb should
+        // look like the background track of a real scrollbar. The actual
+        // scrollbars keep their normal orange normal/hover/drag colors.
+        Color thumbColor = DecorativeFullTrack ? TrackBackground : dragging
             ? Color.FromArgb(166,98,55)
             : hoverThumb
                 ? Color.FromArgb(207,132,75)
@@ -2635,9 +2636,9 @@ public class RdcOverlayScrollBar : Control {
         using (SolidBrush hb = new SolidBrush(thumbColor))
             e.Graphics.FillPath(hb,hp);
 
-        // Direction arrows imply scroll commands. Only real bars have them;
-        // the Owner activity rail is decorative, including during hover.
-        if (!DecorativeFullTrack) using (SolidBrush ab = new SolidBrush(Color.FromArgb(112,115,120))) {
+        // Keep the same restrained gray arrow glyphs as the real scrollbar.
+        // DecorativeFullTrack remains non-interactive despite this artwork.
+        using (SolidBrush ab = new SolidBrush(Color.FromArgb(112,115,120))) {
             if (Vertical) {
                 Point[] up = { new Point(Width/2,5), new Point(Width/2-4,10), new Point(Width/2+4,10) };
                 Point[] dn = { new Point(Width/2,Height-5), new Point(Width/2-4,Height-10), new Point(Width/2+4,Height-10) };
