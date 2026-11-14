@@ -25,6 +25,8 @@ function Check([bool]$ok,[string]$name){
  else{$script:fail++;Write-Output ('FAIL '+$name)}
 }
 Check ($errors.Count -eq 0) 'production GUI source parses'
+$legacyTextBox=New-Object RdcLogBox
+try{Check (-not $legacyTextBox.JournalNativeInteraction -and $legacyTextBox.HideSelection) 'main text panes preserve their legacy non-document interaction defaults'}finally{$legacyTextBox.Dispose()}
 Check ($raw.Contains('$helpButton = New-Object Windows.Forms.Button') -and
  $raw.Contains('$helpButton.Image=([Drawing.SystemIcons]::Question).ToBitmap()') -and
  $raw.Contains('$helpButton.AccessibleName='+ "'Справка / О программе'") -and
@@ -144,13 +146,16 @@ try{
   $body.Text -ceq $snapshot -and $body.ReadOnly -and
   -not $body.WordWrap -and -not $body.DetectUrls -and
   $body.ScrollBars -eq [Windows.Forms.RichTextBoxScrollBars]::None -and
-  $body.BackColor.ToArgb() -eq [Drawing.Color]::FromArgb(18,20,23).ToArgb()) 'journal uses exact production RichEdit on separate dark text surface'
+  $body.BackColor.ToArgb() -eq [Drawing.Color]::FromArgb(18,20,23).ToArgb() -and
+  $body.JournalNativeInteraction -and $body.ShortcutsEnabled -and
+  -not $body.HideSelection -and $body.TabStop) 'journal RichEdit is read-only but supports native selection, copy and wheel interactions'
  Check ($vert -is [RdcOverlayScrollBar] -and $vert.Vertical -and
   $horizontal -is [RdcOverlayScrollBar] -and -not $horizontal.Vertical -and
   [object]::ReferenceEquals($vert.Target,$body) -and
   [object]::ReferenceEquals($horizontal.Target,$body) -and
   $corner -is [RdcJournalScrollGrip] -and
-  $corner.Cursor -eq [Windows.Forms.Cursors]::Default) 'custom sliders and visible passive journal corner reuse production art'
+  $corner.Cursor -eq [Windows.Forms.Cursors]::SizeNWSE -and
+  -not $corner.IsResizing) 'custom sliders and functional diagonal whole-window grip reuse production artwork'
  Check ($layout.Controls.Find('rc1-journal-footer-separator',$true).Count -eq 0 -and
   $layout.RowStyles[3].Height -eq 62 -and
   $footer.BackColor.ToArgb() -eq $journal.BackColor.ToArgb() -and
@@ -159,6 +164,14 @@ try{
   $save -is [RdcModalButton] -and $close -is [RdcModalButton] -and
   $journal.AcceptButton -eq $close -and
   $journal.CancelButton -eq $close -and $journal.Tag -ceq $snapshot) 'independent footer holds explicit TXT export and keyboard Close, not an auto-export'
+ Check ($raw.Contains('$dialog.MinimumSize=[Drawing.Size]::new(520,280)') -and
+  $journal.MinimumSize.Width -ge 520 -and
+  $journal.MinimumSize.Height -ge 280 -and
+  $journal.FormBorderStyle -eq [Windows.Forms.FormBorderStyle]::Sizable) 'journal preserves original 520x280 minimum size while supporting free resize above it'
+ Check ($body.ContextMenuStrip -ne $null -and
+  $body.ContextMenuStrip.Items.Count -eq 2 -and
+  $body.ContextMenuStrip.Items['rc1-journal-copy'].Text -ceq 'Копировать' -and
+  $body.ContextMenuStrip.Items['rc1-journal-select-all'].Text -ceq 'Выделить всё') 'journal exposes explicit copy and select-all context actions'
  $journal.StartPosition=[Windows.Forms.FormStartPosition]::Manual
  $journal.Location=[Drawing.Point]::new(-10000,-10000)
  $journal.Show()
@@ -182,6 +195,10 @@ try{
  Check ($vert.Left -eq $body.Width -and $vert.Height -eq $body.Height -and
   $horizontal.Top -eq $body.Height -and $body.Width -ge 450 -and
   $body.Height -gt 150) 'custom scrollbars reflow correctly when modal is resized near minimum'
+  $journal.Size=[Drawing.Size]::new(150,140)
+  [Windows.Forms.Application]::DoEvents()
+  Check ($journal.Width -ge 520 -and $journal.Height -ge 280 -and
+   $footer.Top -eq $textHost.Bottom -and $corner.Right -eq $textHost.Width) 'real WinForms journal clamps resizing to original 520x280 and preserves footer/grip layout'
 }finally{$journal.Close();$journal.Dispose()}
 # Regression for a user-observed exception: PowerShell's automatic $Host
 # variable is read-only, including lowercase $host. Perform the real native
@@ -368,6 +385,35 @@ try{
  $bottom=[int]$journalBody.GetViewPosition().Y
  Check ($top -eq 0 -and $bottom -gt $top -and $bottom -gt 0 -and
   $vert.Target -eq $journalBody) 'production scrollbar actually moves the lengthy journal vertically, not just decorates it'
+ # Send native WM_MOUSEWHEEL to the REAL off-screen journal RichEdit.
+ # Two half-detents must accumulate to one full downward notch.
+ $journalBody.Select(0,0)
+ $journalBody.SetViewPosition(0,0)
+ [Windows.Forms.Application]::DoEvents()
+ $wheelStart=[int]$journalBody.GetViewPosition().Y
+ $halfDown=[IntPtr]::new(([long]65476 -shl 16))
+ [void][RdcHelpButtonMouseTest]::SendMessage($journalBody.Handle,[uint32]0x020A,$halfDown,[IntPtr]::Zero)
+ $halfY=[int]$journalBody.GetViewPosition().Y
+ [void][RdcHelpButtonMouseTest]::SendMessage($journalBody.Handle,[uint32]0x020A,$halfDown,[IntPtr]::Zero)
+ [Windows.Forms.Application]::DoEvents()
+ $wheelEnd=[int]$journalBody.GetViewPosition().Y
+ Check ($wheelStart -eq 0 -and $halfY -eq $wheelStart -and $wheelEnd -gt 0) 'physical mouse wheel scrolls journal, including accumulated high-resolution half-detents'
+ $journalBody.Select(0,24)
+ $expected=$journalBody.SelectedText
+ Check ($expected.Length -eq 24 -and $journalBody.ReadOnly -and
+  $journalBody.ShortcutsEnabled -and -not $journalBody.HideSelection) 'journal allows real selection and Ctrl+C while remaining non-editable'
+ $visibleBefore=$journalBody.Text # RichEdit normalizes CRLF on HWND creation
+ $menu=$journalBody.ContextMenuStrip
+ $menu.Show($journalBody,[Drawing.Point]::new(8,8))
+ [Windows.Forms.Application]::DoEvents()
+ Check ($menu.Items['rc1-journal-copy'].Enabled -and
+  $menu.SourceControl -eq $journalBody -and
+  [object]::ReferenceEquals($menu.Tag,$journalBody) -and
+  $raw.Contains('$editor.Copy()')) 'right-click journal menu binds Copy to the selected RichEdit text without reading the system clipboard'
+ $menu.Items['rc1-journal-select-all'].PerformClick()
+ Check ($journalBody.SelectionLength -eq $journalBody.TextLength -and
+  $journalBody.Text -ceq $visibleBefore) 'context-menu Select All selects full read-only report without modifying it'
+ $menu.Hide()
  Check ($journalBody.GetHorizontalMaximum() -gt 0 -and
   $horz.Target -eq $journalBody -and $horz.Width -gt 300) 'long unwrapped lines have real horizontal scrolling range'
 }finally{$fullDialog.Close();$fullDialog.Dispose()}

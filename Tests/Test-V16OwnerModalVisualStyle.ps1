@@ -1,4 +1,4 @@
-# Real production owner-modal button / scroll grip pixel parity test.
+﻿# Real production owner-modal button / scroll grip pixel parity test.
 # Uses isolated off-screen WinForms controls. No Remote, Host, browser or installer.
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
@@ -100,9 +100,43 @@ try{
   Check ($b.GetPixel(0,0).ToArgb() -eq [Drawing.Color]::FromArgb(18,20,23).ToArgb() -and
    $b.GetPixel(15,6).ToArgb() -ne [Drawing.Color]::FromArgb(18,20,23).ToArgb()) 'journal corner has visible gold diagonal instead of blank panel'
  }finally{$a.Dispose();$b.Dispose()}
- Check ($journalGrip.Cursor -eq [Windows.Forms.Cursors]::Default -and
-  -not $journalGrip.TabStop -and -not ($journalGrip -is [RdcScrollCorner])) 'passive journal junction never impersonates the main activity splitter drag'
+ Check ($journalGrip.Cursor -eq [Windows.Forms.Cursors]::SizeNWSE -and
+  -not $journalGrip.TabStop -and -not $journalGrip.IsResizing -and
+  -not ($journalGrip -is [RdcScrollCorner])) 'journal corner is a diagonal whole-Form resize grip, not the main pane splitter'
 }finally{$mainGrip.Dispose();$journalGrip.Dispose()}
+# Invoke the actual production MouseDown/resize/MouseUp handling on a
+# disposable off-screen Form. Do not move the user's physical pointer.
+$resizeDialog=New-Object Windows.Forms.Form
+$resizeDialog.Name='test-journal-resize-form'
+$resizeDialog.StartPosition=[Windows.Forms.FormStartPosition]::Manual
+$resizeDialog.Location=[Drawing.Point]::new(-10000,-10000)
+$resizeDialog.ShowInTaskbar=$false
+$resizeDialog.Size=[Drawing.Size]::new(420,300)
+$resizeGrip=New-Object RdcJournalScrollGrip
+$resizeGrip.Size=[Drawing.Size]::new(17,17)
+$resizeGrip.Location=[Drawing.Point]::new(360,230)
+[void]$resizeDialog.Controls.Add($resizeGrip)
+try{
+ $resizeDialog.Show()
+ [Windows.Forms.Application]::DoEvents()
+ $flags=[Reflection.BindingFlags]'Instance,NonPublic'
+ $down=[RdcJournalScrollGrip].GetMethod('OnMouseDown',$flags)
+ $move=[RdcJournalScrollGrip].GetMethod('ResizeFromScreenPoint',$flags)
+ $up=[RdcJournalScrollGrip].GetMethod('OnMouseUp',$flags)
+ $startField=[RdcJournalScrollGrip].GetField('startScreen',$flags)
+ $sizeBefore=$resizeDialog.Size
+ $down.Invoke($resizeGrip,[object[]]@(
+  [Windows.Forms.MouseEventArgs]::new([Windows.Forms.MouseButtons]::Left,1,8,8,0)))|Out-Null
+ $origin=[Drawing.Point]$startField.GetValue($resizeGrip)
+ $move.Invoke($resizeGrip,[object[]]@([Drawing.Point]::new($origin.X+45,$origin.Y+33)))|Out-Null
+ [Windows.Forms.Application]::DoEvents()
+ Check ($resizeGrip.IsResizing -and
+  $resizeDialog.Width -eq $sizeBefore.Width+45 -and
+  $resizeDialog.Height -eq $sizeBefore.Height+33) 'dragging journal junction grows entire Form in both axes'
+ $up.Invoke($resizeGrip,[object[]]@(
+  [Windows.Forms.MouseEventArgs]::new([Windows.Forms.MouseButtons]::Left,1,8,8,0)))|Out-Null
+ Check (-not $resizeGrip.IsResizing -and -not $resizeGrip.Capture) 'releasing journal junction ends capture and resize without affecting text scrollbars'
+}finally{$resizeDialog.Close();$resizeDialog.Dispose()}
 $dialog=New-Object Windows.Forms.Form
 $dialog.Name='test-owner-button-dialog'
 $dialog.ShowInTaskbar=$false

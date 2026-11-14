@@ -1902,6 +1902,11 @@ public class RdcLogBox : RichTextBox {
     private const uint EM_SETSCROLLPOS = 0x04DE;
 
     public event EventHandler ScrollActivity;
+    // The read-only Journal is an interactive document, unlike the two
+    // telemetry panes: native selection/copy and wheel navigation are allowed.
+    public bool JournalNativeInteraction { get; set; }
+    private int journalWheelRemainder;
+    private const int EM_LINESCROLL = 0x00B6;
     private bool preserveViewAfterFocusClick;
     private int preservedFocusX;
     private int preservedFocusY;
@@ -2145,8 +2150,29 @@ public class RdcLogBox : RichTextBox {
     }
 
     protected override void WndProc(ref Message m) {
+        // RichEdit with native scrollbars hidden is controlled by our overlay
+        // tracks. Give the Journal its own deterministic physical wheel route.
+        // Do not alter the main telemetry-pane focus and wheel contract.
+        if (JournalNativeInteraction && m.Msg == WM_MOUSEWHEEL &&
+            IsHandleCreated && ((m.WParam.ToInt64() & MK_CONTROL) == 0)) {
+            int delta = unchecked((short)((m.WParam.ToInt64() >> 16) & 0xFFFF));
+            journalWheelRemainder += delta;
+            int notches = journalWheelRemainder / 120;
+            journalWheelRemainder %= 120;
+            if (notches != 0) {
+                int lines = SystemInformation.MouseWheelScrollLines;
+                if (lines == -1) lines = Math.Max(1,ClientSize.Height / Math.Max(1,Font.Height) - 1);
+                lines = Math.Max(0,Math.Min(120,lines));
+                if (lines > 0) {
+                    SendMessage(Handle,EM_LINESCROLL,IntPtr.Zero,new IntPtr(-notches*lines));
+                    if (ScrollActivity != null) ScrollActivity(this,EventArgs.Empty);
+                }
+            }
+            m.Result=IntPtr.Zero;
+            return;
+        }
         Point focusView = new Point(-1,-1);
-        if (m.Msg == WM_SETFOCUS && IsHandleCreated) {
+        if (!JournalNativeInteraction && m.Msg == WM_SETFOCUS && IsHandleCreated) {
             try {
                 focusView = GetViewPosition();
                 preservedFocusX = focusView.X;
@@ -2165,7 +2191,7 @@ public class RdcLogBox : RichTextBox {
             long raw = m.WParam.ToInt64();
             int keyState = (int)(raw & 0xFFFF);
 
-            if ((keyState & MK_CONTROL) != 0) {
+            if (!JournalNativeInteraction && (keyState & MK_CONTROL) != 0) {
                 raw &= ~((long)MK_CONTROL);
                 m.WParam = new IntPtr(raw);
             }
@@ -2194,7 +2220,7 @@ public class RdcLogBox : RichTextBox {
     }
 
     protected override void OnMouseDown(MouseEventArgs e) {
-        bool restoreView = preserveViewAfterFocusClick;
+        bool restoreView = !JournalNativeInteraction && preserveViewAfterFocusClick;
         int savedX = preservedFocusX;
         int savedY = preservedFocusY;
         base.OnMouseDown(e);
@@ -2211,7 +2237,7 @@ public class RdcLogBox : RichTextBox {
     }
 
     protected override void OnKeyDown(KeyEventArgs e) {
-        if (e.Control &&
+        if (!JournalNativeInteraction && e.Control &&
             (e.KeyCode == Keys.Add ||
              e.KeyCode == Keys.Subtract ||
              e.KeyCode == Keys.Oemplus ||
@@ -2226,7 +2252,7 @@ public class RdcLogBox : RichTextBox {
     }
 
     protected override void OnKeyPress(KeyPressEventArgs e) {
-        if (ReadOnly && e.KeyChar != (char)3) {
+        if (!JournalNativeInteraction && ReadOnly && e.KeyChar != (char)3) {
             e.Handled = true;
             return;
         }
@@ -2332,22 +2358,72 @@ public class RdcScrollCorner : Control {
     }
 }
 
-// The Journal has a resizable Form but no activity-pane splitter.
-// Keep the same visible scroll-corner GRIP without exposing a fake
-// vertical-split drag gesture or capturing mouse input.
+// The Journal's 17px scroll junction is also the resize handle for the
+// *whole* modal Form, not the activity-pane height splitter. Use global
+// pointer coordinates relative to MouseDown so layout changes never feed
+// back into the drag delta when the junction moves during a resize.
 public sealed class RdcJournalScrollGrip : Control {
+    private Form resizeForm;
+    private Point startScreen;
+    private Size startFormSize;
+    private bool resizing;
+    public bool IsResizing { get { return resizing; } }
+
     public RdcJournalScrollGrip() {
         SetStyle(ControlStyles.UserPaint |
                  ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.OptimizedDoubleBuffer |
                  ControlStyles.ResizeRedraw |
                  ControlStyles.Opaque,true);
-        Cursor=Cursors.Default;
+        Cursor=Cursors.SizeNWSE;
         TabStop=false;
-        AccessibleRole=AccessibleRole.None;
+        AccessibleRole=AccessibleRole.Grip;
     }
     protected override void OnPaint(PaintEventArgs e) {
         RdcScrollCorner.PaintGrip(e.Graphics);
+    }
+    private void ResizeFromScreenPoint(Point screen) {
+        if (!resizing || resizeForm==null || resizeForm.IsDisposed) return;
+        int width=Math.Max(1,startFormSize.Width + screen.X - startScreen.X);
+        int height=Math.Max(1,startFormSize.Height + screen.Y - startScreen.Y);
+        // WinForms applies its normal OS constraints; no journal-pane limit.
+        Size next=new Size(width,height);
+        if (resizeForm.Size != next) resizeForm.Size=next;
+    }
+    protected override void OnMouseDown(MouseEventArgs e) {
+        if (e.Button==MouseButtons.Left) {
+            Form form=FindForm();
+            if (form!=null && !form.IsDisposed && form.WindowState==FormWindowState.Normal) {
+                resizeForm=form;
+                startScreen=Control.MousePosition;
+                startFormSize=form.Size;
+                resizing=true;
+                Capture=true;
+            }
+        }
+        base.OnMouseDown(e);
+    }
+    protected override void OnMouseMove(MouseEventArgs e) {
+        if (resizing) ResizeFromScreenPoint(Control.MousePosition);
+        base.OnMouseMove(e);
+    }
+    private void EndResize() {
+        if (!resizing) return;
+        resizing=false;
+        resizeForm=null;
+        Capture=false;
+    }
+    protected override void OnMouseUp(MouseEventArgs e) {
+        if (e.Button==MouseButtons.Left) EndResize();
+        base.OnMouseUp(e);
+    }
+    protected override void OnMouseCaptureChanged(EventArgs e) {
+        if (!Capture && resizing) EndResize();
+        base.OnMouseCaptureChanged(e);
+    }
+    protected override void Dispose(bool disposing) {
+        if (disposing) EndResize();
+        base.Dispose(disposing);
     }
 }
 
@@ -6873,6 +6949,7 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $dialog.Text='RDC Relay - Журнал'
     $dialog.StartPosition=[Windows.Forms.FormStartPosition]::CenterParent
     $dialog.FormBorderStyle=[Windows.Forms.FormBorderStyle]::Sizable
+    # Preserve the usable 520x280 minimum while allowing whole-form grip resize.
     $dialog.MinimumSize=[Drawing.Size]::new(520,280)
     $dialog.ClientSize=[Drawing.Size]::new(740,440)
     $dialog.ShowInTaskbar=$false
@@ -6930,6 +7007,9 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $body.WordWrap=$false
     $body.DetectUrls=$false
     $body.ShortcutsEnabled=$true
+    $body.JournalNativeInteraction=$true
+    $body.HideSelection=$false
+    $body.TabStop=$true
     $body.ScrollBars=[Windows.Forms.RichTextBoxScrollBars]::None
     $body.BorderStyle=[Windows.Forms.BorderStyle]::None
     $body.BackColor=$textHost.BackColor
@@ -6938,6 +7018,41 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $body.Dock=[Windows.Forms.DockStyle]::None
     $body.Margin=[Windows.Forms.Padding]::new(0)
     $body.AccessibleName='Диагностический журнал RDC Relay'
+    # Full document affordances: select lines with the pointer, Ctrl+C,
+    # and an explicit context menu. Tag pins this journal's RichEdit for clicks.
+    $journalMenu=New-Object Windows.Forms.ContextMenuStrip
+    $journalMenu.Name='rc1-journal-context'
+    $journalMenu.Tag=$body # stable source even after ToolStrip closes
+    $copyItem=New-Object Windows.Forms.ToolStripMenuItem('Копировать')
+    $copyItem.Name='rc1-journal-copy'
+    $copyItem.Add_Click({
+        param($sender,$e)
+        $editor=$sender.Owner.Tag
+        if($editor -is [Windows.Forms.RichTextBox] -and $editor.SelectionLength -gt 0){
+            $editor.Copy()
+        }
+    })
+    $selectAllItem=New-Object Windows.Forms.ToolStripMenuItem('Выделить всё')
+    $selectAllItem.Name='rc1-journal-select-all'
+    $selectAllItem.Add_Click({
+        param($sender,$e)
+        $editor=$sender.Owner.Tag
+        if($editor -is [Windows.Forms.RichTextBox]){$editor.SelectAll()}
+    })
+    [void]$journalMenu.Items.Add($copyItem)
+    [void]$journalMenu.Items.Add($selectAllItem)
+    $journalMenu.Add_Opening({
+        param($sender,$e)
+        $editor=$sender.Tag
+        $sender.Items['rc1-journal-copy'].Enabled=(
+            $editor -is [Windows.Forms.RichTextBox] -and $editor.SelectionLength -gt 0)
+    })
+    $body.ContextMenuStrip=$journalMenu
+    $body.Add_Disposed({
+        param($sender,$e)
+        $menu=$sender.ContextMenuStrip
+        if($menu -and -not $menu.IsDisposed){$menu.Dispose()}
+    })
     $journalVScroll=New-Object RdcOverlayScrollBar
     $journalVScroll.Name='rc1-journal-vscroll'
     $journalVScroll.Target=$body
@@ -6950,8 +7065,8 @@ function New-RdcOwnerJournalDialog([string]$content) {
     $journalHScroll.Vertical=$false
     $journalHScroll.Dock=[Windows.Forms.DockStyle]::None
     $journalHScroll.Margin=[Windows.Forms.Padding]::new(0)
-    # Decorative corner is intentionally not a draggable splitter: unlike
-    # the main window this modal has no two-pane divider to resize.
+    # Native-looking scroll-corner artwork; dragging now resizes the entire
+    # journal Form, not just the text pane or the main activity divider.
     $journalCorner=New-Object RdcJournalScrollGrip
     $journalCorner.Name='rc1-journal-scroll-corner'
     $journalCorner.Dock=[Windows.Forms.DockStyle]::None
