@@ -15,6 +15,7 @@
 - [DECISIONS.md](DECISIONS.md) — substantial adopted decisions and open proposals.
 - [Development knowledge index](docs/dev/README.md) — categorized documents.
 
+- [Reviewer 2 RC1 fixes re-review](docs/dev/reviews/REV-R2-002-RC1-FIXES-2026-11-15.md) — current partial acceptance, two residual readiness defects and independent 69/69 regression.
 - [Reviewer 2 latest RC1 release-readiness review](docs/dev/reviews/REV-R2-001-LATEST-RC1-2026-11-15.md) — artifact-bound NO-GO verdict and reproducible findings.
 - [PLAYBOOK_FEEDBACK.md](PLAYBOOK_FEEDBACK.md) — project-local methodology feedback.
 
