@@ -1,5 +1,13 @@
 # RDC Relay — coordination board
 
+## 2026-11-15 — независимая повторная проверка локального R3 5dfa65c
+
+| ID | Результат | Ответственный | Статус | Доказательство / следующий шаг |
+| --- | --- | --- | --- | --- |
+| REV-R1-004 | Независимая проверка владельцем порученного R3-коммита `5dfa65c4a449dc3119c37cfc4784f63aa8510bd5` и **точного** частного Setup/Portable на STARMER | 🔍 Ревьюер 1 (отдельный чат, не выдаёт себя за зарегистрированного Ревьюера 2) | done — R2-003-F1 scoped PASS; **NEEDS DECISION** по новому P2-liveness; release NO-GO | [Подробный отчёт](../docs/dev/reviews/REV-R1-004-R3-PARTIAL-STREAM-5DFA65C.md). Независимый A/B: прежний `1e59de4` ложный Ready от JSON suffix после IOException; новый `5dfa65c` Fault/0 markers. Исходный и упакованный R3 тест **19/19** каждый; R2 DLL+observer **22/22**; полный WinPS safe suite **71/71**, standalone Setup **22/22**, Portable ShellExecute fake-only TEMP **10/10**; все 22 payload SHA совпали, 23 ZIP members точные. Дополнительный собственный edge: если callback падает уже после завершённой LF-строки, новая ветка `DiscardOversizedLine=true` поглощает **первый следующий полный Ready-маркер**, сохраняет Fault до второго. Это fail-closed, не false Ready; Architect должен принять консервативную потерю одного fresh marker либо поручить отдельный boundary-aware negative fix. Local R3 branch **не опубликован**, продукт/живой Remote/стабильный выпуск не затронуты. |
+
+**Маршрут:** Architect оценивает допустимость пропуска одного нового полного status-маркера после post-read callback fault. Если это противоречит требованиям восстановления, Programmer добавляет тест «callback exception ровно после LF → один новый полноценный Ready-marker» и исправляет cursor/line-boundary phase без возврата исходного JSON-suffix false Ready; после этого новое независимое ревью. Никаких полномочий на RC1 install, холодный запуск, real Remote, OAuth и release эта проверка не даёт.
+
 ## 2026-11-15 — проверка readiness follow-up 1e59de4
 
 | ID | Результат | Ответственный | Статус | Доказательство / следующий шаг |
