@@ -1,5 +1,13 @@
 # RDC Relay — coordination board
 
+## 2026-11-15 — независимое предрелизное ревью последнего локального RC1
+
+| ID | Результат | Ответственный | Статус | Доказательство / следующий шаг |
+| --- | --- | --- | --- | --- |
+| REV-R2-001 | Проверка Setup/Portable BannerTwoCols, `a3d2f81564c3624d352d4a999a2f0aa8116cd887` | 🔍 Ревьюер 2 | done — review completed; release NO-GO | [Отчёт и воспроизведения](../docs/dev/reviews/REV-R2-001-LATEST-RC1-2026-11-15.md). F1–F4: ложный Ready, неработающий default Portable launch, UTF-8 loss/stuck working, OneDrive path refusal. F5: full regression 61 PASS / 4 FAIL из-за старых dist. Artifact OS trial 52/52, standalone Setup verifier 19/19. Следующее: исправления Programmer и подготовка настоящего release packaging; затем повторное независимое ревью новых SHA. |
+
+**Граница вердикта:** проверен текущий частный локальный RC1, а не устаревшая публичная development как продукт. Состояния исторических задач ниже не переписаны. Настоящие install/update/uninstall, live Remote/OAuth и физический UX/DPI не получили PASS; main/stable и пользовательская установка не менялись.
+
 **Stage:** Playbook refresh and reversible core stabilization · **Updated:** 2026-10-24
 **Status:** Architect **ACCEPTED P3/P3A for research-only** following independent [REV-006A-P3A PASS](https://github.com/1rubass1/RDC-Relay/pull/22#issuecomment-6384285982). STARMER fake-only F1/F2 checks: cleanup 28 PASS / 0 FAIL, owner A→B 9 PASS / 0 FAIL, native HWND 11 distinct GUI PID, ZIP 20/20 SHA256 member match. **NOT installed product/real Remote/owner physical UX acceptance.** Target next stable `v1.6.0`, proposed STARMER pilot `1.6.0 RC1`, release only after explicit owner GO. Three historic TEMP NOT CLEAN and untouched.
 **Next:** Architect finalizes [research-only PR #22](https://github.com/1rubass1/RDC-Relay/pull/22), then open one actual product **v1.6.0 candidate integration** Draft PR from `development`, rather than more Tests/Prototypes demos. Engineering in topic branch may proceed against fake interfaces. OS disposable process-tree tests, any live Remote interaction, STARMER installation/switchover, stable `main`/`stable` merge, updater feed or release are each separately owner-gated. [Concrete pilot plan](../docs/dev/planning/V1-6-0-OWNER-PILOT.md).
