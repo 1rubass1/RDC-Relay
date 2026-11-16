@@ -1,5 +1,13 @@
 # RDC Relay — coordination board
 
+## 2026-11-16 — REV-R2-004: f41b3d1 buffered observer, независимый PASS
+
+| ID | Результат | Ответственный | Статус | Доказательство / следующий шаг |
+| --- | --- | --- | --- | --- |
+| REV-R2-004 | Проверен именно локальный `f41b3d1fbf78c6b70874e25272a9dcba2cbe9994` и частный пакет `RDCRelay-1.6.0-RC1-Full-dc9d5af0230149e99bb550f9d2efc7ef` | 🔍 Ревьюер 2 | done — **PASS по пяти критериям R3; release NO-GO** | [Отчёт](../docs/dev/reviews/REV-R2-004-BUFFERED-F41B3D1.md). R2-003-F1 закрыт; потеря complete batch/первого Ready из ARCH-R3-001 и REV-R1-004 устранена; R2-002-F1/F2 сохранены. Независимо: полный WinPS regression72/72, packaged buffered23/23 + stream19/19 + readiness22/22, свои managed11/11 + observer5/5 + JSON3/3, новый собственный callback-after-side-effect probe23/23; тот же probe на 5dfa65c — 10PASS/13FAIL (ожидаемый контроль). Artifact92/92, Setup22/22, Portable fake-event TEMP10/10. |
+
+**Маршрут:** Architect принимает доказанный объём ARCH-R3-001 на точном commit/package; владелец согласует оставшуюся пользовательскую приёмку. Новых подтверждённых дефектов в проверенной области нет. Реальная установка/Remote/OAuth, Full cold start, физическая GUI/DPI-приёмка, двухминутная семантика тихой сессии и release integration остаются вне PASS. Локальные продуктовые коммиты/бинарники не опубликованы; изменены только reviewer-документы в development. Подробности, включая исправленную несовместимость первоначального проверяющего окружения PS7 и подтверждённую очистку, находятся в отчёте. Предыдущие записи ниже сохранены как история.
+
 ## 2026-11-15 — ARCH-R3-001: решение Architect по R3 observer liveness
 
 **Вердикт: NEEDS PROGRAMMER FIX; release NO-GO.** Исходный [R2-003-F1](../docs/dev/reviews/REV-R2-003-READINESS-1E59DE4.md) (JSON suffix → ложный Ready после pre-read IOException) на локальном `fix/rc1-r3-observer-partial-stream@5dfa65c4a449dc3119c37cfc4784f63aa8510bd5` исправлен в проверенной области; см. [REV-R1-004](../docs/dev/reviews/REV-R1-004-R3-PARTIAL-STREAM-5DFA65C.md). Но консервативную потерю *одной* новой готовой строки в post-read exception пути **не принимаем для RC1**: восстановление канала может подтверждаться единственным сообщением, и после потери доказательства UI остаётся в Fault без ограниченного времени восстановления.
