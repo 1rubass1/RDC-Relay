@@ -1,5 +1,13 @@
 # RDC Relay — coordination board
 
+## 2026-11-16 — ARCH-REL-001: технический GO на подготовку выпуска RC1 (до ba02d2d)
+
+| ID | Проверяемый результат | Ответственный | Статус | Следующий маршрут |
+| --- | --- | --- | --- | --- |
+| ARCH-REL-001 | [Техническое заключение](../docs/dev/operations/ARCH-REL-001-BA02D2D-RELEASE-PREP-GATE.md) по локальной цепочке `f41b3d1 -> ba02d2d`, independent [REV-R2-004](../docs/dev/reviews/REV-R2-004-BUFFERED-F41B3D1.md), точному приватному Setup/Portable | 📐 Архитектор 2 | **GO for release preparation; NO-GO for actual release** | Programmer: контролируемая release-eligible интеграция, версия/Updater/Setup/Portable/rollback; Reviewer: независимая проверка нового точного артефакта; owner: отдельный GO на pilot/live Remote и затем на publish. UI уже одобрен; повторного дизайн-ревью не требуется. |
+
+**Архитектурный блокер ARCH-R3-001 закрыт** в объёме независимого REV-R2-004: последующие полные строки и первый свежий Ready после callback exception сохраняются, прежний false Ready из JSON suffix не вернулся. `ba02d2d` меняет только вопрос подтверждения выхода и проверки/branch allowlist, без правки IPC/stop logic; его packaged Setup/Portable SHA и source parity проверены Architect read-only. Риски, которые **остаются обязательными перед публикацией**, перечислены в заключении: реальный Full/Remote/OAuth/ownership route, двухминутная silent-session семантика, разделение release source/dev-only, stable version/update path, Setup/Portable/install/rollback и owner publication GO. Ни `main`/`stable`, ни установленная версия, ни настоящий Remote не изменены.
+
 ## 2026-11-16 — REV-R2-004: f41b3d1 buffered observer, независимый PASS
 
 | ID | Результат | Ответственный | Статус | Доказательство / следующий шаг |
