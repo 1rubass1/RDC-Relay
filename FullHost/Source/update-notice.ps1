@@ -465,8 +465,10 @@ function Update-RdcUpdateNoticePolling {
         try {
             $raw = [string]$doneTask.GetAwaiter().GetResult()
             if ($phase -eq 'commit') {
-                $sha = [string](($raw | ConvertFrom-Json).sha)
-                if ($sha -notmatch '^[0-9a-fA-F]{40}$') { throw 'Invalid stable SHA' }
+                $ref = $raw | ConvertFrom-Json -ErrorAction Stop
+                $sha = $ref.object.sha
+                if ($ref.ref -cne 'refs/heads/stable' -or $ref.object.type -cne 'commit' -or
+                    $sha -isnot [string] -or $sha -cnotmatch '\A[0-9a-f]{40}\z') { throw 'Invalid stable ref' }
                 $url = 'https://raw.githubusercontent.com/1rubass1/RDC-Relay/' +
                     $sha + '/Source/full-host-update-manifest.json'
                 $script:rdcNoticeCheckTask = $script:rdcNoticeHttp.GetStringAsync($url)
@@ -494,12 +496,17 @@ function Update-RdcUpdateNoticePolling {
         if (-not $script:rdcNoticeHttp) {
             Add-Type -AssemblyName System.Net.Http
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            $script:rdcNoticeHttp = New-Object Net.Http.HttpClient
+            $handler = New-Object Net.Http.HttpClientHandler
+            $handler.AllowAutoRedirect = $false
+            $handler.UseCookies = $false
+            $handler.UseDefaultCredentials = $false
+            $script:rdcNoticeHttp = New-Object Net.Http.HttpClient($handler)
+            $script:rdcNoticeHttp.MaxResponseContentBufferSize = 256KB
             $script:rdcNoticeHttp.Timeout = [TimeSpan]::FromSeconds(8)
             $script:rdcNoticeHttp.DefaultRequestHeaders.UserAgent.ParseAdd('RDCRelayUpdateNotice/1.0')
             $script:rdcNoticeHttp.DefaultRequestHeaders.Accept.ParseAdd('application/vnd.github+json')
         }
-        $url = 'https://api.github.com/repos/1rubass1/RDC-Relay/commits/stable'
+        $url = 'https://api.github.com/repos/1rubass1/RDC-Relay/git/ref/heads/stable'
         $script:rdcNoticeCheckTask = $script:rdcNoticeHttp.GetStringAsync($url)
         $script:rdcNoticeCheckPhase = 'commit'
     } catch {

@@ -183,6 +183,7 @@ internal static class RdcV16IntegratedMaintenance {
       int current=RdcOwnerStartup.RegistrationState(run,local);
       if(current<0||(rp.StartupBefore.Value==0&&current!=0))throw new IOException("V16_REMOVAL_RECOVERY_STARTUP");
       if(retired)Directory.Move(rp.RetiredPath,release);
+      RdcOwnerStartup.RestoreRetiredFreshIntent(release,local,Path.Combine(Path.GetDirectoryName(pending),"fresh-intent.removed"));
       RdcV16MetadataTransaction.RecoverRollback(parent,pending,Desktop(),Programs());
       if(rp.StartupBefore.Value==1)RdcOwnerStartup.SetRegistration(run,local,true);
       if(RegisteredRelease(local)==null)throw new IOException("V16_REMOVAL_RECOVERY_VERIFY");
@@ -220,16 +221,34 @@ internal static class RdcV16IntegratedMaintenance {
    Directory.Move(dir,archive);
    Directory.CreateDirectory(dir);
   }
-  if(File.Exists(path)||File.Exists(path+".sha256")){
-   if(!File.Exists(path)||!File.Exists(path+".sha256")||Digest(path)!=expected||File.ReadAllText(path+".sha256",Encoding.ASCII)!=expected)
+  PublishMaintenancePair(Self,path,expected);
+ }
+ // Publish only complete files. A missing marker can be recovered only
+ // from exact bytes of this Setup; never replace a foreign file or marker.
+ static void PublishMaintenancePair(string input,string path,string expected){
+  string marker=path+".sha256";Safe(input);Safe(path);Safe(marker);
+  if(Directory.Exists(path)||Directory.Exists(marker)||Digest(input)!=expected)
+   throw new IOException("V16_MAINTENANCE_COLLISION");
+  if(File.Exists(marker)){
+   if(!File.Exists(path)||Digest(path)!=expected||new FileInfo(marker).Length!=64||File.ReadAllText(marker,Encoding.ASCII)!=expected)
     throw new IOException("V16_MAINTENANCE_COLLISION");
    return;
   }
-  File.Copy(Self,path,false);
-  if(Digest(path)!=expected)throw new IOException("V16_MAINTENANCE_COPY_HASH");
-  using(var f=new FileStream(path+".sha256",FileMode.CreateNew,FileAccess.Write,FileShare.None)){
-   byte[] b=Encoding.ASCII.GetBytes(expected);f.Write(b,0,b.Length);f.Flush(true);
-  }
+  if(File.Exists(path)&&Digest(path)!=expected)throw new IOException("V16_MAINTENANCE_COLLISION");
+  string id=Guid.NewGuid().ToString("N"),tmp=path+"."+id+".tmp",mt=marker+"."+id+".tmp";
+  try{
+   if(!File.Exists(path)){
+    using(var src=File.OpenRead(input))
+    using(var dst=new FileStream(tmp,FileMode.CreateNew,FileAccess.Write,FileShare.None)){src.CopyTo(dst);dst.Flush(true);}
+    if(Digest(tmp)!=expected)throw new IOException("V16_MAINTENANCE_COPY_HASH");
+    Safe(path);File.Move(tmp,path);
+   }
+   if(Digest(path)!=expected)throw new IOException("V16_MAINTENANCE_COLLISION");
+   using(var f=new FileStream(mt,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
+    byte[] b=Encoding.ASCII.GetBytes(expected);f.Write(b,0,b.Length);f.Flush(true);
+   }
+   Safe(marker);File.Move(mt,marker);
+  }finally{if(File.Exists(tmp))File.Delete(tmp);if(File.Exists(mt))File.Delete(mt);}
  }
  internal static void Publish(string release,string local,string desktop,string stagedLink,bool deferred){
   if(deferred)throw new IOException("V16_OLD_HOST_NOT_STOPPED");
@@ -318,6 +337,8 @@ internal static class RdcV16IntegratedMaintenance {
      string maintenance=Maintenance(local,release);
      string journal=Path.Combine(Path.GetDirectoryName(maintenance),"removal.pending");
      string committed=Path.Combine(Path.GetDirectoryName(maintenance),"removal.committed");
+     string intentArchive=Path.Combine(Path.GetDirectoryName(maintenance),"fresh-intent.removed");
+     RdcOwnerStartup.ValidateFreshIntentRetirement(release,local,intentArchive);
      Safe(committed);
      if(File.Exists(committed))throw new IOException("V16_UNINSTALL_ALREADY_COMMITTED");
      string retired=release+".retired-"+Guid.NewGuid().ToString("N");Safe(retired);
@@ -330,10 +351,12 @@ internal static class RdcV16IntegratedMaintenance {
       try{
        RdcV16MetadataTransaction.Apply(parent,journal,Desktop(),Programs());
        if(startup==1)RdcOwnerStartup.SetRegistration(run,local,false);
+       RdcOwnerStartup.RetireFreshIntent(release,local,intentArchive);
        Directory.Move(release,retired);moved=true;
        File.Move(journal,committed);
       }catch{
        if(moved)Directory.Move(retired,release);
+       RdcOwnerStartup.RestoreRetiredFreshIntent(release,local,intentArchive);
        if(startup==1)RdcOwnerStartup.SetRegistration(run,local,true);
        RdcV16MetadataTransaction.RecoverRollback(parent,journal,Desktop(),Programs());
        throw;

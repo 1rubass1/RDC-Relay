@@ -521,6 +521,13 @@ internal static class RdcRc1CandidateSetup {
     // nonactivating staging keep their pre-existing no-install contract.
     if(registered){legacyLease=new RdcReleaseLegacyMigrationLease(Path.Combine(local,"RemoteDesktopCommanderLauncher")); if(!HasRegisteredStableInstallation(local))throw new IOException("RDC_V16_PREDECESSOR_CHANGED");}
     if(args.Length==0 && !EnsureNodePrerequisite(registered||priorShortcut))return 1;
+        if(args.Length==0){
+     freshDefaults=RdcOwnerStartup.BeginFreshIntent(source,local,freshDefaults);
+     if(freshDefaults&&(registered||priorShortcut)){
+      string active=RdcOwnerStartup.ActiveRelease();
+      if(active==null||!RdcOwnerStartup.BeginFreshIntent(active,local,false))throw new IOException("V16_FRESH_INTENT_PREDECESSOR");
+     }
+    }else if(RdcOwnerStartup.FreshIntentExists(local))throw new IOException("V16_FRESH_INTENT_INTERACTIVE_REQUIRED");
     string release=RdcRc1ManualUpgrade.Prepare(source,local,Required);
     string result=RdcRc1ManualUpgrade.ActivateDesktop(release,local,desktop);
     if(legacyLease!=null){legacyLease.Dispose();legacyLease=null;}
@@ -549,12 +556,12 @@ internal static class RdcRc1CandidateSetup {
     string launchCode="";
 #if RDC_RC1_FULL_SETUP
     if(result=="SWITCHED_STABLE"||result=="CREATED")RdcOwnerAutoConnectPreference.InitializeDisabled(RdcOwnerAutoConnectPreference.CurrentPath);
-    if(freshDefaults&&result=="CREATED"){
+    if(freshDefaults){
      try{
       // Explicitly opt out of Remote pairing before any GUI starts.
       // An existing preference is never overwritten by initialization.
       RdcOwnerAutoConnectPreference.InitializeDisabled(RdcOwnerAutoConnectPreference.CurrentPath);
-      RdcOwnerStartup.InitializeFreshInstalled(Path.Combine(release,"Source"));
+      RdcOwnerStartup.FinishFreshIntent(release,local);
       Console.WriteLine("RC1_FRESH_STARTUP_DEFAULTS_INITIALIZED");
      }catch(Exception defaultError){
       // Activation already committed. Report this as an incomplete launch,

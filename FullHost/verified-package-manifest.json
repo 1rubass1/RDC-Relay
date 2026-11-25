@@ -55,7 +55,7 @@
                   },
                   {
                       "name":  "Source/RdcOwnerStartup.cs",
-                      "sha256":  "FEA859575B97A687771A0577091884A4589AA8D438FBB8AAD8359AC8360F66F9"
+                      "sha256":  "514D8587DF2552F3B2DE92ADA011DFE128D7938C0AAA316D06F8B265D73A7524"
                   },
                   {
                       "name":  "Source/RdcUiLanguage.cs",
@@ -99,7 +99,7 @@
                   },
                   {
                       "name":  "Source/update-notice.ps1",
-                      "sha256":  "943B871391954910339AF0ED2B9BA89A226D5CDBBF005FE0699CFD0F2219CA7F"
+                      "sha256":  "308762D890A687ABA984164AFF1AA1685C0D4DE1F4B0A593EA73F3FDADC99AD8"
                   },
                   {
                       "name":  "Source/update.ps1",
@@ -115,11 +115,11 @@
                   },
                   {
                       "name":  "RdcOwnerRuntime.dll",
-                      "sha256":  "393716B486D122F8927491492C463758C2D57488A064601A7EA6DCE6869452EE"
+                      "sha256":  "B3835534039F50E4D8BD0CF90CBAF1CA3677251E9572D144C9ED9B24102BA404"
                   },
                   {
                       "name":  "RDC Relay.exe",
-                      "sha256":  "239F1B8D95329BEF87C63083898807658A4515146628BE16BA655D1AA2725909"
+                      "sha256":  "F8947779954B8753809C95855A572E4B34FEB6BDA367E696DC5AAC37163A56D5"
                   }
               ]
 }

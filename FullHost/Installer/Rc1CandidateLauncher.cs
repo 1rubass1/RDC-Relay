@@ -216,6 +216,8 @@ internal static class RdcRc1CandidateLauncher {
       (string)values["ownerMode"]!="FULL_HOST_GUI_RC1")
      throw new InvalidOperationException("RC1_NOT_VERIFIED_FULL_CANDIDATE");
    ValidatePortablePackage(root);
+   string local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+   if(RdcOwnerStartup.VerifiedRelease(root,local)&&RdcOwnerStartup.FreshIntentExists(local))throw new InvalidOperationException("V16_FRESH_INTENT_INCOMPLETE");
    if(background&&(!RdcOwnerStartup.IsActiveSource(source)||RdcOwnerStartup.State()!=1))
     throw new InvalidOperationException("RC1_STARTUP_INSTALL_REQUIRED");
    foreach(string name in new []{"rc1-tray-host.ps1","rc1-owner-gui.ps1",

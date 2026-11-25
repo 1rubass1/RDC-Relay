@@ -35,8 +35,12 @@ internal static class RdcV16MetadataTransaction {
  static readonly JavaScriptSerializer Json=new JavaScriptSerializer{MaxJsonLength=2097152,RecursionLimit=16};
  static string Hash(byte[] b){using(var h=SHA256.Create())return BitConverter.ToString(h.ComputeHash(b)).Replace("-","");}
  static void Safe(string p){
-  for(string path=System.IO.Path.GetFullPath(p);!String.IsNullOrEmpty(path);path=System.IO.Path.GetDirectoryName(path)){
-   if((File.Exists(path)||Directory.Exists(path))&&(File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)
+  string full=Path.GetFullPath(p);
+  string desktop=Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+  bool desktopLink=!String.IsNullOrEmpty(desktop)&&String.Equals(full,Path.Combine(Path.GetFullPath(desktop),Product+".lnk"),StringComparison.OrdinalIgnoreCase);
+  for(string path=full;!String.IsNullOrEmpty(path);path=Path.GetDirectoryName(path)){
+   if((File.Exists(path)||Directory.Exists(path))&&(File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0&&
+      !(desktopLink&&RdcRc1ManualUpgrade.IsWindowsDesktopCloudAncestor(path,full)))
     throw new IOException("V16_METADATA_REPARSE");
   }
  }

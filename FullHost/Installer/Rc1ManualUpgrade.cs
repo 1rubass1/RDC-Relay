@@ -46,7 +46,7 @@ internal static class RdcRc1ManualUpgrade {
    return @"Local\RdcRelayRC1Owner-"+BitConverter.ToString(key).Replace("-","").Substring(0,32);
   }
  }
- static bool IsWindowsDesktopCloudAncestor(string inspected,string requested) {
+ internal static bool IsWindowsDesktopCloudAncestor(string inspected,string requested) {
   // Only an OS-reported Desktop or its direct child may cross an OS Desktop
   // Cloud Files placeholder. Junctions and symbolic links still fail closed.
   string desktop=Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);

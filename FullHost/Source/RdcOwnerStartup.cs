@@ -123,20 +123,25 @@ public static class RdcOwnerStartup {
   string exe=DispatcherPath(local),marker=MarkerPath(local);
   Safe(exe);Safe(marker);
   if(DispatcherOwned(local))return;
-  if(File.Exists(exe)||File.Exists(marker)||Directory.Exists(exe)||Directory.Exists(marker))
-   throw new IOException("RC1_STARTUP_DISPATCHER_COLLISION");
   string input=Path.Combine(release,ReleaseLauncher(release));
+  if(Directory.Exists(exe)||Directory.Exists(marker)||File.Exists(marker)||
+     (File.Exists(exe)&&Hash(exe)!=Hash(input)))
+   throw new IOException("RC1_STARTUP_DISPATCHER_COLLISION");
   string id=Guid.NewGuid().ToString("N");
   string staged=exe+"."+id+".tmp",stagedMarker=marker+"."+id+".tmp";
   bool published=false,marked=false;
   try{
-   File.Copy(input,staged,false);
-   string digest=Hash(staged);
-   if(digest!=Hash(input))throw new IOException("RC1_STARTUP_DISPATCHER_HASH");
+   string digest=Hash(input);
+   if(!File.Exists(exe)){
+    using(var src=File.OpenRead(input))
+    using(var dst=new FileStream(staged,FileMode.CreateNew,FileAccess.Write,FileShare.None)){src.CopyTo(dst);dst.Flush(true);}
+    if(Hash(staged)!=digest)throw new IOException("RC1_STARTUP_DISPATCHER_HASH");
+   }
    using(var f=new FileStream(stagedMarker,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
     byte[] bytes=Encoding.ASCII.GetBytes(digest);f.Write(bytes,0,bytes.Length);f.Flush(true);
    }
-   File.Move(staged,exe);published=true;
+   if(File.Exists(staged)){File.Move(staged,exe);published=true;}
+   if(Hash(exe)!=digest)throw new IOException("RC1_STARTUP_DISPATCHER_COLLISION");
    File.Move(stagedMarker,marker);marked=true;
    if(!DispatcherOwned(local))throw new IOException("RC1_STARTUP_DISPATCHER_HASH");
   }catch{
@@ -196,6 +201,67 @@ public static class RdcOwnerStartup {
   if(state<0)throw new IOException("RC1_STARTUP_FOREIGN_REGISTRATION");
   EnsureDispatcher(release,local);
   SetRegistration(key,local,true);
+ }
+ // Durable first-install intention is outside the pilot root so creating it
+ // cannot turn a retry into an apparent pre-existing installation.
+ static string FreshIntentPath(string local){return Path.Combine(Path.GetFullPath(local),"RDCRelayFirstInstall.pending");}
+ public static bool FreshIntentExists(string local){
+  string p=FreshIntentPath(local);Safe(p);
+  if(Directory.Exists(p))throw new IOException("V16_FRESH_INTENT_COLLISION");
+  return File.Exists(p);
+ }
+ static string FreshManifestDigest(string source){
+  string p=Path.Combine(source,"owner-source-manifest.json");Safe(p);
+  if(!File.Exists(p)||new FileInfo(p).Length>131072)throw new IOException("V16_FRESH_INTENT_MANIFEST");
+  return Hash(p);
+ }
+ public static bool BeginFreshIntent(string source,string local,bool fresh){
+  string p=FreshIntentPath(local);
+  if(FreshIntentExists(local)){
+   if(new FileInfo(p).Length!=64||File.ReadAllText(p,Encoding.ASCII)!=FreshManifestDigest(source))
+    throw new IOException("V16_FRESH_INTENT_COLLISION");
+   return true;
+  }
+  if(!fresh)return false;
+  string expected=FreshManifestDigest(source),tmp=p+"."+Guid.NewGuid().ToString("N")+".tmp";
+  try{
+   using(var f=new FileStream(tmp,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
+    byte[] bytes=Encoding.ASCII.GetBytes(expected);f.Write(bytes,0,bytes.Length);f.Flush(true);
+   }
+   File.Move(tmp,p);
+   return true;
+  }finally{if(File.Exists(tmp))File.Delete(tmp);}
+ }
+ // The removal transaction archives only the marker belonging to its
+ // verified release. The archive is kept with the removal journal.
+ public static void ValidateFreshIntentRetirement(string release,string local,string archive){
+  Safe(archive);
+  if(File.Exists(archive)||Directory.Exists(archive))throw new IOException("V16_FRESH_INTENT_ARCHIVE_COLLISION");
+  if(FreshIntentExists(local)&&!BeginFreshIntent(release,local,false))
+   throw new IOException("V16_FRESH_INTENT_IDENTITY");
+ }
+ public static void RetireFreshIntent(string release,string local,string archive){
+  ValidateFreshIntentRetirement(release,local,archive);
+  if(FreshIntentExists(local))File.Move(FreshIntentPath(local),archive);
+ }
+ public static void RestoreRetiredFreshIntent(string release,string local,string archive){
+  Safe(archive);
+  if(Directory.Exists(archive))throw new IOException("V16_FRESH_INTENT_ARCHIVE_COLLISION");
+  if(!File.Exists(archive))return;
+  if(new FileInfo(archive).Length!=64||File.ReadAllText(archive,Encoding.ASCII)!=FreshManifestDigest(release))
+   throw new IOException("V16_FRESH_INTENT_ARCHIVE_IDENTITY");
+  if(FreshIntentExists(local))throw new IOException("V16_FRESH_INTENT_COLLISION");
+  File.Move(archive,FreshIntentPath(local));
+ }
+ public static void FinishFreshIntent(string release,string local){
+  if(!VerifiedRelease(release,local)||!FreshIntentExists(local)||
+     !BeginFreshIntent(release,local,false)||!IsActiveSource(Path.Combine(release,"Source")))
+   throw new IOException("V16_FRESH_INTENT_IDENTITY");
+  using(var key=Registry.CurrentUser.CreateSubKey(RunKey)){
+   InitializeFreshRegistration(key,release,local);
+   key.Flush();
+  }
+  File.Delete(FreshIntentPath(local));
  }
  public static void InitializeFreshInstalled(string source){
   if(!IsActiveSource(source))throw new IOException("RC1_STARTUP_INSTALL_REQUIRED");
