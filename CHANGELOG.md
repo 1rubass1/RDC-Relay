@@ -1,165 +1,133 @@
-﻿# Changelog
+# Changelog / Журнал изменений
 
-## 1.5.18 (2026-10-20)
+Краткая история выпущенных версий RDC Relay. Последние версии — в начале.
 
-- Fix the in-session update button for windows relaunched with `-SkipUpdate`: explicit clicks now always launch the updater with `-Force`, while passive startup checks remain suppressed.
-- Verified that an already visible update button automatically switches to the newest stable release on the next background check (approximately hourly); duplicate versions do not replay the animation. Added offline polling and actual UI control regressions to the release gate.
-- Add regression coverage for skipped startup checks, explicit user clicks, normal launch, and missing updater files.
+A concise history of RDC Relay releases, newest first.
 
-## 1.5.17 (2026-10-20)
+## 1.6.0 — 2026-11-25
 
-- Recover from npm ENOENT / Windows -4058 when a partially populated
-  `npm-cache\_npx\<hash>\package.json` is missing: only remove the
-  log-identified entry and retry once, without clearing unrelated packages.
-- Recognize both `npm error` and older `npm ERR!` diagnostics, reject
-  non-ENOENT/unrelated/traversal targets and reparse-point directories.
-- Clarify first-device OAuth onboarding in the status/help text, and add
-  an Account-menu shortcut to the official device-verification page.
-  RDC Relay already runs the pinned `npx.cmd` command; no terminal
-  copy/paste is required. User browser approval remains mandatory.
-- Add isolated regression tests for safe npm-cache recovery.
+### Русский
 
-## 1.5.16 (2026-10-17)
+- **Архитектура:** фоновый Host поддерживает Remote независимо от основного окна; управление через системный трей.
+- **Стабильность:** переработаны управление процессами Remote, контроль готовности и восстановление связи.
+- **Интерфейс:** обновлены значки, индикация состояния, визуальные эффекты, меню и диалоги.
+- **Журнал:** просмотр и сохранение логов, автоматическая ротация и ограничение занимаемого пространства.
+- **Установка и обновления:** установка Node.js 24 LTS при отсутствии необходимых зависимостей с согласия пользователя; переход со старой архитектуры через 1.6.0, отдельный канал последующих обновлений.
+- **Локализация:** русский и английский языки с переключением в программе.
 
-- Add an in-session update notification for a newer release on the stable channel: the current version slides left, a muted-gray arrow emerges from the orange divider, and a dark-gray button with a bold gold version and rounded gold outline fades in. Clicking it invokes the existing transactional updater.
-- Preserve the bottom informational text and version typography throughout the animation using one persistent renderer; keep the original footer when the optional notice feature is disabled.
-- Improve release detection while RDC Relay remains open with a nonblocking hourly check of the stable manifest; the existing startup updater remains available.
-- Avoid replaying stale green recovery flashes when restoring a minimized or occluded window.
-- Correct manual Stop state protection against late Remote MCP health/readiness/fault markers and activate the quiet neutral stopped visual state.
-- Fix Windows npx bootstrap failure classification so a damaged Desktop Commander cache can trigger the intended recovery.
-- Extend UI lifecycle, footer pixel-stability, animation and upgrade regression tests. A harmless visual-only preview replays the notification without accessing GitHub or starting Remote.
+### English
 
-## 1.5.15 (2026-10-08)
+- **Architecture:** the background Host maintains Remote independently of the main window, with system tray controls.
+- **Reliability:** reworked Remote process management, readiness tracking and connection recovery.
+- **Interface:** updated icons, status indicators, visual effects, menus and dialogs.
+- **Activity journal:** log viewing and export, automatic rotation and storage limits.
+- **Installation and updates:** optional Node.js 24 LTS installation when required dependencies are missing; migration from the legacy architecture through 1.6.0, with a separate feed for subsequent updates.
+- **Localization:** Russian and English, switchable in the application.
 
-- Restore the 1.5.12 bottom status hint geometry exactly, keeping the close-window hint, separator and runtime version aligned as in the established release layout.
+[Release / Релиз 1.6.0](https://github.com/1rubass1/RDC-Relay/releases/tag/v1.6.0)
 
-## 1.5.14 (2026-10-08)
+## 1.5.18 — 2026-10-20
 
-- Correct the bottom status hint alignment so the version, separator and close-window hint keep the intended right-anchored geometry without shifting the text block.
-- Keep the runtime version source synchronized at 1.5.14 across the shell payload and release metadata.
+**RU:** Исправлена кнопка обновления при запуске с `-SkipUpdate`; уведомление о новой версии обновляется без перезапуска окна и повторной анимации. Расширены тесты обновления.
 
-## 1.5.13 (2026-10-08)
+**EN:** Fixed the update button when launched with `-SkipUpdate`; the version notice refreshes without restarting the window or replaying the animation. Expanded update tests.
 
-- Recover automatically from a corrupted Desktop Commander npx cache when the pinned Remote package loses its `dist/index.js` entrypoint, keeping the divider in recovery yellow instead of surfacing a false persistent fault.
-- Treat a slow cold start as transitional rather than failed: the Relay now keeps waiting for the upstream readiness proof and only enters the red fault state on an explicit transport/session failure.
-- Make the stopped state authoritative after a manual Stop so late Remote MCP readiness, health and fault markers cannot resurrect activity or overwrite the stopped visual state.
-- Keep the stopped divider visually quiet and neutral while preserving the existing ready, connecting, recovery and fault feedback for active sessions.
+[Release / Релиз 1.5.18](https://github.com/1rubass1/RDC-Relay/releases/tag/v1.5.18)
 
-## 1.5.12 (2026-10-07)
+## 1.5.17 — 2026-10-20
 
-- Make updater writes transactional: journal files before replacement, stage payloads on the target volume, use atomic replacement where available, roll back in reverse order, and keep failed updates immediately retryable.
-- Make Setup transactional as well: stage the complete payload first, coordinate with the running GUI/updater through mutexes, replace files with backups, and restore the previous installation if any replacement fails.
-- Prevent portable copies from hijacking shortcuts that belong to an installed RDC Relay instance by synchronizing only shortcuts owned by the current runtime root.
-- Move stop/restart/logout/reconnect and close-time process waits off the WinForms UI thread so long Remote operations no longer freeze repainting or input.
-- Replace the problematic transparent/ButtonBase action controls with fully opaque owner-drawn controls; eliminate stale-pixel artifacts while preserving mouse, Tab, Space/Enter, focus cues and accessibility push-button semantics.
-- Restrict primary Tab traversal to exactly the three action buttons (Stop, Account and Help); read-only logs, scrollbars and service controls no longer consume invisible Tab stops.
-- Make Account/Help menu selection interiors 50% transparent while keeping their purple outline fully opaque.
-- Harden single-instance recovery: a second launch reactivates the existing window, and a stale GUI process that still owns the mutex but has lost its top-level window is recycled automatically.
-- Split release validation into an explicit GUI logic pass and a separately reported GPU visual check; software-render fallback is now reported as SKIPPED rather than a false GPU success.
-- Expand release gates with full-button paint/keyboard tests, asynchronous UI lifecycle tests, transactional installer/updater rollback tests, exact manifest integrity checks and fresh-Setup testing inside the release build.
+**RU:** Безопасное восстановление неполного кеша npm при ENOENT/-4058; уточнены инструкции первичной OAuth-авторизации и добавлена ссылка на страницу подтверждения устройства.
 
-## 1.5.11 (2026-10-07)
+**EN:** Safe recovery of incomplete npm cache entries on ENOENT/-4058; clarified first-device OAuth instructions and added a device verification shortcut.
 
-- Register per-user installations in Windows Settings -> Apps -> Installed apps with version, publisher, install location and icon metadata.
-- Add a normal uninstall path through the installed updater script so removal works from Windows Settings and cleans RDC Relay shortcuts, runtime files and the uninstall registry entry.
-- Self-register Installed Apps metadata on startup for existing users upgraded from 1.5.10, while portable copies remain unregistered.
-- Add a small `RDC Relay.exe` portable launcher so the Portable ZIP can be extracted as one folder and started by double-clicking an EXE instead of a CMD/PowerShell script.
-- Keep the default per-user install path under `%LOCALAPPDATA%\RemoteDesktopCommanderLauncher`; no install-path picker is added because the current location avoids elevation and preserves reliable in-place upgrades.
+## 1.5.16 — 2026-10-17
 
-## 1.5.10 (2026-10-06)
+**RU:** Анимированное уведомление об обновлении и фоновая проверка версии; исправлены повторные вспышки при восстановлении окна, обработка ручной остановки и ошибок запуска npx.
 
-- Added a bounded Remote MCP health supervisor that distinguishes a live `cmd/npx` process from an actually ready remote session, tracks ready/fatal markers, restarts lost sessions with 2/5/10 second backoff, and handles unexpected process exits.
-- Treat realtime transport loss (`Channel error`, `Channel closed`, `Device marked as offline`) as a persistent visual fault without competing with Desktop Commander's own channel reconnect.
-- Require upstream's full reachability proof before green/ready: `Channel subscribed` and an online status write remain transitional; `Presence tracked` (or the final connected marker) confirms the realtime channel, capability publication and usable remote path.
-- Track the original 0.2.52 local-executor loss/recovery markers (`Local Desktop Commander MCP went away` / `... restarted; device is online again`) instead of relying on an assumed disconnect string.
-- Keep a slow first connection red after the readiness grace period but leave the live Remote process in charge of its own background reconnect; bounded supervisor restarts remain reserved for fatal session/startup/process failures.
-- Fixed a PowerShell scope collision where the fault-detail string shadowed the WinForms status label and produced repeated modal `property "Text" not found` dialogs; background refresh exceptions are now logged without blocking the UI.
-- Freeze the upper log pane at Desktop Commander's startup/Commands footer and route later channel/offline/reconnect/presence output to the lower activity pane, while preserving the complete raw session log on disk.
-- Stabilize the lower RichEdit viewport after text replacement and pane resizing by restoring scroll position only after redraw is re-enabled and forcing immediate plus deferred repaint/reflow.
-- Added a two-tone yellow/amber connecting palette for the initial Remote MCP startup (particles, caustic and rails). It transitions to the green ready confirmation on success, or yields to persistent red on a fault.
-- Fixed the particle popup lifecycle: startup could open the transparent WPF popup before the WinForms owner existed, leaving it below the main window. Ownership/Z-order are now repaired after load without using global topmost behavior. With that fixed, the selected sandwich composition is restored: coupled halo, transparent caustic detail, then a wider soft-white hot core.
-- Preserve the previous `remote-session.log` before a fresh launch so failed reconnect cycles remain diagnosable.
-- Added persistent fault signalling: particles, caustic and divider rails smoothly move into a two-tone red/red-orange palette and remain there until the fault clears.
-- Added a one-shot green/yellow-green recovery confirmation with a fast peak and a longer smooth return to the normal purple/orange palette; geometry and particle trajectories remain unchanged.
-- Trigger the green confirmation on every real `not ready -> ready` transition, including the first successful connection after application startup, without retriggering on duplicate ready markers.
-- Track Desktop Commander tool lifecycle using its leading Unicode markers (рџ”§/вњ…/вќЊ). Explicit failed calls remain visibly faulted, but prolonged silence or a missing completion marker now retires to idle instead of being treated as a Remote MCP failure.
-- Extended GUI self-tests for cold-start readiness, explicit tool failures, idle-timeout retirement, recovery signalling and GPU palette transitions.
-- Restored a reproducible four-shader build: particle pass selection now uses an explicit `PassIndex` shader constant instead of overloading `Intensity`, and both particle/core bytecode files are rebuilt from their checked-in HLSL sources.
-- Hardened release/UI integrity checks: self-test now validates the exact manifest payload and hashes, single-popup sandwich/transparency contracts and premultiplied-alpha guards; GPU initialization failures are logged instead of silently falling back.
-- Kept explicit tool-call failures latched red across duplicate Presence/ready markers; only a later successful tool call clears that tool fault and triggers the recovery confirmation.
-- Doubled divider particle density from roughly 12 to 24 simultaneous trajectories by adding two preserving GPU passes with independent time phases, without increasing ps_3_0 shader instruction count.
-- Slowed particle animation to 50% speed and doubled only its horizontal geometry (heads, hot cores, tails and ghost offsets); then compressed the complete particle silhouette vertically to two thirds of its previous height and reduced particle/core luminance by 18% so purple/orange hue remains visible instead of clipping toward white.
-- Simplified the divider-drag scrollbar crossing mask: keep the fully opaque center narrower, trim one additional pixel from its lower side for visual balance, and use a direct mirrored 15 px linear alpha ramp from 0 to 250 instead of the curved/dark overlay experiment.
-- Apply the banner's proven 1 px exact RichEdit line-spacing correction to both full log surfaces so Unicode box-drawing groups such as Next / Commands no longer show horizontal seams outside the ASCII banner.
-- Prevent false red connection faults when tool commands/results merely contain lifecycle-looking strings such as `Channel error:`; serialized tool payloads are excluded from health parsing, and any successful remote tool call now proves readiness, including after the GUI adopts an already-running Remote MCP whose earlier Presence marker is no longer replayed.
+**EN:** Animated update notice and background version checks; fixed stale recovery flashes, manual Stop state handling and npx startup error classification.
 
-## 1.5.9 (2026-10-06)
+## 1.5.15 — 2026-10-08
 
-- Replaced the recolored upstream-style application icon with an original RDC Relay identity: white rounded badge, relay chip, monitor and overlapping purple/orange windows.
-- Added dedicated low-resolution icon artwork for 16-64 px frames so Explorer, taskbar and system UI remain legible without tiny text.
-- Renamed the runtime icon payload from `DesktopCommander.ico` to `RDCRelay.ico` and updated Setup/Portable resources accordingly.
-- Made shortcut migration verifiable and retryable after the window is shown; fixed the malformed PowerShell target path that prevented the 1.5.8 shortcut icon update.
-- Assign a dedicated `RDCRelay.App` process AppUserModelID so the taskbar treats RDC Relay as its own application instead of a generic PowerShell host.
-- Remove legacy `DesktopCommander*.ico` files only after existing RDC Relay shortcuts have successfully switched to the current versioned icon.
+**RU:** Восстановлено расположение нижней подсказки, разделителя и номера версии по образцу 1.5.12.
 
-## 1.5.8 (2026-10-06)
+**EN:** Restored the 1.5.12 footer hint, separator and version layout.
 
-- Pause the decorative GPU divider animation when the window is hidden, minimized or fully occluded by other top-level windows, while leaving status/log polling active.
-- Resume from the frozen animation phase and snap activity to the current requested state so stale fades are not replayed after returning from the background.
-- Refresh existing `RDC Relay` shortcuts on normal startup so updater-only releases keep target, arguments and the versioned icon path current without recreating shortcuts the user removed.
-- Rename newly generated versioned shortcut icons to `RDCRelay-v<version>-<hash>.ico` for clearer branding and reliable shell icon-cache invalidation.
+## 1.5.14 — 2026-10-08
 
-## 1.5.7 (2026-10-06)
+**RU:** Исправлено выравнивание элементов нижней строки; синхронизирован номер версии в программе и метаданных релиза.
 
-- Renamed the application and repository branding from `Remote Desktop Commander` to `RDC Relay` to avoid conflict with the upstream Desktop Commander project.
-- Changed future update checks to `1rubass1/RDC-Relay` while retaining the legacy install directory and mutex identifiers for seamless upgrades.
-- Renamed Setup, Portable, launcher and shortcuts to `RDC Relay`.
-- Added first-run migration that removes obsolete launchers and renames existing Desktop/Start Menu shortcuts without creating a parallel installation.
+**EN:** Corrected footer alignment and synchronized the runtime version with release metadata.
 
-## 1.5.6 (2026-10-06)
+## 1.5.13 — 2026-10-08
 
-- Replaced the ambiguous post-stop "Close" action with a Stop/Start state button: `в–  РћСЃС‚Р°РЅРѕРІРёС‚СЊ` / `в–¶ Р—Р°РїСѓСЃС‚РёС‚СЊ`.
-- Added vector Stop/Play button glyphs rendered by the shell itself.
-- Refined the top-right command group: retained the 4 px utility spacing and 16 px separation before Stop, restored the purple Help treatment, and reduced only its visible circle while keeping the full hit target.
-- Tightened startup banner line spacing by one physical pixel to remove dark seams between ASCII-art rows.
-- Rebuilt the activity log viewport as a double-buffered panel with one atomic manual layout for the text area, vertical scrollbar, horizontal scrollbar and resize corner.
-- Disabled RichEdit native scrollbars entirely and moved horizontal range calculation into the custom controls.
-- Changed divider dragging to bitmap-backed live preview: text panes visually follow the pointer while the real RichEdit controls keep fixed geometry until one atomic resize on release.
-- During divider drag, replace both vertical scrollbars with one unified rounded orange ruler using the real scrollbar arrow geometry, crisp 2 px / 2 px 45-degree hatching, a five-layer inward capsule edge fade, and a linear crossing fade around the animated divider.
-- Added fade-in/fade-out transitions for the temporary drag overlay so the real controls finish repainting before the overlay disappears.
-- Coalesce expensive RichEdit thumb tracking to display-frame cadence while keeping the custom thumb visually responsive.
-- Unified scrollbar/corner backgrounds to eliminate edge gaps during fast scrolling and pane resizing.
-- Changed divider activity timing to an adaptive 10-30 second normal hold and a 60 second timeout for interrupted tool calls.
+**RU:** Автоматическое восстановление повреждённого кеша npx; корректное ожидание медленного подключения и защита состояния ручной остановки от запоздалых событий Remote.
+
+**EN:** Automatic recovery of corrupted npx cache entries; improved slow-connection handling and protected manual Stop from late Remote events.
+
+## 1.5.12 — 2026-10-07
+
+**RU:** Транзакционные установка и обновление с откатом; защита ярлыков установленной программы от Portable-копий. Операции Remote вынесены из UI-потока, улучшены кнопки, клавиатурная навигация и восстановление единственного экземпляра. Расширены проверки целостности, отката и GPU-отрисовки.
+
+**EN:** Transactional installation and updates with rollback; protected installed shortcuts from portable copies. Moved Remote operations off the UI thread, improved controls, keyboard navigation and single-instance recovery. Expanded integrity, rollback and GPU rendering tests.
+
+## 1.5.11 — 2026-10-07
+
+**RU:** Регистрация программы в списке установленных приложений Windows и штатное удаление; EXE-запуск Portable. Сохранён прежний путь установки для совместимости обновлений.
+
+**EN:** Windows Installed Apps registration and standard uninstall; EXE launcher for Portable. Retained the existing installation path for upgrade compatibility.
+
+## 1.5.10 — 2026-10-06
+
+**Русский**
+
+- Контроль реальной готовности Remote, ограниченные повторные запуски и восстановление связи без конфликтов со встроенным механизмом переподключения Desktop Commander.
+- Разделение событий подключения и выполнения команд; защита от ложных ошибок, улучшение журнала, прокрутки и сохранения предыдущего лога.
+- Обновление GPU-разделителя: цветовые состояния подключения, ошибки и восстановления, плавность анимации, исправления прозрачности и порядка слоёв. Воспроизводимая сборка четырёх шейдеров и расширенные регрессионные проверки.
+
+**English**
+
+- Remote readiness supervision, bounded restarts and connection recovery without competing with Desktop Commander's reconnect mechanism.
+- Separated connection and tool activity events; prevented false faults and improved log routing, scrolling and previous-session log retention.
+- Updated the GPU divider: connecting, fault and recovery colors, smoother animation, transparency and layering fixes. Reproducible four-shader build and expanded regression checks.
+
+## 1.5.9 — 2026-10-06
+
+**RU:** Собственный фирменный значок RDC Relay, адаптация для малых размеров и отдельный идентификатор приложения Windows; исправлена миграция ярлыков и значков.
+
+**EN:** Original RDC Relay icon, small-size artwork and a dedicated Windows application identity; fixed shortcut and icon migration.
+
+## 1.5.8 — 2026-10-06
+
+**RU:** Приостановка GPU-анимации при скрытом, свёрнутом или перекрытом окне без остановки мониторинга; корректное возобновление анимации и обновление существующих ярлыков.
+
+**EN:** Paused GPU animation while hidden, minimized or fully occluded without stopping monitoring; improved animation resumption and existing shortcut updates.
+
+## 1.5.7 — 2026-10-06
+
+**RU:** Переименование приложения и репозитория в RDC Relay; обновление адреса GitHub, имён установщика, Portable и ярлыков с сохранением совместимости прежней установки.
+
+**EN:** Renamed the application and repository to RDC Relay; updated the GitHub endpoint, installer, portable and shortcut names while preserving installation compatibility.
+
+## 1.5.6 — 2026-10-06
+
+**RU:** Кнопка Stop/Start вместо неоднозначного действия закрытия, векторные значки и доработка панели управления. Переработаны журнал, полосы прокрутки и перетаскивание разделителя; адаптивное время индикации активности.
+
+**EN:** Replaced the ambiguous close action with Stop/Start, added vector glyphs and refined controls. Reworked the log viewport, scrollbars and divider dragging; adaptive activity hold timing.
 
 ## 1.5.5
 
-Maintenance and release-engineering release. No intentional UI redesign.
+**RU:** Выделен канал обновлений `stable`, проверка SHA-256 и восстановление файлов той же версии; усилены управление единственным экземпляром и завершение процессов. Закреплена версия Desktop Commander 0.2.52, улучшен поиск npx. Добавлены резервная статическая отрисовка и воспроизводимая сборка шейдеров, Setup и Portable.
 
-- Moved automatic updates from the moving `main` branch to a dedicated
-  `stable` channel.
-- Added same-version SHA256 repair, updater diagnostics and safer rollback
-  behavior.
-- Single-instance ownership is now acquired before update checks, preventing a
-  second launcher from replacing files under a live window.
-- Pinned Desktop Commander to `0.2.52`.
-- Added PATH-aware `npx.cmd` resolution with standard Windows fallbacks.
-- Restricted existing-process adoption to a launcher using this installation's
-  own log path.
-- Added a timeout and process-tree cleanup for account logout.
-- Fixed pane-divider drag artifacts by suspending the transparent WPF overflow
-  popup during the gesture and coalescing high-frequency layout updates.
-- Added a static divider fallback when GPU shader initialization is unavailable.
-- Added reproducible shader compilation through `d3dcompiler_47.dll`.
-- Added a reproducible Setup EXE / portable ZIP release build and a testable
-  silent installer mode.
-- Removed legacy checked-in Setup/shortcut artifacts from the source tree.
+**EN:** Introduced the `stable` update channel, SHA-256 verification and same-version repair; strengthened single-instance and process cleanup. Pinned Desktop Commander 0.2.52 and improved npx discovery. Added a static rendering fallback and reproducible shader, Setup and Portable builds.
 
 ## 1.5.4
 
-- Added the GPU activity divider and adaptive 5-15 second activity hold.
-- Prevented incoming remote tasks and second-launch behavior from stealing
-  foreground focus.
-- Added the first GitHub-backed self-update implementation with SHA256 payload
-  verification and rollback.
-- Refined the application icon and corrected monogram alignment/background.
+**RU:** Добавлен GPU-разделитель с адаптивной индикацией активности; устранён перехват фокуса входящими задачами и повторным запуском. Первое самообновление через GitHub с проверкой SHA-256 и откатом; доработан значок.
 
+**EN:** Added the GPU activity divider with adaptive hold timing; prevented focus stealing by incoming tasks and second launches. Introduced GitHub-backed self-update with SHA-256 verification and rollback; refined the icon.
+
+---
+
+Подробная техническая история старых версий сохранена в Git на теге [v1.5.18](https://github.com/1rubass1/RDC-Relay/blob/v1.5.18/CHANGELOG.md).
+
+Detailed technical history of legacy versions remains in Git at the [v1.5.18 tag](https://github.com/1rubass1/RDC-Relay/blob/v1.5.18/CHANGELOG.md).
