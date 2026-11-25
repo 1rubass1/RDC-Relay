@@ -48,7 +48,7 @@
               ],
     "migration":  {
                       "schema":  1,
-                      1true,
+                      "ready":  true,
                       "targetVersion":  "1.6.0",
                       "releaseTag":  "v1.6.0",
                       "mode":  "installer-handoff",

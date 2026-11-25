@@ -1,7 +1,7 @@
 {
     "schema":  1,
     "architecture":  "full-host-gui",
-    1true,
+    "ready":  true,
     "version":  "1.6.0",
     "tag":  "v1.6.0",
     "asset":  "RDC.Relay.Setup.v1.6.0.exe",
