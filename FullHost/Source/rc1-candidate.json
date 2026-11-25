@@ -1,0 +1,16 @@
+{
+    "candidate":  "1.6.0",
+    "stableTarget":  "1.6.0",
+    "status":  "PUBLIC_RELEASE",
+    "installable":  true,
+    "publishable":  true,
+    "liveRemoteEnabled":  true,
+    "ownerMode":  "FULL_HOST_GUI_RC1",
+    "stableManifestEnabled":  false,
+    "autoUpdateEnabled":  false,
+    "accountMutationEnabled":  true,
+    "remoteStopEnabled":  true,
+    "remoteLaunchEnabled":  true,
+    "separateOwnerApprovalRequired":  false,
+    "reason":  "Owner-confirmed logout and new pairing only for Host-owned Remote; existing Remote remains Adopted read-only"
+}

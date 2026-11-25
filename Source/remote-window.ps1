@@ -6674,3 +6674,5 @@ finally {
 
 
 
+
+if(Get-Command Complete-RdcMigrationHandoff -ErrorAction SilentlyContinue){Complete-RdcMigrationHandoff}

@@ -3,11 +3,11 @@
     "files":  [
                   {
                       "name":  "remote-window.ps1",
-                      "sha256":  "E658172FEDB5251C04AAC270969E49E6DBBA85767E99E2F13A0E400CB1659DCC"
+                      "sha256":  "75CED120979FCC1118915F30E875B2781C78B202372A1BDB5E1E6A29DD7D207D"
                   },
                   {
                       "name":  "update-notice.ps1",
-                      "sha256":  "0ED87F9B9683D9BD491D983606B92A70F7D9091E99E0BA66911EC43E4AE15DB6"
+                      "sha256":  "978E2189047CBF3298397ED17097E2FDB1133260EE1F8C4B1BA7880602A0AA0B"
                   },
                   {
                       "name":  "divider-caustic.ps",
@@ -40,6 +40,19 @@
                   {
                       "name":  "RDC Relay.cmd",
                       "sha256":  "B554118B7AC6584CD2517C4015CF836AA36E9DCBDDD6CCE8D3D503AFC76E8395"
+                  },
+                  {
+                      "name":  "legacy-migration.ps1",
+                      "sha256":  "B9C5FE02CF998525013B50614F5CA6EAE2A4AE2E87AFA6E02ED6FC1C9AF5CC41"
                   }
-              ]
+              ],
+    "migration":  {
+                      "schema":  1,
+                      "ready":  false,
+                      "targetVersion":  "1.6.0",
+                      "releaseTag":  "v1.6.0",
+                      "mode":  "installer-handoff",
+                      "asset":  "RDC.Relay.Setup.v1.6.0.exe",
+                      "setupSha256":  "DF6A85FD551DEC2E5522A844AAF02069F56FE85B37E171C44B5A07A18D5F354C"
+                  }
 }

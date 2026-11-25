@@ -327,17 +327,14 @@ $script:rdcNoticeControl.Add_Click({
     if ($SelfTest -or $Preview -or $script:initializing -or
         $script:remoteOperation -or $script:rdcNoticeInstalling) { return }
     if (-not $script:rdcNoticeControl.ButtonReady) { return }
-    $script:rdcNoticeInstalling = $true
-    $script:rdcNoticeControl.Installing = $true
-    $script:updateInstallRequested = $true
-    Start-RuntimeInitialization
+    if($script:rdcNoticeControl.OfferedVersion -ceq '1.6.0'){Start-RdcLegacyMigration}
 })
 
+. (Join-Path $PSScriptRoot 'legacy-migration.ps1')
 function Get-RdcAvailableVersionFromManifest([string]$Raw) {
     $manifest = $Raw.TrimStart([char]0xFEFF) | ConvertFrom-Json
-    $remote = [Version]([string]$manifest.version)
-    $local = [Version]$appVersion
-    if ($remote -gt $local) { return [string]$manifest.version }
+    $script:rdcMigrationOffer=Get-RdcMigrationOffer $manifest $appVersion
+    if($script:rdcMigrationOffer){return '1.6.0'}
     return $null
 }
 
@@ -431,6 +428,7 @@ function Start-RdcUpdateNoticePreview([string]$Version) {
 }
 
 function Dispose-RdcUpdateNotice {
+    Clear-RdcMigrationDownload
     if ($script:rdcNoticePreviewTimer) {
         $script:rdcNoticePreviewTimer.Stop()
         $script:rdcNoticePreviewTimer.Dispose()

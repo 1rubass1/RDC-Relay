@@ -1,0 +1,125 @@
+{
+    "candidate":  "1.6.0",
+    "kind":  "FULL_HOST_GUI_V16_PUBLIC",
+    "installable":  true,
+    "publishable":  true,
+    "ownerMode":  "FULL_HOST_GUI_RC1",
+    "files":  [
+                  {
+                      "name":  "Source/remote-window.ps1",
+                      "sha256":  "DC421F604BBB89F73B93BB59FD1611E5A7A04592C771D4B4FF8FBF3A2858CFFA"
+                  },
+                  {
+                      "name":  "Source/rc1-tray-host.ps1",
+                      "sha256":  "6F72D54A30588FB9D82818E87854CCFAF9E6281DC05FBD498F1FB1CD1CBB94F7"
+                  },
+                  {
+                      "name":  "Source/rc1-owner-gui.ps1",
+                      "sha256":  "7D089E14ED692C66D971704AE44E0F8EC816A664D772EF056DA5485B05A8FF22"
+                  },
+                  {
+                      "name":  "Source/rc1-remote-observer.ps1",
+                      "sha256":  "797D4CDFA00C56DB8A83EBF3803391BA48A7A00878AA75AD81AF2F0843461673"
+                  },
+                  {
+                      "name":  "Source/rc1-quota-client.ps1",
+                      "sha256":  "338AF843A8A02A64A6DB2C349A0805C2BAEA4A582F0804BEDABE31633E8A6E25"
+                  },
+                  {
+                      "name":  "Source/RdcOwnerWire.cs",
+                      "sha256":  "F6C384BA1C903CAFA8C148B039397D4C4CF3F199BCD7A6786A94DE5098587BDC"
+                  },
+                  {
+                      "name":  "Source/RdcOwnerRuntime.cs",
+                      "sha256":  "C425BE17ADD62253EF9F7A8A1C75FA6AFBF4C40F342A27F2295362B553BA83D5"
+                  },
+                  {
+                      "name":  "Source/RdcOwnerProcess.cs",
+                      "sha256":  "9A56B39EE55C7239E514207EC12B6D0FED8F60B6530F1ABBCB081D6286210665"
+                  },
+                  {
+                      "name":  "Source/RdcOwnerTicketStore.cs",
+                      "sha256":  "7FF34E2775775A7A2CD6B40C5C893B8D4FD4F7DE4D668DDFA0F134DCC8F3EC89"
+                  },
+                  {
+                      "name":  "Source/RdcOwnerRemoteState.cs",
+                      "sha256":  "03E35AD4558F1ABE0A8ABE00F5B152059B5211BDCF364BF37E1A42952D3D16B0"
+                  },
+                  {
+                      "name":  "Source/RdcOwnerManagedProcess.cs",
+                      "sha256":  "D9353A8C5A0ACF00EA83E9C63F8BC82341F4C60079387385AA51CC4EBEE237D1"
+                  },
+                  {
+                      "name":  "Source/RdcOwnerLogParts.cs",
+                      "sha256":  "22D4F486982C4A392FEDB27FF0FB922AE3E72B48511277F7C6A8E3323C1BEA3E"
+                  },
+                  {
+                      "name":  "Source/RdcOwnerStartup.cs",
+                      "sha256":  "FEA859575B97A687771A0577091884A4589AA8D438FBB8AAD8359AC8360F66F9"
+                  },
+                  {
+                      "name":  "Source/RdcUiLanguage.cs",
+                      "sha256":  "E37678C06ABB76AE9FA4B954EACF4CD5E52CAFB5722473A87FA16B6C6BDE6751"
+                  },
+                  {
+                      "name":  "Source/lang/ru-RU.json",
+                      "sha256":  "2F6C3F04152DE421270C9C55ADCFDE081607FD089960AC73C0740E52C71C06A6"
+                  },
+                  {
+                      "name":  "Source/lang/en-US.json",
+                      "sha256":  "9EB7360FFAD99CEE74D0ED0097F417DB5101919ECAC33B00EA767B7FDEBE974D"
+                  },
+                  {
+                      "name":  "Source/rc1-candidate.json",
+                      "sha256":  "7AD3E360CF020B9438944873E94661ECDE9A561E0322FBE49337D4F1E4F79943"
+                  },
+                  {
+                      "name":  "Source/RDCRelay.ico",
+                      "sha256":  "5FF100E2AB72453E081AF5C0157BAF41C8BCA57130C4CC42C8BDE9C612FCF1DC"
+                  },
+                  {
+                      "name":  "Source/RdcTrayV04.bin",
+                      "sha256":  "64A4009133FFB5B7CC89BD71D85B37BA2897EE5C7A715BC3C3C014625CEC3B23"
+                  },
+                  {
+                      "name":  "Source/divider-caustic.ps",
+                      "sha256":  "75756A6BF150AF0BC8ADB80655FF452BBDD8EF7253039B6D5DB93E9F172B0EC6"
+                  },
+                  {
+                      "name":  "Source/divider-caustic-detail.ps",
+                      "sha256":  "6D51DCD7E6BE84DA853B216FA03801C5C773DCB6BF7960FA495A20A355792DAB"
+                  },
+                  {
+                      "name":  "Source/divider-particles.ps",
+                      "sha256":  "40044DDA8A367A7F9AF7C8543B58985C13DD4928533F5A24FDADA0C771BD50FA"
+                  },
+                  {
+                      "name":  "Source/divider-particles-core.ps",
+                      "sha256":  "C83FAE9E7D3EA6B0C8CD02B3BEBB7C6981C24362F72BFCA5DE2059F3B460BCA2"
+                  },
+                  {
+                      "name":  "Source/update-notice.ps1",
+                      "sha256":  "943B871391954910339AF0ED2B9BA89A226D5CDBBF005FE0699CFD0F2219CA7F"
+                  },
+                  {
+                      "name":  "Source/update.ps1",
+                      "sha256":  "F977FDFF2C1E876491EC5BD669973F30E4E4A131570C0BE04E2D57FB1061776E"
+                  },
+                  {
+                      "name":  "Source/version.txt",
+                      "sha256":  "FCD2CF9842EB54382A407192AE52622F38549DC24B9AEC014019AF36E868A31E"
+                  },
+                  {
+                      "name":  "Source/THIRD_PARTY_NOTICES.txt",
+                      "sha256":  "B596AB0491C93A1DF334451B0A801CF897FCA02AC8464038D2B69785B9CC70EA"
+                  },
+                  {
+                      "name":  "RdcOwnerRuntime.dll",
+                      "sha256":  "393716B486D122F8927491492C463758C2D57488A064601A7EA6DCE6869452EE"
+                  },
+                  {
+                      "name":  "RDC Relay.exe",
+                      "sha256":  "239F1B8D95329BEF87C63083898807658A4515146628BE16BA655D1AA2725909"
+                  }
+              ]
+}
