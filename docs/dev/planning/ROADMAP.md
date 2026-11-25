@@ -46,6 +46,14 @@ After GO only: design/implement ConnectionProvider seam, normalized RdcEvent, he
 Protected credential store, pin/provenance for binaries, packaging allowlists, tested migrations/update rollback, human acceptance of GUI and independent regression tests.
 
 ## Deferred
+### Post-1.6.0 — technical debt and PowerShell runtime assessment (owner agreed, 2026-11-25)
+
+Deferred, separate engineering cycle; no fixed date or target version. **Not a blocker for release 1.6.0.**
+
+- Audit technical debt and maintainability: responsibility boundaries, duplicated/legacy code, coupling, complexity, test coverage and actual cost of change. Start with `Source/remote-window.ps1`, `Source/RdcOwnerRuntime.cs` and `Source/rc1-owner-gui.ps1`; distinguish active runtime routes from legacy compatibility code. File size alone is not evidence of debt.
+- Assess feasibility and value of progressively eliminating PowerShell from the **end-user runtime** in favor of compiled C#/.NET components. Compare incremental migration against keeping the existing implementation, including startup time, memory, distribution size, compatibility and developer workflow. Preserve the accepted GUI, Host/GUI lifecycle, IPC/security contracts, Remote ownership, installer/update compatibility, and existing regression evidence. PowerShell may remain in development/build/test tooling; upstream Desktop Commander Remote still requires its own supported runtime.
+- Produce a prioritized, evidence-based proposal before any implementation. Prefer small behavior-preserving steps over a wholesale rewrite; no framework change, code migration, version 2.0 commitment or new provider integration authorized by this note.
+
 zrok/OpenZiti, a multi-device broker and a new execution engine require separate justification/approval; do not build them opportunistically.
 
 The live role/task statuses reside **only** in [COORDINATION/BOARD.md](../../../COORDINATION/BOARD.md); this is strategic sequencing, not a competing task board.
