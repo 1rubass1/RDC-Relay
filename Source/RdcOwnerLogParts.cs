@@ -1,0 +1,429 @@
+// RDC Relay raw log byte sink. No Host/process/IPC access.
+// The caller supplies a new, verified, empty owned session directory.
+// Session publication and verified Job stream integration are separate.
+using System;
+using System.IO;
+using System.Collections.Generic;
+using System.Globalization;
+
+public sealed class RdcOwnerLogParts : IDisposable {
+ public const int PartBytes=10*1024*1024;
+ public const long SessionBytes=512L*1024*1024;
+ sealed class Part {
+  internal string Path,Date;
+  internal long Bytes;
+ }
+ readonly object gate=new object();
+ readonly string root;
+ readonly int partLimit;
+ readonly long sessionLimit;
+ readonly Func<DateTime> localClock;
+ readonly List<Part> parts=new List<Part>();
+ readonly Dictionary<string,int> lastPart=new Dictionary<string,int>(StringComparer.Ordinal);
+ FileStream writer;
+ Part active;
+ long retained;
+ bool disposed,faulted;
+ public RdcOwnerLogParts(string directory):this(directory,PartBytes,SessionBytes,()=>DateTime.Now){}
+ // Explicit test seam: no dependency on machine time or massive test files.
+ public RdcOwnerLogParts(string directory,int partBytes,long sessionBytes,Func<DateTime> clock){
+  if(String.IsNullOrWhiteSpace(directory)||!Path.IsPathRooted(directory)||
+     partBytes<1||sessionBytes<partBytes||clock==null)
+   throw new ArgumentException("RDC_LOG_PART_ARGUMENT");
+  root=Path.GetFullPath(directory);
+  Safe(root);
+  if(!Directory.Exists(root)||Directory.GetFileSystemEntries(root).Length!=0)
+   throw new IOException("RDC_LOG_SESSION_NOT_EMPTY");
+  partLimit=partBytes;sessionLimit=sessionBytes;localClock=clock;
+ }
+ static void Safe(string path){
+  for(string p=Path.GetFullPath(path);!String.IsNullOrEmpty(p);p=Path.GetDirectoryName(p)){
+   if((File.Exists(p)||Directory.Exists(p))&&(File.GetAttributes(p)&FileAttributes.ReparsePoint)!=0)
+    throw new IOException("RDC_LOG_REPARSE_REFUSED");
+  }
+ }
+ void Ready(){
+  if(disposed)throw new ObjectDisposedException("RdcOwnerLogParts");
+  if(faulted)throw new IOException("RDC_LOG_SINK_FAULTED");
+ }
+ public long RetainedBytes {get{lock(gate){return retained;}}}
+ public string[] RetainedPaths {
+  get{lock(gate){return parts.ConvertAll(p=>p.Path).ToArray();}}
+ }
+ void Seal(){
+  if(writer==null)return;
+  var stream=writer;
+  writer=null;active=null;
+  try{stream.Flush(true);}finally{stream.Dispose();}
+ }
+ void Begin(string date){
+  Safe(root);
+  int n;
+  if(!lastPart.TryGetValue(date,out n))n=0;
+  n=checked(n+1);
+  string path=Path.Combine(root,date+"_part-"+n.ToString("D3",CultureInfo.InvariantCulture)+".log");
+  Safe(path);
+  // Never overwrite or truncate an existing part, even on a clock rollback.
+  writer=new FileStream(path,FileMode.CreateNew,FileAccess.Write,FileShare.Read,65536);
+  active=new Part{Path=path,Date=date,Bytes=0};
+  lastPart[date]=n;
+  parts.Add(active);
+ }
+ void MakeSpace(int incoming){
+  // Chronological order is the writer's creation order, not the wall clock.
+  // Never delete the active part or a path not created by this instance.
+  while(retained>sessionLimit-incoming){
+   if(parts.Count==0||Object.ReferenceEquals(parts[0],active))
+    throw new IOException("RDC_LOG_RETENTION_NO_CLOSED_PART");
+   Part oldest=parts[0];
+   Safe(oldest.Path);
+   var info=new FileInfo(oldest.Path);
+   if(!info.Exists||info.Length!=oldest.Bytes)
+    throw new IOException("RDC_LOG_PART_CHANGED");
+   File.Delete(oldest.Path);
+   if(File.Exists(oldest.Path))throw new IOException("RDC_LOG_PRUNE_FAILED");
+   retained-=oldest.Bytes;
+   parts.RemoveAt(0);
+  }
+ }
+ public void Write(byte[] buffer,int offset,int count){
+  if(buffer==null)throw new ArgumentNullException("buffer");
+  if(offset<0||count<0||offset>buffer.Length-count)throw new ArgumentOutOfRangeException("count");
+  lock(gate){
+   Ready();
+   try{
+    while(count>0){
+     string date=localClock().ToString("yyyy-MM-dd",CultureInfo.InvariantCulture);
+     if(active!=null&&(active.Date!=date||active.Bytes==partLimit))Seal();
+     if(active==null)Begin(date);
+     int n=(int)Math.Min(count,partLimit-active.Bytes);
+     MakeSpace(n);
+     writer.Write(buffer,offset,n);
+     active.Bytes+=n;retained+=n;offset+=n;count-=n;
+    }
+   }catch{faulted=true;try{Seal();}catch{}throw;}
+  }
+ }
+ // Called by the future stream pump on a bounded periodic cadence and on
+ // verified process termination. Flush(true) requests durable file contents.
+ public void Flush(){
+  lock(gate){
+   Ready();
+   try{if(writer!=null)writer.Flush(true);}
+   catch{faulted=true;try{Seal();}catch{}throw;}
+  }
+ }
+ public void Dispose(){
+  lock(gate){
+   if(disposed)return;
+   disposed=true;
+   Seal();
+  }
+ }
+}
+
+// Single-reader worker, independent of GUI/Host timer. Owns the sink after
+// construction. Drain to EOF before disposing the captured process handle.
+// The bounded parser handoff is fail-closed on overflow (never silently
+// discard a gap and resume parsing). Storage failure does not stop draining.
+// Session publication and Host/UI routing are separate integration steps.
+public delegate int RdcOwnerLogReader(byte[] buffer,out bool eof);
+public sealed class RdcOwnerLogPump {
+ readonly object gate=new object();
+ readonly RdcOwnerLogReader read;
+ readonly RdcOwnerLogParts sink;
+ readonly byte[] pending;
+ readonly System.Threading.Thread worker;
+ int head,count;
+ bool cleanEof,complete,parserFault,storageFault,readFault,cancelRequested;
+ public RdcOwnerLogPump(RdcOwnerLogReader reader,RdcOwnerLogParts destination):this(reader,destination,4*1024*1024){}
+ public RdcOwnerLogPump(RdcOwnerLogReader reader,RdcOwnerLogParts destination,int parserCapacity){
+  if(reader==null||destination==null||parserCapacity<1||parserCapacity>4*1024*1024)
+   throw new ArgumentException("RDC_LOG_PUMP_ARGUMENT");
+  read=reader;sink=destination;pending=new byte[parserCapacity];
+  worker=new System.Threading.Thread(Drain);
+  worker.IsBackground=true;worker.Name="RDC Relay raw log drain";
+  worker.Start();
+ }
+ public bool Complete {get{lock(gate){return complete;}}}
+ public bool CleanEof {get{lock(gate){return cleanEof;}}}
+ public bool ParserFault {get{lock(gate){return parserFault;}}}
+ public bool StorageFault {get{lock(gate){return storageFault;}}}
+ public bool ReadFault {get{lock(gate){return readFault;}}}
+ public int PendingBytes {get{lock(gate){return count;}}}
+ public string[] RetainedPaths {get{return sink.RetainedPaths;}}
+ void Queue(byte[] data,int length){
+  lock(gate){
+   if(parserFault)return;
+   if(length>pending.Length-count){
+    parserFault=true;head=0;count=0;return;
+   }
+   int tail=(head+count)%pending.Length;
+   int first=Math.Min(length,pending.Length-tail);
+   Buffer.BlockCopy(data,0,pending,tail,first);
+   if(first<length)Buffer.BlockCopy(data,first,pending,0,length-first);
+   count+=length;
+  }
+ }
+ public int ReadPending(byte[] destination){
+  if(destination==null||destination.Length<1||destination.Length>65536)
+   throw new ArgumentException("RDC_LOG_PUMP_BUFFER");
+  lock(gate){
+   if(parserFault)return 0;
+   int n=Math.Min(destination.Length,count);
+   int first=Math.Min(n,pending.Length-head);
+   Buffer.BlockCopy(pending,head,destination,0,first);
+   if(first<n)Buffer.BlockCopy(pending,0,destination,first,n-first);
+   head=(head+n)%pending.Length;count-=n;
+   return n;
+  }
+ }
+ void StorageFailed(){lock(gate){storageFault=true;}}
+ void Drain(){
+  var buffer=new byte[32768];
+  var cadence=System.Diagnostics.Stopwatch.StartNew();
+  bool dirty=false;
+  try{
+   while(true){
+    lock(gate){if(cancelRequested)break;}
+    bool eof;
+    int n=read(buffer,out eof);
+    if(n<0||n>buffer.Length||(eof&&n!=0))throw new IOException("RDC_LOG_PUMP_READ_CONTRACT");
+    if(n>0){
+     if(!StorageFault){
+      try{sink.Write(buffer,0,n);dirty=true;}catch{StorageFailed();}
+     }
+     Queue(buffer,n);
+    }
+    if(dirty&&!StorageFault&&(eof||cadence.ElapsedMilliseconds>=1000)){
+     try{sink.Flush();dirty=false;cadence.Restart();}catch{StorageFailed();}
+    }
+    if(eof){lock(gate){cleanEof=true;}break;}
+    if(n==0)System.Threading.Thread.Sleep(10);
+   }
+  }catch{
+   lock(gate){readFault=true;}
+  }finally{
+   try{sink.Dispose();}catch{StorageFailed();}
+   lock(gate){complete=true;}
+  }
+ }
+ public void RequestStop(){lock(gate){cancelRequested=true;}}
+ public bool WaitForCompletion(int timeoutMs){
+  if(timeoutMs<0||timeoutMs>15000)throw new ArgumentOutOfRangeException("timeoutMs");
+  return worker.Join(timeoutMs);
+ }
+}
+
+// Persistent session ownership and same-volume publication. The caller
+// must hold the private Job / prove that no external Remote is running
+// before recovery, and must finish the pump before finalization.
+public sealed class RdcOwnerLogSessions : IDisposable {
+ const string IdentityName=".rdc-session-v1";
+ const string AcceptedName=".rdc-accepted-v1";
+ const string MarkerPrefix="RDC-LOG-SESSION-V1:";
+ const int MaxEntries=10000;
+ readonly string root,current,previous,retired;
+ FileStream lease;
+ bool disposed;
+ string activeId;
+ bool finalizing,finalizingAccepted;
+ public string CurrentPath {get{return current;}}
+ public string PreviousPath {get{return previous;}}
+ public RdcOwnerLogSessions(string directory){
+  if(String.IsNullOrWhiteSpace(directory)||!Path.IsPathRooted(directory))
+   throw new ArgumentException("RDC_LOG_ROOT");
+  root=Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar);
+  if(String.IsNullOrEmpty(Path.GetDirectoryName(root)))throw new IOException("RDC_LOG_ROOT_BOUNDARY");
+  Safe(root);Directory.CreateDirectory(root);Safe(root);
+  current=Path.Combine(root,"CurrentSession");
+  previous=Path.Combine(root,"PreviousSession");
+  retired=Path.Combine(root,"RetiredSession");
+  string lockPath=Path.Combine(root,".rdc-session-lock-v1");
+  Safe(lockPath);
+  lease=new FileStream(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
+ }
+ static void Safe(string path){
+  for(string p=Path.GetFullPath(path);!String.IsNullOrEmpty(p);p=Path.GetDirectoryName(p)){
+   if((File.Exists(p)||Directory.Exists(p))&&(File.GetAttributes(p)&FileAttributes.ReparsePoint)!=0)
+    throw new IOException("RDC_LOG_SESSION_REPARSE");
+  }
+ }
+ void Ready(){
+  if(disposed||lease==null)throw new ObjectDisposedException("RdcOwnerLogSessions");
+  Safe(root);
+ }
+ static bool Present(string path){
+  Safe(path);
+  if(File.Exists(path))throw new IOException("RDC_LOG_SESSION_PATH_COLLISION");
+  return Directory.Exists(path);
+ }
+ static string ReadMarker(string path){
+  Safe(path);
+  var info=new FileInfo(path);
+  if(!info.Exists||info.Length!=MarkerPrefix.Length+32)
+   throw new IOException("RDC_LOG_SESSION_MARKER");
+  string value=File.ReadAllText(path,System.Text.Encoding.ASCII);
+  if(!value.StartsWith(MarkerPrefix,StringComparison.Ordinal)||
+    !System.Text.RegularExpressions.Regex.IsMatch(value.Substring(MarkerPrefix.Length),@"\A[0-9a-f]{32}\z"))
+   throw new IOException("RDC_LOG_SESSION_MARKER");
+  return value.Substring(MarkerPrefix.Length);
+ }
+ static void WriteMarker(string path,string id){
+  Safe(path);
+  byte[] bytes=System.Text.Encoding.ASCII.GetBytes(MarkerPrefix+id);
+  using(var file=new FileStream(path,FileMode.CreateNew,FileAccess.Write,FileShare.Read)){
+   file.Write(bytes,0,bytes.Length);file.Flush(true);
+  }
+ }
+ sealed class Session {
+  internal string Id;
+  internal bool Accepted;
+  internal List<string> Files=new List<string>();
+ }
+ // No recursive deletion, wildcard cleanup, or following of unowned paths.
+ // Validate the entire directory before moving or deleting any part.
+ static Session Inspect(string path){
+  if(!Present(path))return null;
+  var result=new Session();
+  result.Id=ReadMarker(Path.Combine(path,IdentityName));
+  long total=0;int entries=0;
+  foreach(string entry in Directory.EnumerateFileSystemEntries(path)){
+   if(++entries>MaxEntries)throw new IOException("RDC_LOG_SESSION_ENTRY_LIMIT");
+   Safe(entry);
+   if(Directory.Exists(entry)||!File.Exists(entry))throw new IOException("RDC_LOG_SESSION_FOREIGN_ENTRY");
+   string name=Path.GetFileName(entry);
+   if(name==IdentityName)continue;
+   if(name==AcceptedName){
+    if(ReadMarker(entry)!=result.Id)throw new IOException("RDC_LOG_SESSION_ACCEPTED_MISMATCH");
+    result.Accepted=true;continue;
+   }
+   if(!System.Text.RegularExpressions.Regex.IsMatch(name,@"\A\d{4}-\d{2}-\d{2}_part-[0-9]{3,10}\.log\z"))
+    throw new IOException("RDC_LOG_SESSION_FOREIGN_ENTRY");
+   long size=new FileInfo(entry).Length;
+   if(size>RdcOwnerLogParts.PartBytes||size<0||total>RdcOwnerLogParts.SessionBytes-size)
+    throw new IOException("RDC_LOG_SESSION_SIZE");
+   total+=size;result.Files.Add(entry);
+  }
+  return result;
+ }
+ static void DeleteOwned(string path,Session expected){
+  if(expected==null)throw new IOException("RDC_LOG_SESSION_DELETE_PROOF");
+  var actual=Inspect(path);
+  if(actual==null||actual.Id!=expected.Id||actual.Accepted!=expected.Accepted)
+   throw new IOException("RDC_LOG_SESSION_DELETE_CHANGED");
+  foreach(string file in actual.Files){Safe(file);File.Delete(file);}
+  if(actual.Accepted)File.Delete(Path.Combine(path,AcceptedName));
+  File.Delete(Path.Combine(path,IdentityName));
+  Directory.Delete(path,false);
+ }
+ static void MoveOwned(string from,string to,Session expected){
+  var actual=Inspect(from);
+  if(expected==null||actual==null||actual.Id!=expected.Id||actual.Accepted!=expected.Accepted||Present(to))
+   throw new IOException("RDC_LOG_SESSION_MOVE_CHANGED");
+  Directory.Move(from,to);
+ }
+ // A previous-to-retired rename followed by a current-to-previous rename
+ // is recoverable by inspecting the durable IDs and accepted markers.
+ // No new current is created while an incomplete transaction exists.
+ public void Recover(){
+  Ready();
+  if(activeId!=null)throw new InvalidOperationException("RDC_LOG_SESSION_ACTIVE");
+  RecoverCore();
+ }
+ static bool RemoveReservedEmpty(string path){
+  if(!Present(path))return false;
+  using(var entries=Directory.EnumerateFileSystemEntries(path).GetEnumerator()){
+   if(entries.MoveNext())return false;
+  }
+  Directory.Delete(path,false);return true;
+ }
+ void RecoverCore(){
+  // An empty current may result from interruption before its first marker
+  // or after removal of its last owned file. Never remove nonempty unknown data.
+  RemoveReservedEmpty(current);
+  var c=Inspect(current);var p=Inspect(previous);
+  if(c==null&&p!=null&&p.Accepted)RemoveReservedEmpty(retired);
+  var r=Inspect(retired);
+  if((p!=null&&!p.Accepted)||(r!=null&&!r.Accepted&&(c!=null||p==null||r.Files.Count!=0))||
+    (c!=null&&p!=null&&c.Id==p.Id)||(c!=null&&r!=null&&c.Id==r.Id)||(p!=null&&r!=null&&p.Id==r.Id))
+   throw new IOException("RDC_LOG_SESSION_STATE");
+  if(r!=null){
+   if(c!=null&&c.Accepted&&p==null){
+    MoveOwned(current,previous,c);p=Inspect(previous);c=null;
+   }else if(c!=null||p==null){
+    // No destructive guess in an impossible or interrupted state.
+    throw new IOException("RDC_LOG_SESSION_TRANSACTION_UNKNOWN");
+   }
+   DeleteOwned(retired,r);
+  }
+  if(c==null)return;
+  if(!c.Accepted){DeleteOwned(current,c);return;}
+  Publish(c,p);
+ }
+ void Publish(Session c,Session p){
+  if(!c.Accepted||Present(retired))throw new IOException("RDC_LOG_SESSION_PUBLISH_STATE");
+  if(p!=null){
+   if(!p.Accepted||p.Id==c.Id)throw new IOException("RDC_LOG_SESSION_PREVIOUS_STATE");
+   MoveOwned(previous,retired,p);
+  }
+  MoveOwned(current,previous,c);
+  if(p!=null)DeleteOwned(retired,p);
+ }
+ public RdcOwnerLogParts Begin(){
+  Ready();
+  if(activeId!=null||Present(current)||Present(retired))
+   throw new IOException("RDC_LOG_SESSION_NOT_RECOVERED");
+  var p=Inspect(previous);
+  if(p!=null&&!p.Accepted)throw new IOException("RDC_LOG_SESSION_PREVIOUS_STATE");
+  Directory.CreateDirectory(current);
+  Safe(current);
+  // The sink requires an initially empty directory. Register its owner
+  // before handing the sink to the worker; no part is written beforehand.
+  var sink=new RdcOwnerLogParts(current);
+  try{
+   string id=Guid.NewGuid().ToString("N");
+   WriteMarker(Path.Combine(current,IdentityName),id);
+   activeId=id;return sink;
+  }catch{sink.Dispose();throw;}
+ }
+ public void Accept(){
+  Ready();
+  if(activeId==null||finalizing)throw new InvalidOperationException("RDC_LOG_SESSION_NO_ACTIVE");
+  if(ReadMarker(Path.Combine(current,IdentityName))!=activeId)
+   throw new IOException("RDC_LOG_SESSION_ACTIVE_CHANGED");
+  string path=Path.Combine(current,AcceptedName);
+  if(File.Exists(path)){
+   if(ReadMarker(path)!=activeId)throw new IOException("RDC_LOG_SESSION_ACCEPTED_MISMATCH");
+   return;
+  }
+  WriteMarker(path,activeId);
+ }
+ public void FinalizeCurrent(){
+  Ready();
+  if(activeId==null)throw new InvalidOperationException("RDC_LOG_SESSION_NO_ACTIVE");
+  if(!finalizing){
+   var c=Inspect(current);
+   if(c==null||c.Id!=activeId)throw new IOException("RDC_LOG_SESSION_ACTIVE_CHANGED");
+   finalizingAccepted=c.Accepted;finalizing=true;
+  }else{
+   // A retry must still refer to our exact session, either before the move
+   // or already published. A failed-start cleanup may have removed current.
+   RemoveReservedEmpty(current);
+   var c=Inspect(current);var p=Inspect(previous);
+   if(c!=null&&(c.Id!=activeId||c.Accepted!=finalizingAccepted))
+    throw new IOException("RDC_LOG_SESSION_ACTIVE_CHANGED");
+   if(c==null&&finalizingAccepted&&(p==null||p.Id!=activeId||!p.Accepted))
+    throw new IOException("RDC_LOG_SESSION_PUBLISH_PROOF");
+  }
+  RecoverCore();
+  activeId=null;finalizing=false;finalizingAccepted=false;
+ }
+ // Release only the lease. Never infer process exit, delete a session, or
+ // publish anything from Dispose; the next verified start can recover.
+ public void Dispose(){
+  if(disposed)return;
+  disposed=true;
+  if(lease!=null){lease.Dispose();lease=null;}
+ }
+}

@@ -1,0 +1,690 @@
+{
+  "version": "04-final",
+  "date": "2026-11-12",
+  "approval": "Owner approved design and requested saving; Connecting/Reconnecting uses orange/green; AuthPending uses orange/gray.",
+  "sizes": [
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    64
+  ],
+  "colors": {
+    "orange": "#D96528",
+    "gray": "#818181",
+    "green": "#3AAE70",
+    "purple": "#7B5FA2",
+    "red": "#DC5555"
+  },
+  "geometry": {
+    "base": "04",
+    "uniformScale": 1.17,
+    "center": [
+      16,
+      16
+    ],
+    "centerElement": false
+  },
+  "states": {
+    "Disconnected": {
+      "icon": "ICO/disconnected.ico"
+    },
+    "Unknown": {
+      "icon": "ICO/disconnected.ico"
+    },
+    "Connecting": {
+      "animation": "connecting"
+    },
+    "Reconnecting": {
+      "animation": "connecting"
+    },
+    "AuthPending": {
+      "animation": "authorization"
+    },
+    "Ready": {
+      "icon": "ICO/ready.ico"
+    },
+    "Working": {
+      "when": "state == Ready && toolActivity == working",
+      "animation": "working"
+    },
+    "Fault": {
+      "icon": "ICO/connection-error.ico"
+    }
+  },
+  "animations": {
+    "connecting": {
+      "periodMs": 1600,
+      "staticFallback": "ICO/connecting-a.ico",
+      "sequence": [
+        {
+          "file": "ICO/connecting-a.ico",
+          "durationMs": 680
+        },
+        {
+          "file": "ICO/connecting-mix-25.ico",
+          "durationMs": 40
+        },
+        {
+          "file": "ICO/connecting-mix-50.ico",
+          "durationMs": 40
+        },
+        {
+          "file": "ICO/connecting-mix-75.ico",
+          "durationMs": 40
+        },
+        {
+          "file": "ICO/connecting-b.ico",
+          "durationMs": 680
+        },
+        {
+          "file": "ICO/connecting-mix-75.ico",
+          "durationMs": 40
+        },
+        {
+          "file": "ICO/connecting-mix-50.ico",
+          "durationMs": 40
+        },
+        {
+          "file": "ICO/connecting-mix-25.ico",
+          "durationMs": 40
+        }
+      ]
+    },
+    "authorization": {
+      "periodMs": 1600,
+      "staticFallback": "ICO/authorization-a.ico",
+      "sequence": [
+        {
+          "file": "ICO/authorization-a.ico",
+          "durationMs": 680
+        },
+        {
+          "file": "ICO/authorization-mix-25.ico",
+          "durationMs": 40
+        },
+        {
+          "file": "ICO/authorization-mix-50.ico",
+          "durationMs": 40
+        },
+        {
+          "file": "ICO/authorization-mix-75.ico",
+          "durationMs": 40
+        },
+        {
+          "file": "ICO/authorization-b.ico",
+          "durationMs": 680
+        },
+        {
+          "file": "ICO/authorization-mix-75.ico",
+          "durationMs": 40
+        },
+        {
+          "file": "ICO/authorization-mix-50.ico",
+          "durationMs": 40
+        },
+        {
+          "file": "ICO/authorization-mix-25.ico",
+          "durationMs": 40
+        }
+      ]
+    },
+    "working": {
+      "periodMs": 1800,
+      "staticFallback": "ICO/working-static.ico",
+      "sequence": [
+        {
+          "file": "ICO/working-static.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-01.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-02.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-03.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-04.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-05.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-06.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-07.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-08.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-09.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-10.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-11.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-12.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-13.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-14.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-15.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-16.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-17.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-18.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-19.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-20.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-21.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-22.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-23.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-24.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-25.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-26.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-27.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-28.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-29.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-30.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-31.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-32.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-33.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-34.ico",
+          "durationMs": 50
+        },
+        {
+          "file": "ICO/working-35.ico",
+          "durationMs": 50
+        }
+      ]
+    }
+  },
+  "behavior": {
+    "toolActivityHold": "Ready icon; no pulse",
+    "individualCommandErrors": "No tray override",
+    "hostExit": "Remove icon",
+    "closeGui": "Does not imply Host exit",
+    "untrustedStatus": "Unknown icon",
+    "precedence": "Use Working only when connection state is Ready; otherwise use connection state.",
+    "tooltip": "Semantic state; not per-frame",
+    "reducedMotion": "Use animation.staticFallback",
+    "icoPlayback": "ICO is a size container, not an animation; application updates NotifyIcon.Icon using sequence durations."
+  },
+  "assets": [
+    {
+      "name": "disconnected",
+      "upper": "#818181",
+      "lower": "#818181",
+      "lowerOpacity": 1,
+      "ico": "ICO/disconnected.ico",
+      "sha256": "6d503bd5a166d397c253ea188c6b013669696ae8ccb6db3ad23930a364581766"
+    },
+    {
+      "name": "connecting-a",
+      "upper": "#D96528",
+      "lower": "#3AAE70",
+      "lowerOpacity": 1,
+      "ico": "ICO/connecting-a.ico",
+      "sha256": "34d55abb67daf428c414e4005dc8cfa458b23c649f265749f4302b094818ab0c"
+    },
+    {
+      "name": "connecting-b",
+      "upper": "#3AAE70",
+      "lower": "#D96528",
+      "lowerOpacity": 1,
+      "ico": "ICO/connecting-b.ico",
+      "sha256": "d5dc022af8f75db4238620befc3a9bce1967ef58f9268b4c5a42c5398aaea969"
+    },
+    {
+      "name": "authorization-a",
+      "upper": "#D96528",
+      "lower": "#818181",
+      "lowerOpacity": 1,
+      "ico": "ICO/authorization-a.ico",
+      "sha256": "a76f93c7fd83f8666272f6cfd91b577c95dcfdffe74d58468eda77325bc6a058"
+    },
+    {
+      "name": "authorization-b",
+      "upper": "#818181",
+      "lower": "#D96528",
+      "lowerOpacity": 1,
+      "ico": "ICO/authorization-b.ico",
+      "sha256": "60924549d60b77bb749c49f4d3bdc96a8b7d22663401625dbdd26ba2aa93af99"
+    },
+    {
+      "name": "ready",
+      "upper": "#D96528",
+      "lower": "#3AAE70",
+      "lowerOpacity": 1,
+      "ico": "ICO/ready.ico",
+      "sha256": "34d55abb67daf428c414e4005dc8cfa458b23c649f265749f4302b094818ab0c"
+    },
+    {
+      "name": "working-static",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 1,
+      "ico": "ICO/working-static.ico",
+      "sha256": "a0772e653d40aa59fb7401511e0e505b0d9f4f8f5c66f04bd5b992d3a5ba32a6"
+    },
+    {
+      "name": "connection-error",
+      "upper": "#DC5555",
+      "lower": "#DC5555",
+      "lowerOpacity": 1,
+      "ico": "ICO/connection-error.ico",
+      "sha256": "05f6b0e8f3d3326ba483901de19f14db30381da1897df0cec55ba15ed16d7ad8"
+    },
+    {
+      "name": "connecting-mix-25",
+      "upper": "#B1773A",
+      "lower": "#629C5E",
+      "lowerOpacity": 1,
+      "ico": "ICO/connecting-mix-25.ico",
+      "sha256": "d77e099747f20b69cbdfff2b42b44a2f8e1c7223ec659ea264ad4c22eb5448e4"
+    },
+    {
+      "name": "connecting-mix-50",
+      "upper": "#8A8A4C",
+      "lower": "#8A8A4C",
+      "lowerOpacity": 1,
+      "ico": "ICO/connecting-mix-50.ico",
+      "sha256": "de7e4bfca86f43a6961f16ed6160dce67fa4c0d76661dd20ee401119d8386ac0"
+    },
+    {
+      "name": "connecting-mix-75",
+      "upper": "#629C5E",
+      "lower": "#B1773A",
+      "lowerOpacity": 1,
+      "ico": "ICO/connecting-mix-75.ico",
+      "sha256": "e6ddf3ddd0105e5a720548b98591b30f32850bf7eea32439cc51ff6a5732ba0d"
+    },
+    {
+      "name": "authorization-mix-25",
+      "upper": "#C36C3E",
+      "lower": "#977A6B",
+      "lowerOpacity": 1,
+      "ico": "ICO/authorization-mix-25.ico",
+      "sha256": "5359449feb5bced8ddf505c25d637d7afde8a592551ee4e4882898e4ccc4338b"
+    },
+    {
+      "name": "authorization-mix-50",
+      "upper": "#AD7355",
+      "lower": "#AD7355",
+      "lowerOpacity": 1,
+      "ico": "ICO/authorization-mix-50.ico",
+      "sha256": "f8029a9a9d9be564b56ca73ef74a46d4e23cd320ca24a29dbc056aea2c4f2515"
+    },
+    {
+      "name": "authorization-mix-75",
+      "upper": "#977A6B",
+      "lower": "#C36C3E",
+      "lowerOpacity": 1,
+      "ico": "ICO/authorization-mix-75.ico",
+      "sha256": "6b8dbccb727a482e3294a297e26dcff3aefa5b559d6dfa4bb9427d39f7464edc"
+    },
+    {
+      "name": "working-01",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.9967127342212152,
+      "ico": "ICO/working-01.ico",
+      "sha256": "a0772e653d40aa59fb7401511e0e505b0d9f4f8f5c66f04bd5b992d3a5ba32a6"
+    },
+    {
+      "name": "working-02",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.9865499570135238,
+      "ico": "ICO/working-02.ico",
+      "sha256": "c5151dc996b93fe8755c979959b60d105ee70934d05c4fbba10ebfa7610b6459"
+    },
+    {
+      "name": "working-03",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.9691280492260156,
+      "ico": "ICO/working-03.ico",
+      "sha256": "fbfeac68156e14f777ab2699529ccd353dd65440223d60b0661eafa441ab9037"
+    },
+    {
+      "name": "working-04",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.9442215991679314,
+      "ico": "ICO/working-04.ico",
+      "sha256": "63856c3e87a1fa4823d13bff320a308ea743cc1c9dc19274bb59a60d85a84247"
+    },
+    {
+      "name": "working-05",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.9118730391709314,
+      "ico": "ICO/working-05.ico",
+      "sha256": "367fd61762904727796fe77f885b172c5ebd1364f259b795a79b8c145ab2903c"
+    },
+    {
+      "name": "working-06",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.8725238513515238,
+      "ico": "ICO/working-06.ico",
+      "sha256": "3cf6635e918654fd54e5ad04f8f5da30aa5b6c54f74a2422ae93486caafc5d60"
+    },
+    {
+      "name": "working-07",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.8271387921076712,
+      "ico": "ICO/working-07.ico",
+      "sha256": "7f5c6c36760015b682cc4e592afdf5714b11ddbe2b7c34231bdb8bbdfd1ffa1d"
+    },
+    {
+      "name": "working-08",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.7772701673464606,
+      "ico": "ICO/working-08.ico",
+      "sha256": "83c11967cd88150795250a2943a2c6ebbd9197102d1cd557e9b22fcc81d5bd3d"
+    },
+    {
+      "name": "working-09",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.7250000003841706,
+      "ico": "ICO/working-09.ico",
+      "sha256": "aa8c46348b4b31d0019125f3f1a49b243144cf87ff10da67c0417f5cd6240b45"
+    },
+    {
+      "name": "working-10",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.6727298326535394,
+      "ico": "ICO/working-10.ico",
+      "sha256": "f350b1ec042fa4c0f21f4c3af202c58a6ef2c669f5cd5407ad36568c6e381769"
+    },
+    {
+      "name": "working-11",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.6228612078923289,
+      "ico": "ICO/working-11.ico",
+      "sha256": "c234ee370dc1560b2d79f015cd719df9d3e0bc133af19edd9597a94bd9a68263"
+    },
+    {
+      "name": "working-12",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.5774761486484763,
+      "ico": "ICO/working-12.ico",
+      "sha256": "87e0a91490349e5124b3e8bf822f34319cad8349728bee0cf040dde65788c4dd"
+    },
+    {
+      "name": "working-13",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.5381269608290685,
+      "ico": "ICO/working-13.ico",
+      "sha256": "c30909fd83c544b92837b7026502b891b2ad7504c37b9730520bae8f06512983"
+    },
+    {
+      "name": "working-14",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.5057784008320687,
+      "ico": "ICO/working-14.ico",
+      "sha256": "532d6f07c296d2b4ac9b94825de4e520915458077afe920fca9370abc1216c8f"
+    },
+    {
+      "name": "working-15",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.48087195077398437,
+      "ico": "ICO/working-15.ico",
+      "sha256": "3e08d521c8c68aa6a015de4a69ee1beb1b9147b4d10f38fbe363b541ab1e0289"
+    },
+    {
+      "name": "working-16",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.4634500429864763,
+      "ico": "ICO/working-16.ico",
+      "sha256": "b098e8f60e1d647069833c42556472dabaab3a4bc629ee23a893a60f7cff4a80"
+    },
+    {
+      "name": "working-17",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.45328726577878475,
+      "ico": "ICO/working-17.ico",
+      "sha256": "09557823cc4f384bec3a76c3ff456247e75de8fb12c15346e9face80108b7043"
+    },
+    {
+      "name": "working-18",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.44999999999999996,
+      "ico": "ICO/working-18.ico",
+      "sha256": "c80479f11e12907ace0371e7e8595142beeadca94e03a0cb30db0aa80a3bed2d"
+    },
+    {
+      "name": "working-19",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.45328726577878475,
+      "ico": "ICO/working-19.ico",
+      "sha256": "09557823cc4f384bec3a76c3ff456247e75de8fb12c15346e9face80108b7043"
+    },
+    {
+      "name": "working-20",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.4634500429864763,
+      "ico": "ICO/working-20.ico",
+      "sha256": "b098e8f60e1d647069833c42556472dabaab3a4bc629ee23a893a60f7cff4a80"
+    },
+    {
+      "name": "working-21",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.48087195077398437,
+      "ico": "ICO/working-21.ico",
+      "sha256": "3e08d521c8c68aa6a015de4a69ee1beb1b9147b4d10f38fbe363b541ab1e0289"
+    },
+    {
+      "name": "working-22",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.5057784008320687,
+      "ico": "ICO/working-22.ico",
+      "sha256": "532d6f07c296d2b4ac9b94825de4e520915458077afe920fca9370abc1216c8f"
+    },
+    {
+      "name": "working-23",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.5381269608290685,
+      "ico": "ICO/working-23.ico",
+      "sha256": "c30909fd83c544b92837b7026502b891b2ad7504c37b9730520bae8f06512983"
+    },
+    {
+      "name": "working-24",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.5774761486484763,
+      "ico": "ICO/working-24.ico",
+      "sha256": "87e0a91490349e5124b3e8bf822f34319cad8349728bee0cf040dde65788c4dd"
+    },
+    {
+      "name": "working-25",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.6228612078923289,
+      "ico": "ICO/working-25.ico",
+      "sha256": "c234ee370dc1560b2d79f015cd719df9d3e0bc133af19edd9597a94bd9a68263"
+    },
+    {
+      "name": "working-26",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.6727298326535394,
+      "ico": "ICO/working-26.ico",
+      "sha256": "f350b1ec042fa4c0f21f4c3af202c58a6ef2c669f5cd5407ad36568c6e381769"
+    },
+    {
+      "name": "working-27",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.7250000003841706,
+      "ico": "ICO/working-27.ico",
+      "sha256": "aa8c46348b4b31d0019125f3f1a49b243144cf87ff10da67c0417f5cd6240b45"
+    },
+    {
+      "name": "working-28",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.7772701673464606,
+      "ico": "ICO/working-28.ico",
+      "sha256": "83c11967cd88150795250a2943a2c6ebbd9197102d1cd557e9b22fcc81d5bd3d"
+    },
+    {
+      "name": "working-29",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.8271387921076712,
+      "ico": "ICO/working-29.ico",
+      "sha256": "7f5c6c36760015b682cc4e592afdf5714b11ddbe2b7c34231bdb8bbdfd1ffa1d"
+    },
+    {
+      "name": "working-30",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.8725238513515238,
+      "ico": "ICO/working-30.ico",
+      "sha256": "3cf6635e918654fd54e5ad04f8f5da30aa5b6c54f74a2422ae93486caafc5d60"
+    },
+    {
+      "name": "working-31",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.9118730391709314,
+      "ico": "ICO/working-31.ico",
+      "sha256": "367fd61762904727796fe77f885b172c5ebd1364f259b795a79b8c145ab2903c"
+    },
+    {
+      "name": "working-32",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.9442215991679314,
+      "ico": "ICO/working-32.ico",
+      "sha256": "63856c3e87a1fa4823d13bff320a308ea743cc1c9dc19274bb59a60d85a84247"
+    },
+    {
+      "name": "working-33",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.9691280492260156,
+      "ico": "ICO/working-33.ico",
+      "sha256": "fbfeac68156e14f777ab2699529ccd353dd65440223d60b0661eafa441ab9037"
+    },
+    {
+      "name": "working-34",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.9865499570135238,
+      "ico": "ICO/working-34.ico",
+      "sha256": "c5151dc996b93fe8755c979959b60d105ee70934d05c4fbba10ebfa7610b6459"
+    },
+    {
+      "name": "working-35",
+      "upper": "#D96528",
+      "lower": "#7B5FA2",
+      "lowerOpacity": 0.9967127342212152,
+      "ico": "ICO/working-35.ico",
+      "sha256": "a0772e653d40aa59fb7401511e0e505b0d9f4f8f5c66f04bd5b992d3a5ba32a6"
+    }
+  ]
+}

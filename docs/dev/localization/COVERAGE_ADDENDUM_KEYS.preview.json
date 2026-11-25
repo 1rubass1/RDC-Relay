@@ -1,0 +1,186 @@
+{
+  "status": "DRAFT_NOT_RUNTIME",
+  "note": "Additional display-only proposals after 117 candidate source audit; not connected to GUI/Host/Setup. Do not translate parser anchor Remote Connection.",
+  "entries": [
+    {
+      "key": "owner.fallback.status.connected",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Подключён",
+      "en-US": "Connected"
+    },
+    {
+      "key": "owner.fallback.status.connecting",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Подключение",
+      "en-US": "Connecting"
+    },
+    {
+      "key": "owner.fallback.status.authenticating",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Авторизация",
+      "en-US": "Authenticating"
+    },
+    {
+      "key": "owner.fallback.status.reconnecting",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Восстановление",
+      "en-US": "Reconnecting"
+    },
+    {
+      "key": "owner.fallback.status.connectionFault",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Ошибка связи",
+      "en-US": "Connection fault"
+    },
+    {
+      "key": "owner.fallback.status.disconnected",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Отключён",
+      "en-US": "Disconnected"
+    },
+    {
+      "key": "owner.fallback.status.unknown",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Неизвестно",
+      "en-US": "Unknown"
+    },
+    {
+      "key": "owner.fallback.status.online",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "В сети",
+      "en-US": "Online"
+    },
+    {
+      "key": "owner.fallback.value.notReported",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "не указано",
+      "en-US": "not reported"
+    },
+    {
+      "key": "owner.fallback.value.notStarted",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "не запущен",
+      "en-US": "not started"
+    },
+    {
+      "key": "owner.fallback.ownership.managed",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Управляемая сессия Host",
+      "en-US": "Managed: Host-owned Job"
+    },
+    {
+      "key": "owner.fallback.ownership.adopted",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Существующая сессия: только наблюдение",
+      "en-US": "Adopted: read-only"
+    },
+    {
+      "key": "owner.fallback.proof.receivedMarker",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Host получил подтверждение подключения Remote",
+      "en-US": "Remote connection marker received by Host"
+    },
+    {
+      "key": "owner.fallback.proof.unconfirmed",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Подключение пока не подтверждено",
+      "en-US": "Connected state not currently confirmed"
+    },
+    {
+      "key": "owner.fallback.label.status",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Состояние: ",
+      "en-US": "Status: "
+    },
+    {
+      "key": "owner.fallback.label.user",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "- Пользователь: ",
+      "en-US": "- User: "
+    },
+    {
+      "key": "owner.fallback.label.deviceName",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "- Имя устройства: ",
+      "en-US": "- Device Name: "
+    },
+    {
+      "key": "owner.fallback.label.deviceId",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "- ID устройства: ",
+      "en-US": "- Device ID: "
+    },
+    {
+      "key": "owner.fallback.label.process",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Процесс: ",
+      "en-US": "Process: "
+    },
+    {
+      "key": "owner.fallback.label.ownership",
+      "source": "Source/rc1-owner-gui.ps1",
+      "ru-RU": "Принадлежность: ",
+      "en-US": "Ownership: "
+    },
+    {
+      "key": "tray.title.managedHost",
+      "source": "Source/RdcOwnerRuntime.cs",
+      "ru-RU": "RDC Relay {version} | Host",
+      "en-US": "RDC Relay {version} | Host"
+    },
+    {
+      "key": "legacy.gui.npxMissing",
+      "source": "Source/remote-window.ps1",
+      "ru-RU": "npx.cmd не найден. Установите Node.js 18 или новее.",
+      "en-US": "npx.cmd was not found. Install Node.js 18 or later."
+    },
+    {
+      "key": "legacy.gui.titleWithState",
+      "source": "Source/remote-window.ps1",
+      "ru-RU": "RDC Relay — {state}",
+      "en-US": "RDC Relay — {state}"
+    },
+    {
+      "key": "installer.legacy.launchFailed",
+      "source": "Installer/Launcher.cs",
+      "ru-RU": "Не удалось запустить RDC Relay.\r\n\r\n{error}",
+      "en-US": "Could not start RDC Relay.\r\n\r\n{error}"
+    },
+    {
+      "key": "installer.legacy.openWindowFirst",
+      "source": "Installer/Setup.cs",
+      "ru-RU": "Закройте окно RDC Relay перед установкой. Работающая версия не изменена.",
+      "en-US": "Close the RDC Relay window before installing. The running version has not been changed."
+    },
+    {
+      "key": "installer.legacy.installBusy",
+      "source": "Installer/Setup.cs",
+      "ru-RU": "Другая установка или обновление RDC Relay уже выполняется.",
+      "en-US": "Another RDC Relay installation or update is already in progress."
+    },
+    {
+      "key": "installer.legacy.upgradeTitle",
+      "source": "Installer/Setup.cs",
+      "ru-RU": "RDC Relay — обновление",
+      "en-US": "RDC Relay — Update"
+    },
+    {
+      "key": "installer.legacy.installedSuccess",
+      "source": "Installer/Setup.cs",
+      "ru-RU": "RDC Relay v{version} установлен.\r\n\r\nИспользуйте ярлык «RDC Relay» на рабочем столе или в меню Пуск.",
+      "en-US": "RDC Relay v{version} was installed.\r\n\r\nUse the “RDC Relay” shortcut on the desktop or Start menu."
+    },
+    {
+      "key": "installer.legacy.installFailed",
+      "source": "Installer/Setup.cs",
+      "ru-RU": "Не удалось установить RDC Relay.\r\n\r\n{error}",
+      "en-US": "Could not install RDC Relay.\r\n\r\n{error}"
+    },
+    {
+      "key": "installer.legacy.setPrimaryPrompt",
+      "source": "Installer/RdcReleaseInstallState.cs",
+      "ru-RU": "Установить RDC Relay {version} как основную оболочку?",
+      "en-US": "Set RDC Relay {version} as the primary interface?"
+    }
+  ]
+}

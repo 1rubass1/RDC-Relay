@@ -1,0 +1,507 @@
+﻿# G121: Help icon next to title -> direct About -> real retained Owner journal.
+# AST-driven real WinForms controls and click; no installed app, Host or Remote.
+$ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+$path=Join-Path (Split-Path -Parent $PSScriptRoot) 'Source\remote-window.ps1'
+Add-Type -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'Source\RdcUiLanguage.cs') -ReferencedAssemblies @('System.dll','System.Core.dll','System.Web.Extensions.dll')
+$raw=[IO.File]::ReadAllText($path,[Text.Encoding]::UTF8)
+. (Join-Path $PSScriptRoot 'Import-V16OwnerModalButtonType.ps1') -SourcePath $path
+# Compile the exact production RichEdit and overlay scrollbar controls
+# in this isolated test, without launching the application or Remote.
+$bufferStart=$raw.IndexOf('public class RdcBufferedPanel : Panel {',[StringComparison]::Ordinal)
+$bufferEnd=$raw.IndexOf('public class RdcDividerDragPreview : Control {',$bufferStart,[StringComparison]::Ordinal)
+$logStart=$raw.IndexOf('public class RdcLogBox : RichTextBox {',[StringComparison]::Ordinal)
+$logEnd=$raw.IndexOf("'@ -ReferencedAssemblies",$logStart,[StringComparison]::Ordinal)
+if($bufferStart -lt 0 -or $bufferEnd -le $bufferStart -or
+ $logStart -lt 0 -or $logEnd -le $logStart){throw 'RC1_JOURNAL_PRODUCTION_CONTROLS_NOT_FOUND'}
+$nativeCode='using System;using System.IO;using System.Text;using System.Drawing;using System.Drawing.Drawing2D;using System.Windows.Forms;using System.Runtime.InteropServices;using System.Diagnostics;' + [Environment]::NewLine +
+ $raw.Substring($bufferStart,$bufferEnd-$bufferStart)+[Environment]::NewLine+
+ $raw.Substring($logStart,$logEnd-$logStart)
+Add-Type -TypeDefinition $nativeCode -ReferencedAssemblies @('System.dll','System.Drawing.dll','System.Windows.Forms.dll')
+$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
+$pass=0;$fail=0
+function Check([bool]$ok,[string]$name){
+ if($ok){$script:pass++;Write-Output ('PASS '+$name)}
+ else{$script:fail++;Write-Output ('FAIL '+$name)}
+}
+Check ($errors.Count -eq 0) 'production GUI source parses'
+$legacyTextBox=New-Object RdcLogBox
+try{Check (-not $legacyTextBox.JournalNativeInteraction -and $legacyTextBox.HideSelection) 'main text panes preserve their legacy non-document interaction defaults'}finally{$legacyTextBox.Dispose()}
+Check ($raw.Contains('$helpButton = New-Object Windows.Forms.Button') -and
+ $raw.Contains('$helpButton.Image=([Drawing.SystemIcons]::Question).ToBitmap()') -and
+ $raw.Contains('$helpButton.AccessibleName='+ "'Справка / О программе'") -and
+ $raw.Contains('$top.Controls.Add($titleHost,1,0)') -and
+ $raw.Contains('if(-not $OwnerGui){[void]$titleHost.Controls.Add($helpButton)}') -and
+ $raw.Contains('$bottom.Controls.Add($helpButton,2,0)') -and
+ -not $raw.Contains('$actions.Controls.Add($helpButton)')) 'native blue Help icon is in owner footer, not title or Stop/Account actions'
+Check (-not $raw.Contains('$helpMenu =') -and
+ -not $raw.Contains('$helpMenu.Show(') -and
+ -not $raw.Contains('$openLogItem.Add_Click(') -and
+ -not $raw.Contains('$aboutItem.Add_Click(')) 'superseded Help context menu and invisible-focus journal action removed'
+Check ($raw.Contains('$helpButton.FlatStyle=[Windows.Forms.FlatStyle]::Flat') -and
+ $raw.Contains('$helpButton.FlatAppearance.BorderSize=0') -and
+ $raw.Contains('$helpButton.FlatAppearance.MouseOverBackColor=$helpButton.BackColor') -and
+ $raw.Contains('$helpButton.FlatAppearance.MouseDownBackColor=$helpButton.BackColor') -and
+ $raw.Contains('$helpButton.UseVisualStyleBackColor=$false')) 'Help stays borderless with no hover or pressed background color'
+Check ($raw.Contains('$helpButton.TabStop = $true') -and
+ $raw.Contains('$helpButton.AccessibleRole=[Windows.Forms.AccessibleRole]::PushButton')) 'Help retains keyboard Tab access and accessible button role'
+$direct=@($ast.FindAll({param($n)
+ $n -is [Management.Automation.Language.ScriptBlockExpressionAst] -and
+ $n.Extent.Text -match '(?s)^\{\s*try \{ Show-RdcAbout \}\s*finally \{ \$form\.ActiveControl=\$null \}\s*\}$'
+},$true))
+Check ($direct.Count -eq 1 -and
+ $raw.Contains('$helpButton.Add_Click({') -and
+ -not $raw.Contains('$helpMenu =')) 'Help click directly opens About without an intermediate menu'
+Check (-not $raw.Contains('$helpButton.Add_MouseDown({') -and
+ $raw.Contains('Do not change focus during MouseDown: WinForms may then suppress the Click.')) 'no mouse-down focus manipulation can suppress native button click'
+if($direct.Count -eq 1) {
+ $script:aboutClicks=0
+ function Show-RdcAbout {$script:aboutClicks++}
+ $form=New-Object Windows.Forms.Form
+ $helpButton=New-Object Windows.Forms.Button
+ $form.ShowInTaskbar=$false
+ $form.StartPosition=[Windows.Forms.FormStartPosition]::Manual
+ $form.Location=[Drawing.Point]::new(-10000,-10000)
+ $form.Size=[Drawing.Size]::new(170,100)
+ $helpButton.Location=[Drawing.Point]::new(10,10)
+ $helpButton.Size=[Drawing.Size]::new(32,32)
+ [void]$form.Controls.Add($helpButton)
+ try {
+  $click=& ([scriptblock]::Create($direct[0].Extent.Text))
+  $helpButton.Add_Click($click)
+  $form.Show()
+  $form.ActiveControl=$helpButton
+  $helpButton.PerformClick()
+  Check ($script:aboutClicks -eq 1 -and $form.ActiveControl -eq $null) 'actual WinForms PerformClick opens About and releases lingering focus'
+  # Dispatch button-local mouse messages to its own isolated, off-screen HWND;
+  # no system cursor, installed GUI, tray, or Remote is touched.
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class RdcHelpButtonMouseTest {
+ [DllImport("user32.dll",CharSet=CharSet.Auto)]
+ public static extern IntPtr SendMessage(IntPtr hWnd,uint msg,IntPtr wParam,IntPtr lParam);
+}
+'@
+  $form.ActiveControl=$helpButton
+  $localPoint=[IntPtr]::new((6 -shl 16) -bor 6)
+  [void][RdcHelpButtonMouseTest]::SendMessage($helpButton.Handle,0x0201,[IntPtr]::new(1),$localPoint)
+  [void][RdcHelpButtonMouseTest]::SendMessage($helpButton.Handle,0x0202,[IntPtr]::Zero,$localPoint)
+  [Windows.Forms.Application]::DoEvents()
+  Check ($script:aboutClicks -eq 2 -and $form.ActiveControl -eq $null) 'native WM_LBUTTONDOWN/UP opens About exactly once, without residual focus'
+ }finally{$form.Close();$form.Dispose()}
+}
+foreach($name in @('Get-RdcOwnerDialogText','Get-RdcOwnerJournalText','Write-RdcOwnerJournalTxtFile',
+ 'Save-RdcOwnerJournalTxt','New-RdcOwnerJournalDialog',
+ 'Show-RdcOwnerJournal','New-RdcOwnerHelpDialog')){
+ $fn=$ast.Find({param($n)
+  $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+  $n.Name -ceq $name
+ },$true)
+ if(-not $fn){throw ('G121_PRODUCTION_FUNCTION_MISSING '+$name)}
+ . ([scriptblock]::Create($fn.Extent.Text))
+}
+function Get-RdcOwnerUiText([string]$key,[string]$fallback){return $fallback}
+$script:ownerTextFontFamily='Consolas'
+$script:eventBlocks=New-Object System.Collections.ArrayList
+$script:currentEvent=''
+Check ((Get-RdcOwnerJournalText) -ceq 'Журнал пока пуст.') 'empty event history explicitly shows empty journal, never a blank window'
+for($i=1;$i -le 12;$i++){
+ [void]$script:eventBlocks.Add(('000{0:D3} │ Событие {0}' -f $i))
+}
+$script:currentEvent='000013 │ Текущая операция'
+$snapshot=Get-RdcOwnerJournalText
+Check ($snapshot.Contains('000001 │ Событие 1') -and
+ $snapshot.Contains('000012 │ Событие 12') -and
+ $snapshot.Contains('000013 │ Текущая операция') -and
+ @($snapshot -split [Environment]::NewLine).Count -ge 13) 'journal snapshot contains all retained events and active event, not last viewport-size six'
+Check ($raw.Contains('while ($script:eventBlocks.Count -gt $retained)') -and
+ $raw.Contains('$retained=if($OwnerGui){64}else{6}') -and
+ $raw.Contains('function Open-RdcOwnerRawLog')) 'processed journal remains bounded; raw log is a separate explicit owner action'
+$journal=New-RdcOwnerJournalDialog $snapshot
+try{
+ Check ($journal.Name -ceq 'rc1-journal-dialog' -and
+  $journal.Text -ceq 'RDC Relay - Журнал' -and
+  $journal.Text -notmatch 'RC1|v1|1\.6' -and
+  $journal.StartPosition -eq [Windows.Forms.FormStartPosition]::CenterParent -and
+  -not $journal.ShowInTaskbar) 'real journal is dedicated, resizable and version-free'
+ $layout=@($journal.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+ $headerHost=$layout.GetControlFromPosition(0,0)
+ $heading=$headerHost.Controls['rc1-journal-heading']
+ $purpleRail=$layout.GetControlFromPosition(0,1)
+ $textHost=$layout.GetControlFromPosition(0,2)
+ # No lower footer separator: row 3 holds the footer directly.
+ $footer=$layout.GetControlFromPosition(0,3)
+ $body=$textHost.Controls['rc1-journal-content']
+ $vert=$textHost.Controls['rc1-journal-vscroll']
+ $horizontal=$textHost.Controls['rc1-journal-hscroll']
+ $corner=$textHost.Controls['rc1-journal-scroll-corner']
+ $save=$footer.Controls['rc1-journal-save-txt']
+ $close=$footer.Controls['rc1-journal-close']
+ Check ($heading.Text -ceq 'Журнал' -and $heading.Font.Bold -and
+  $headerHost.BackColor.ToArgb() -eq $journal.BackColor.ToArgb() -and
+  $purpleRail.BackColor.ToArgb() -eq [Drawing.Color]::FromArgb(123,95,162).ToArgb() -and
+  $layout.RowCount -eq 4 -and $layout.RowStyles.Count -eq 4 -and
+  $layout.RowStyles[1].Height -eq 1) 'journal has main-window header and full-width purple separator'
+ Check ($body -is [RdcLogBox] -and $textHost -is [RdcBufferedPanel] -and
+  $body.Text -ceq $snapshot -and $body.ReadOnly -and
+  -not $body.WordWrap -and -not $body.DetectUrls -and
+  $body.ScrollBars -eq [Windows.Forms.RichTextBoxScrollBars]::None -and
+  $body.BackColor.ToArgb() -eq [Drawing.Color]::FromArgb(18,20,23).ToArgb() -and
+  $body.JournalNativeInteraction -and $body.ShortcutsEnabled -and
+  -not $body.HideSelection -and $body.TabStop) 'journal RichEdit is read-only but supports native selection, copy and wheel interactions'
+ Check ($vert -is [RdcOverlayScrollBar] -and $vert.Vertical -and
+  $horizontal -is [RdcOverlayScrollBar] -and -not $horizontal.Vertical -and
+  [object]::ReferenceEquals($vert.Target,$body) -and
+  [object]::ReferenceEquals($horizontal.Target,$body) -and
+  $corner -is [RdcJournalScrollGrip] -and
+  $corner.Cursor -eq [Windows.Forms.Cursors]::SizeNWSE -and
+  -not $corner.IsResizing) 'custom sliders and functional diagonal whole-window grip reuse production artwork'
+ Check ($layout.Controls.Find('rc1-journal-footer-separator',$true).Count -eq 0 -and
+  $layout.RowStyles[3].Height -eq 62 -and
+  $footer.BackColor.ToArgb() -eq $journal.BackColor.ToArgb() -and
+  $save.Text -ceq 'Сохранить TXT' -and
+  $close.Text -ceq 'Закрыть' -and
+  $save -is [RdcModalButton] -and $close -is [RdcModalButton] -and
+  $journal.AcceptButton -eq $close -and
+  $journal.CancelButton -eq $close -and $journal.Tag -ceq $snapshot) 'independent footer holds explicit TXT export and keyboard Close, not an auto-export'
+ Check ($raw.Contains('$dialog.MinimumSize=[Drawing.Size]::new(520,280)') -and
+  $journal.MinimumSize.Width -ge 520 -and
+  $journal.MinimumSize.Height -ge 280 -and
+  $journal.FormBorderStyle -eq [Windows.Forms.FormBorderStyle]::Sizable) 'journal preserves original 520x280 minimum size while supporting free resize above it'
+ Check ($body.ContextMenuStrip -ne $null -and
+  $body.ContextMenuStrip.Items.Count -eq 2 -and
+  $body.ContextMenuStrip.Items['rc1-journal-copy'].Text -ceq 'Копировать' -and
+  $body.ContextMenuStrip.Items['rc1-journal-select-all'].Text -ceq 'Выделить всё') 'journal exposes explicit copy and select-all context actions'
+ $journal.StartPosition=[Windows.Forms.FormStartPosition]::Manual
+ $journal.Location=[Drawing.Point]::new(-10000,-10000)
+ $journal.Show()
+ [Windows.Forms.Application]::DoEvents()
+ $journal.PerformLayout();$layout.PerformLayout();$textHost.PerformLayout()
+ Check ($layout.ClientSize.Width -eq $journal.ClientSize.Width -and
+  $body.ClientSize.Width -gt 320 -and $body.ClientSize.Height -gt 150 -and
+  $vert.Bounds.X -eq $body.Width -and $vert.Width -eq 17 -and
+  $vert.Height -eq $body.Height -and
+  $horizontal.Bounds.Y -eq $body.Height -and
+  $horizontal.Width -eq $body.Width -and $horizontal.Height -eq 17 -and
+  $corner.Left -eq $body.Width -and $corner.Top -eq $body.Height) 'actual WinForms child geometry matches the main text panel and its 17px scrollbar tracks'
+ Check ($footer.Top -eq $textHost.Bottom -and
+  $textHost.Bottom -eq $layout.ClientSize.Height-$footer.Height -and
+  $footer.Left -eq $textHost.Left -and $footer.Width -eq $textHost.Width) 'journal footer is immediately adjacent to text surface, with no accent rail or 1px gap'
+ Check ($save.Bottom -le $footer.ClientSize.Height -and
+  $close.Bottom -le $footer.ClientSize.Height -and
+  $save.Left -lt $close.Left) 'save and close buttons fit in lower panel without clipping'
+ $journal.ClientSize=[Drawing.Size]::new(540,310)
+ [Windows.Forms.Application]::DoEvents()
+ Check ($vert.Left -eq $body.Width -and $vert.Height -eq $body.Height -and
+  $horizontal.Top -eq $body.Height -and $body.Width -ge 450 -and
+  $body.Height -gt 150) 'custom scrollbars reflow correctly when modal is resized near minimum'
+  $journal.Size=[Drawing.Size]::new(150,140)
+  [Windows.Forms.Application]::DoEvents()
+  Check ($journal.Width -ge 520 -and $journal.Height -ge 280 -and
+   $footer.Top -eq $textHost.Bottom -and $corner.Right -eq $textHost.Width) 'real WinForms journal clamps resizing to original 520x280 and preserves footer/grip layout'
+}finally{$journal.Close();$journal.Dispose()}
+# Regression for a user-observed exception: PowerShell's automatic $Host
+# variable is read-only, including lowercase $host. Perform the real native
+# Save button click; intercept only the file-picker stage and exercise the
+# actual production TXT writer with an isolated temp destination.
+$saveHandler=$ast.Find({param($n)
+ $n -is [Management.Automation.Language.ScriptBlockExpressionAst] -and
+ $n.Extent.Text.Contains('Save-RdcOwnerJournalTxt $journalForm ([string]$journalForm.Tag)')
+},$true)
+Check ($null -ne $saveHandler -and
+ -not [regex]::IsMatch($raw,'(?im)^\s*\$host\s*=') -and
+ $raw.Contains('Save-RdcOwnerJournalTxt $journalForm ([string]$journalForm.Tag)')) 'Save button never assigns to read-only PowerShell automatic variable $Host'
+Check ($raw.Contains('$picker.ShowDialog($parent)') -and
+ $raw.Contains('Write-RdcOwnerJournalTxtFile $picker.FileName $content') -and
+ $raw.Contains('New-Object Text.UTF8Encoding($true)')) 'production Save dialog calls real UTF-8 TXT writer only after user selection'
+$saveFolder=Join-Path ([IO.Path]::GetTempPath()) ('RdcJournalSaveUi-'+[Guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($saveFolder)
+$script:rc1SaveTestPath=Join-Path $saveFolder 'journal-test.txt'
+$script:rc1SaveClickCount=0
+$script:rc1SaveParent=$null
+function Save-RdcOwnerJournalTxt([Windows.Forms.Form]$parent,[string]$content) {
+ $script:rc1SaveClickCount++
+ $script:rc1SaveParent=$parent
+ Write-RdcOwnerJournalTxtFile $script:rc1SaveTestPath $content
+}
+try{
+ $saveDialog=New-RdcOwnerJournalDialog ('Тестовый журнал RDC Relay'+[Environment]::NewLine+'Чтение файла → файл.txt')
+ $saveDialog.StartPosition=[Windows.Forms.FormStartPosition]::Manual
+ $saveDialog.Location=[Drawing.Point]::new(-10000,-10000)
+ try{
+  $saveDialog.Show()
+  [Windows.Forms.Application]::DoEvents()
+  $saveLayout=@($saveDialog.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+  $saveFooter=$saveLayout.GetControlFromPosition(0,3)
+  $saveButton=$saveFooter.Controls['rc1-journal-save-txt']
+  $saveButton.PerformClick()
+  [Windows.Forms.Application]::DoEvents()
+  Check ($script:rc1SaveClickCount -eq 1 -and
+   [object]::ReferenceEquals($script:rc1SaveParent,$saveDialog) -and
+   [IO.File]::Exists($script:rc1SaveTestPath)) 'native Save TXT PerformClick completes without read-only $Host exception and writes file'
+  $saved=[IO.File]::ReadAllText($script:rc1SaveTestPath,[Text.Encoding]::UTF8)
+  $bytes=[IO.File]::ReadAllBytes($script:rc1SaveTestPath)
+  Check ($saved -ceq [string]$saveDialog.Tag -and
+   $bytes.Length -gt 3 -and
+   [BitConverter]::ToString($bytes,0,3) -ceq 'EF-BB-BF') 'actual saved TXT is exact visible report, UTF-8 BOM with Cyrillic and arrow preserved'
+  $bad=Join-Path $saveFolder 'reject.pdf'
+  $refused=$false
+  try{Write-RdcOwnerJournalTxtFile $bad 'invalid extension'}catch{$refused=$true}
+  Check ($refused -and -not [IO.File]::Exists($bad)) 'writer refuses unexpected extensions without creating a file'
+  $tooLong=Join-Path $saveFolder 'too-long.txt'
+  $refused=$false
+  try{Write-RdcOwnerJournalTxtFile $tooLong ('X'*400001)}catch{$refused=$true}
+  Check ($refused -and -not [IO.File]::Exists($tooLong)) 'writer rejects oversized exports before disk access'
+ }finally{$saveDialog.Close();$saveDialog.Dispose()}
+}finally{
+ if([IO.Directory]::Exists($saveFolder)){[IO.Directory]::Delete($saveFolder,$true)}
+}
+$help=New-RdcOwnerHelpDialog 'Пример справки'
+try {
+ $layout=@($help.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+ $buttons=$layout.GetControlFromPosition(0,2)
+ $show=$buttons.GetControlFromPosition(0,0)
+ $close=$buttons.GetControlFromPosition(1,0)
+ Check ($show.Name -ceq 'rc1-help-show-journal' -and
+  $show.Text -ceq 'Показать журнал' -and
+  $show.Width -eq 160 -and
+  $close.Text -ceq 'Закрыть' -and
+  $show.Left -lt $close.Left) 'actual Help footer has Show Journal on left and Close on right'
+ $script:journalClicks=0
+ $script:journalParent=$null
+ function Show-RdcOwnerJournal([Windows.Forms.Form]$parent){
+  $script:journalClicks++
+  $script:journalParent=$parent
+ }
+ $onClick=$show.GetType().GetMethod('OnClick',[Reflection.BindingFlags]'Instance,NonPublic')
+ [void]$onClick.Invoke($show,[object[]]@([EventArgs]::Empty))
+ Check ($script:journalClicks -eq 1 -and
+  [object]::ReferenceEquals($script:journalParent,$help)) 'real Show Journal control click opens journal with Help as modal parent, never focuses hidden main pane'
+}finally{$help.Dispose()}
+$showFn=$ast.Find({param($n)
+ $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+ $n.Name -ceq 'Show-RdcOwnerJournal'
+},$true)
+Check ($showFn.Extent.Text.Contains('Get-RdcOwnerJournalText') -and
+ $showFn.Extent.Text.Contains('New-RdcOwnerJournalDialog $snapshot') -and
+ $showFn.Extent.Text.Contains('$journal.ShowDialog($parent)') -and
+ $showFn.Extent.Text.Contains('$journal.Dispose()')) 'actual journal command creates visible nested modal from safe history and disposes it'
+# G122 postmortem: the G121 Help context-menu item was removed, but its
+# old OwnerGui capability writes still caused an early startup exception.
+$ownerPath=Join-Path (Split-Path -Parent $PSScriptRoot) 'Source\rc1-owner-gui.ps1'
+$ownerSource=[IO.File]::ReadAllText($ownerPath,[Text.Encoding]::UTF8)
+$parsedTokens=$null;$ownerParseErrors=$null
+[void][Management.Automation.Language.Parser]::ParseFile(
+ $ownerPath,[ref]$parsedTokens,[ref]$ownerParseErrors)
+Check ($ownerParseErrors.Count -eq 0 -and
+ -not ([regex]::IsMatch($ownerSource,'(?m)^\s*\$openLogItem\s*(?:\.|\[|=)'))) 'OwnerGui never dereferences the removed G121 Help menu item'
+Check ($ownerSource.IndexOf('$initialCapabilities=$handshake.payload.capabilities',
+ [StringComparison]::Ordinal) -ge 0 -and
+ $ownerSource.IndexOf('$initialCapabilities=$handshake.payload.capabilities',
+ [StringComparison]::Ordinal) -lt
+ $ownerSource.IndexOf('$script:ownerJournalAllowed=[bool]$initialCapabilities.sanitizedJournal',
+ [StringComparison]::Ordinal) -and
+ $ownerSource.Contains('$script:ownerJournalAllowed=[bool]$snapshot.capabilities.sanitizedJournal') -and
+ $raw.Contains('$showJournal.Enabled=(-not $OwnerGui) -or [bool]$script:ownerJournalAllowed')) 'Host-sanctioned journal capability binds to the new About button at startup and refresh'
+$OwnerGui=$true
+$script:ownerJournalAllowed=$false
+$restricted=New-RdcOwnerHelpDialog 'Test authenticated capability disabled'
+try{
+ $parent=@($restricted.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+ $journalButton=$parent.GetControlFromPosition(0,2).GetControlFromPosition(0,0)
+ Check (-not $journalButton.Enabled) 'sanitized journal disabled when Owner capability is denied'
+}finally{$restricted.Dispose()}
+$script:ownerJournalAllowed=$true
+$allowed=New-RdcOwnerHelpDialog 'Test authenticated capability enabled'
+try{
+ $parent=@($allowed.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+ $journalButton=$parent.GetControlFromPosition(0,2).GetControlFromPosition(0,0)
+ Check ($journalButton.Enabled) 'sanitized journal enabled only when Owner capability allows'
+}finally{$allowed.Dispose()}
+# Owner-only journal is now a separate diagnostic view rather than a
+# larger copy of the compact six-line activity pane. The 1.5 legacy fallback
+# above must continue displaying its original eventBlocks unchanged.
+. $ownerPath
+$OwnerGui=$true
+$script:eventBlocks=New-Object System.Collections.ArrayList
+[void]$script:eventBlocks.Add('LOWER_PANE_ONLY_UNRELATED')
+$script:currentEvent=''
+$script:ownerDetailedJournal=New-Object 'System.Collections.Generic.List[string]'
+$script:ownerRecentDiagnostics=@(
+ 'Managed mode initialized','Managed state: Ready',
+ 'password=SHOULD_NOT_DISPLAY','C:\\Private\\secret.txt')
+$script:ownerJournalRemoteState='Ready'
+$script:ownerJournalRemotePid=17531
+$script:ownerJournalOwnership='Owned'
+$script:ownerJournalToolActivity='working'
+$script:ownerJournalLastSnapshotUtc=[DateTime]::UtcNow
+for($i=1;$i -le 540;$i++){
+ Add-Rc1OwnerDetailedEvent 'Remote' ('{0:D6} │ 🔧 Чтение файла → sample.md' -f $i)
+}
+Check ($script:ownerDetailedJournal.Count -eq 512 -and
+ $script:ownerDetailedJournal[0].Contains('000029') -and
+ $script:ownerDetailedJournal[511].Contains('000540')) 'full journal independently retains last 512 sanitized events, rather than compact 64'
+Add-Rc1OwnerDetailedEvent 'Unknown' 'INJECTED_SOURCE'
+Add-Rc1OwnerDetailedEvent 'Remote' 'password=TOP_SECRET'
+Add-Rc1OwnerDetailedEvent 'Remote' 'C:\\Private\\secret.txt'
+Check ($script:ownerDetailedJournal.Count -eq 512 -and
+ -not (@($script:ownerDetailedJournal) -join ' ').Contains('TOP_SECRET')) 'journal rejects untrusted origins, raw paths and sensitive arguments'
+$snapshot=Get-RdcOwnerJournalText
+Check ($snapshot.Contains('подробный диагностический журнал') -and
+ $snapshot.Contains('ДИАГНОСТИКА HOST') -and
+ $snapshot.Contains('Managed state: Ready') -and
+ $snapshot.Contains('Процесс Remote: PID 17531') -and
+ $snapshot.Contains('Remote: Подключён | Режим: управляемый Host | Активность: выполняется')) 'full journal shows sanitized localized Host diagnostics, connection state and Remote PID'
+Check ($snapshot.Contains('000540') -and $snapshot.Contains('000029') -and
+ -not $snapshot.Contains('000001 │ 🔧') -and
+ -not $snapshot.Contains('LOWER_PANE_ONLY_UNRELATED')) 'full journal uses separate retained history, not lower-pane eventBlocks'
+Check (-not $snapshot.Contains('password=') -and
+ -not $snapshot.Contains('SHOULD_NOT_DISPLAY') -and
+ -not $snapshot.Contains('C:\\Private') -and
+ -not $snapshot.Contains('TOP_SECRET') -and
+ $snapshot.Contains('время выполнения команды') ) 'full diagnostic journal filters private details and labels GUI receipt timestamps honestly'
+$fullDialog=New-RdcOwnerJournalDialog $snapshot
+try{
+ $inner=@($fullDialog.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})|Select-Object -First 1
+ $textHost=$inner.GetControlFromPosition(0,2)
+ $journalBody=$textHost.Controls['rc1-journal-content']
+ $vert=$textHost.Controls['rc1-journal-vscroll']
+ $horz=$textHost.Controls['rc1-journal-hscroll']
+ Check ($journalBody.Text -ceq $snapshot -and
+  $journalBody.TextLength -gt 18000 -and $journalBody.ReadOnly -and
+  -not $journalBody.WordWrap) 'real RichEdit displays the whole bounded diagnostic report'
+ $fullDialog.StartPosition=[Windows.Forms.FormStartPosition]::Manual
+ $fullDialog.Location=[Drawing.Point]::new(-10000,-10000)
+ $fullDialog.Show()
+ [Windows.Forms.Application]::DoEvents()
+ $rawFooter=$inner.GetControlFromPosition(0,3)
+ $rawButton=$rawFooter.GetControlFromPosition(0,0)
+ $rawSave=$rawFooter.GetControlFromPosition(1,0)
+ $rawClose=$rawFooter.GetControlFromPosition(2,0)
+ Check ($rawButton.Name -ceq 'rc1-journal-open-raw-log' -and
+  $rawButton.Text -ceq 'Открыть лог' -and $rawButton -is [RdcModalButton] -and
+  $rawButton.Right -le $rawSave.Left -and $rawSave.Right -le $rawClose.Left) 'Russian raw log, Save TXT, Close have exact order and do not overlap'
+ $script:rawClicks=0
+ function Open-RdcOwnerRawLog([Windows.Forms.Form]$parent){
+  if($parent -eq $fullDialog){$script:rawClicks++}
+ }
+ $rawButton.PerformClick()
+ Check ($script:rawClicks -eq 1 -and -not $fullDialog.IsDisposed) 'explicit native Open log click invokes only raw viewer and leaves journal open'
+ $fullDialog.ClientSize=[Drawing.Size]::new(508,260)
+ [Windows.Forms.Application]::DoEvents()
+ Check ($rawButton.Right -le $rawSave.Left -and $rawSave.Right -le $rawClose.Left -and
+  $rawClose.Right -le $rawFooter.ClientSize.Width) 'three journal buttons fit at the existing minimum width'
+ $fullDialog.ClientSize=[Drawing.Size]::new(740,440)
+ [Windows.Forms.Application]::DoEvents()
+ # RichEdit sometimes opens with its caret in the last line. Make the
+ # start position deterministic before testing that dragging/scrolling works.
+ $journalBody.Select(0,0)
+ $journalBody.SetViewPosition(0,0)
+ [Windows.Forms.Application]::DoEvents()
+ $top=[int]$journalBody.GetViewPosition().Y
+ $vert.ScrollToEnd()
+ [Windows.Forms.Application]::DoEvents()
+ $bottom=[int]$journalBody.GetViewPosition().Y
+ Check ($top -eq 0 -and $bottom -gt $top -and $bottom -gt 0 -and
+  $vert.Target -eq $journalBody) 'production scrollbar actually moves the lengthy journal vertically, not just decorates it'
+ # Send native WM_MOUSEWHEEL to the REAL off-screen journal RichEdit.
+ # Two half-detents must accumulate to one full downward notch.
+ $journalBody.Select(0,0)
+ $journalBody.SetViewPosition(0,0)
+ [Windows.Forms.Application]::DoEvents()
+ $wheelStart=[int]$journalBody.GetViewPosition().Y
+ $halfDown=[IntPtr]::new(([long]65476 -shl 16))
+ [void][RdcHelpButtonMouseTest]::SendMessage($journalBody.Handle,[uint32]0x020A,$halfDown,[IntPtr]::Zero)
+ $halfY=[int]$journalBody.GetViewPosition().Y
+ [void][RdcHelpButtonMouseTest]::SendMessage($journalBody.Handle,[uint32]0x020A,$halfDown,[IntPtr]::Zero)
+ [Windows.Forms.Application]::DoEvents()
+ $wheelEnd=[int]$journalBody.GetViewPosition().Y
+ Check ($wheelStart -eq 0 -and $halfY -eq $wheelStart -and $wheelEnd -gt 0) 'physical mouse wheel scrolls journal, including accumulated high-resolution half-detents'
+ $journalBody.Select(0,24)
+ $expected=$journalBody.SelectedText
+ Check ($expected.Length -eq 24 -and $journalBody.ReadOnly -and
+  $journalBody.ShortcutsEnabled -and -not $journalBody.HideSelection) 'journal allows real selection and Ctrl+C while remaining non-editable'
+ $visibleBefore=$journalBody.Text # RichEdit normalizes CRLF on HWND creation
+ $menu=$journalBody.ContextMenuStrip
+ $menu.Show($journalBody,[Drawing.Point]::new(8,8))
+ [Windows.Forms.Application]::DoEvents()
+ # SourceControl can become null when an off-screen menu loses popup focus.
+ # Production uses the stable Tag reference, never transient SourceControl.
+ Check ($menu.Items['rc1-journal-copy'].Enabled -and
+  [object]::ReferenceEquals($menu.Tag,$journalBody) -and
+  $raw.Contains('$editor.Copy()')) 'right-click journal menu binds Copy to the selected RichEdit text without reading the system clipboard'
+ $menu.Items['rc1-journal-select-all'].PerformClick()
+ Check ($journalBody.SelectionLength -eq $journalBody.TextLength -and
+  $journalBody.Text -ceq $visibleBefore) 'context-menu Select All selects full read-only report without modifying it'
+ $menu.Hide()
+ Check ($journalBody.GetHorizontalMaximum() -gt 0 -and
+  $horz.Target -eq $journalBody -and $horz.Width -gt 300) 'long unwrapped lines have real horizontal scrolling range'
+}finally{$fullDialog.Close();$fullDialog.Dispose()}
+# Full semantic RU/EN document text is rendered only from the allowlisted UI catalog.
+$script:ownerUiTexts=[RdcUiLanguage]::LoadResources((Join-Path (Split-Path -Parent $PSScriptRoot) 'Source'),'en-US')
+$enSnapshot=Get-RdcOwnerJournalText
+Check ($enSnapshot.Contains('RDC Relay — detailed diagnostic journal') -and
+ $enSnapshot.Contains('HOST DIAGNOSTICS (latest available entries)') -and
+ $enSnapshot.Contains('Remote: Connected | Mode: Host-owned | Activity: working') -and
+ $enSnapshot.Contains('Remote process: PID 17531')) 'English diagnostic journal translates only bounded headings and state labels'
+Check ($enSnapshot.Contains('Managed state: Ready') -and
+ -not $enSnapshot.Contains('SHOULD_NOT_DISPLAY') -and
+ -not $enSnapshot.Contains('LOWER_PANE_ONLY_UNRELATED')) 'English report preserves trusted diagnostic contents and sanitization'
+$enHelp=New-RdcOwnerHelpDialog 'English help'
+try{
+ $layout=@($enHelp.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})[0]
+ $head=$layout.GetControlFromPosition(0,0).GetControlFromPosition(1,0)
+ $footer=$layout.GetControlFromPosition(0,2)
+ Check ($enHelp.Text -ceq 'RDC Relay — Help' -and $head.Text -ceq 'Help / About' -and
+  $footer.GetControlFromPosition(0,0).Text -ceq 'Show journal' -and
+  $footer.GetControlFromPosition(1,0).Text -ceq 'Close') 'English Owner help title, header, buttons are localized'
+ Check ($enHelp.AcceptButton -eq $enHelp.CancelButton -and
+  $footer.GetControlFromPosition(1,0).DialogResult -eq [Windows.Forms.DialogResult]::OK) 'English Help retains safe Close as default'
+}finally{$enHelp.Dispose()}
+$enDialog=New-RdcOwnerJournalDialog $enSnapshot
+try{
+ $layout=@($enDialog.Controls|Where-Object{$_ -is [Windows.Forms.TableLayoutPanel]})[0]
+ $footer=$layout.GetControlFromPosition(0,3)
+ $inner=$layout.GetControlFromPosition(0,2).Controls['rc1-journal-content']
+ Check ($enDialog.Text -ceq 'RDC Relay - Journal' -and
+  $footer.GetControlFromPosition(0,0).Text -ceq 'Open log' -and
+  $footer.GetControlFromPosition(1,0).Text -ceq 'Save TXT' -and
+  $footer.GetControlFromPosition(2,0).Text -ceq 'Close' -and
+  $inner.ContextMenuStrip.Items['rc1-journal-copy'].Text -ceq 'Copy' -and
+  $inner.ContextMenuStrip.Items['rc1-journal-select-all'].Text -ceq 'Select all') 'English journal window, copy and export actions are localized'
+ Check ($inner.ReadOnly -and $inner.Text.Contains('EVENT HISTORY') -and
+  $inner.ContextMenuStrip.Tag -eq $inner) 'English journal remains read-only with stable context source'
+}finally{$enDialog.Dispose()}
+$aboutFn=$ast.Find({param($node)
+ $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+ $node.Name -ceq 'Show-RdcAbout'
+},$true)
+if(-not $aboutFn){throw 'OWNER_ABOUT_RENDERER_NOT_FOUND'}
+. ([scriptblock]::Create($aboutFn.Extent.Text))
+function Show-RdcOwnerHelp([string]$content){$script:capturedHelp=$content}
+$nl=[Environment]::NewLine;$appVersion='1.6.0'
+$script:ownerRemotePid=0;$script:ownerObservedMode=$false;$script:ownerManagedMode=$true
+$script:capturedHelp=''
+Show-RdcAbout
+Check ($script:capturedHelp.Contains('Host starts Desktop Commander Remote 0.2.52.') -and
+ $script:capturedHelp.Contains('Closing the window closes only the GUI') -and
+ $script:capturedHelp.Contains('PID Remote:')) 'English managed-mode About preserves correct Host/Remote lifecycle'
+$script:ownerObservedMode=$true;$script:ownerManagedMode=$false
+Show-RdcAbout
+Check ($script:capturedHelp.Contains('An existing Desktop Commander Remote is running.') -and
+ $script:capturedHelp.Contains('does not disconnect a previously started Remote')) 'English observed About preserves no-control/no-disconnect semantics'
+$script:ownerObservedMode=$false;$script:ownerManagedMode=$false
+Show-RdcAbout
+Check ($script:capturedHelp.Contains('Test mode: Desktop Commander Remote is not connected.') -and
+ -not $script:capturedHelp.Contains('Host starts Desktop Commander Remote')) 'English fake-only About does not claim actual Remote startup'
+$script:ownerUiTexts=[RdcUiLanguage]::LoadResources((Join-Path (Split-Path -Parent $PSScriptRoot) 'Source'),'ru-RU')
+$script:ownerManagedMode=$true
+Show-RdcAbout
+Check ($script:capturedHelp.Contains('Host запускает Desktop Commander Remote 0.2.52.') -and
+ $script:capturedHelp.Contains('Закрытие окна закрывает только GUI')) 'Russian About retains original approved Owner copy'
+$OwnerGui=$false
+Write-Output ('RC1_HELP_JOURNAL_ROUTE_PASS='+$pass+' FAIL='+$fail)
+if($fail){exit 1}
+exit 0

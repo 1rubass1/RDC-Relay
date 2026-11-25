@@ -1,0 +1,4 @@
+# SHA-attested final tray manifest must retain LF bytes on Windows checkouts.
+Assets/TrayV04Final/manifest.json text eol=lf
+# Preserve the upstream notice byte identity in fresh Windows checkouts.
+Source/THIRD_PARTY_NOTICES.txt text eol=lf

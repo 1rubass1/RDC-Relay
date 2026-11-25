@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 [assembly: AssemblyTitle("RDC Relay")]
 [assembly: AssemblyDescription("Portable launcher for RDC Relay")]
-[assembly: AssemblyCompany("UMAS")]
+[assembly: AssemblyCompany("RUBASS")]
 [assembly: AssemblyProduct("RDC Relay")]
 
 internal static class LauncherProgram
@@ -14,6 +14,10 @@ internal static class LauncherProgram
     [STAThread]
     private static int Main()
     {
+#if RDC_RC1_BLOCKED
+        // Candidate is not installation/launch approved. No production Remote.
+        return 42;
+#endif
         try
         {
             string root = AppDomain.CurrentDomain.BaseDirectory;

@@ -10,9 +10,31 @@ $assetsDir = Join-Path $root 'Assets'
 $installerDir = Join-Path $root 'Installer'
 $distRoot = Join-Path $root 'dist'
 
+# A public/stable builder must never package an Owner Pilot/RC marker.
+# Fail before existing build steps normalize or mutate checkout files.
+$releaseBranch=[string](& git -C $root branch --show-current)
+if($LASTEXITCODE -ne 0 -or $releaseBranch.Trim() -cnotin @('main','stable')){
+    throw 'RDC_RELEASE_REQUIRES_MAIN_OR_STABLE_BRANCH'
+}
+if([IO.File]::Exists((Join-Path $sourceDir 'rc1-candidate.json'))){
+    throw 'RDC_RELEASE_REFUSES_OWNER_PILOT_MARKER'
+}
+if($SkipSelfTest){throw 'RDC_RELEASE_SELFTEST_REQUIRED'}
+$dirty=@(& git -C $root status --porcelain --untracked-files=normal)
+if($LASTEXITCODE -ne 0 -or @($dirty|Where-Object{$_}).Count -gt 0){
+    throw 'RDC_RELEASE_REQUIRES_CLEAN_TREE'
+}
 $version = (Get-Content -LiteralPath (Join-Path $sourceDir 'version.txt') -Raw -Encoding UTF8).Trim()
 if ($version -notmatch '^\d+\.\d+\.\d+$') {
     throw ('Invalid version.txt: ' + $version)
+}
+# The legacy release builder only packages the 1.5.x single-process GUI.
+# Promoting version.txt to 1.6.0 without replacing the payload, launcher,
+# setup and updater would silently publish the wrong product architecture.
+# This release blocker must be removed ONLY with the reviewed full Host/GUI
+# v1.6 release builder and matching install/rollback OS trials.
+if ([version]$version -ge [version]'1.6.0') {
+    throw 'RDC_RELEASE_V16_REQUIRES_FULL_HOST_GUI_INTEGRATION'
 }
 
 function Convert-ToCanonicalUtf8Lf {
@@ -44,15 +66,19 @@ foreach ($name in @(
 Write-Host 'Compiling shaders...'
 & (Join-Path $PSScriptRoot 'build-shaders.ps1')
 
-Write-Host 'Building application icon...'
-& (Join-Path $assetsDir 'build-icon.ps1')
-
+# Owner-approved DES-002 app/shortcut icon v04 is prebuilt (18 ICO frames).
+# The former Assets/build-icon.ps1 draws superseded artwork. Never call it
+# during release packaging or it would silently overwrite the approved icon.
 $sourceIcon = Join-Path $assetsDir 'RDCRelay.ico'
 $runtimeIcon = Join-Path $sourceDir 'RDCRelay.ico'
-if (-not (Test-Path -LiteralPath $sourceIcon)) {
-    throw ('Missing application icon: ' + $sourceIcon)
+$approvedIconSha = '5FF100E2AB72453E081AF5C0157BAF41C8BCA57130C4CC42C8BDE9C612FCF1DC'
+foreach ($item in @($sourceIcon,$runtimeIcon)) {
+    if (-not [IO.File]::Exists($item) -or
+        (Get-FileHash -Algorithm SHA256 -LiteralPath $item).Hash -cne $approvedIconSha) {
+        throw ('RDC_RELEASE_APPROVED_APP_ICON_V04_MISMATCH: ' + $item)
+    }
 }
-Copy-Item -LiteralPath $sourceIcon -Destination $runtimeIcon -Force
+Write-Host 'Using verified approved application icon v04 (no regeneration).'
 
 $manifestPayload = @(
     'remote-window.ps1',
@@ -126,9 +152,9 @@ try {
 using System.Reflection;
 [assembly: AssemblyTitle("RDC Relay Setup")]
 [assembly: AssemblyDescription("Installer for RDC Relay")]
-[assembly: AssemblyCompany("UMAS")]
+[assembly: AssemblyCompany("RUBASS")]
 [assembly: AssemblyProduct("RDC Relay")]
-[assembly: AssemblyCopyright("Copyright (c) UMAS")]
+[assembly: AssemblyCopyright("Copyright (c) RUBASS")]
 [assembly: AssemblyVersion("$assemblyVersion")]
 [assembly: AssemblyFileVersion("$assemblyVersion")]
 "@
@@ -146,6 +172,8 @@ using System.Reflection;
         ('/win32icon:' + $runtimeIcon),
         ('/out:' + $setupExe),
         $setupSource,
+        (Join-Path $installerDir 'RdcReleaseInstallState.cs'),
+        (Join-Path $installerDir 'RdcReleaseMetadataSnapshot.cs'),
         $assemblyInfo,
         ('/resource:' + (Join-Path $sourceDir 'remote-window.ps1') + ',RdcPayload.remote-window.ps1'),
         ('/resource:' + (Join-Path $sourceDir 'update-notice.ps1') + ',RdcPayload.update-notice.ps1'),
@@ -166,6 +194,18 @@ using System.Reflection;
     }
 
     if (-not $SkipSelfTest) {
+        # Test-only Setup accepts disposable --install-root/--no-register.
+        # The public Setup above has NO RDC_INSTALLER_TEST define and must
+        # reject all three developer shortcuts.
+        $privateTestSetup=Join-Path $buildTemp 'RDC Relay Private Setup Test.exe'
+        $testCompilerArgs=@($compilerArgs|Where-Object{$_ -notlike '/out:*'})
+        $testCompilerArgs+=('/out:'+$privateTestSetup)
+        $testCompilerArgs+='/define:RDC_INSTALLER_TEST'
+        & $csc @testCompilerArgs
+        if($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists($privateTestSetup)){
+            throw 'RDC_RELEASE_PRIVATE_TEST_SETUP_COMPILE_FAILED'
+        }
+
         Write-Host 'Running full button paint test...'
         & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path (Join-Path $root 'Tests') 'Test-ButtonPaint.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'Button full-paint test failed.' }
@@ -183,7 +223,7 @@ using System.Reflection;
         if ($LASTEXITCODE -ne 0) { throw 'Update notice version-refresh regression test failed.' }
 
         Write-Host 'Running installer/updater transaction tests...'
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path (Join-Path $root 'Tests') 'Test-Transactions.ps1') -SetupPath $setupExe
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path (Join-Path $root 'Tests') 'Test-Transactions.ps1') -SetupPath $privateTestSetup
         if ($LASTEXITCODE -ne 0) { throw 'Installer/updater transaction tests failed.' }
     }
 

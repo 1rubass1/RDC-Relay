@@ -1,0 +1,87 @@
+# Existing isolated AST/compile/fake-only regression inventory. Never starts RC1 Host/GUI or Remote.
+$ErrorActionPreference='Stop'
+$names=@(
+ 'Test-V16TicketRecovery.ps1','Test-V16OwnerRemoteState.ps1',
+ 'Test-V16ObservedRemote.ps1','Test-V16UpgradeRollback.ps1',
+ # Manual Setup's genuine WScript.Shell COM shortcut test is exercised directly:
+ # under this nested, redirected WinPS process runner it timed out twice at
+ # 120s despite direct 12/0/exit0. Never count a nested timeout as PASS.
+ 'Test-Rc1OsFixtureProvenance.ps1','Test-V16OwnerTreeStop.ps1',
+ 'Test-V16OwnerBoundaryStatic.ps1','Test-V16ProductHostGuiSource.ps1',
+ 'Test-V16OwnerAddType.ps1','Test-V16OwnerStagePackage.ps1',
+ 'Test-V16OwnerContract.ps1','Test-V16BuildIsolation.ps1',
+ 'Test-V16PackageManifestNegative.ps1','Test-V16Rc1DiagnosticCapture.ps1',
+ 'Test-V16ManagedGuiStartupContract.ps1','Test-V16OwnerGuiRemoteRevision.ps1',
+ 'Test-V16OwnerHeaderStatusRu.ps1','Test-V16OwnerStatusCapsule.ps1','Test-V16ReadyLossFailClosed.ps1','Test-V16R2ReadinessProof.ps1','Test-V16R3ObserverStreamAfterFailure.ps1','Test-V16R3ObserverBufferedLines.ps1','Test-V16Utf8StreamIntegrity.ps1','Test-V16PortableOneDrivePath.ps1','Test-V16PortableLauncherContract.ps1','Test-V16OwnerBannerInset.ps1',
+ 'Test-V16OwnerLiveActivity.ps1','Test-V16OwnerCompactJournal.ps1',
+ 'Test-V16LowerActivityRail.ps1',
+ 'Test-V16OwnerAdaptiveJournal.ps1','Test-V16OwnerQuotaFooter.ps1','Test-V16OwnerUpdateDemo.ps1',
+ 'Test-V16OwnerUpdateWidth.ps1','Test-V16OwnerVersionTextUp1Pixel.ps1',
+ 'Test-V16OwnerRealUpdateNotice.ps1',
+ 'Test-V16ActivityPaneMinimum.ps1','Test-V16OwnerWindowMinimumContract.ps1',
+ 'Test-V16OwnerEmojiFont.ps1',
+ 'Test-V16OwnerEmojiPalette.ps1',
+ 'Test-V16OwnerJournalBottomGap.ps1','Test-V16QuotaDisplayToggle.ps1',
+ 'Test-V16QuotaMenuCheckbox.ps1',
+ 'Test-V16QuotaOAuthPoll.ps1',
+ 'Test-V16OwnerToolJournal.ps1','Test-V16OwnerAccountSwitch.ps1',
+ 'Test-V16OwnerAccountSwitchDialog.ps1',
+ 'Test-V16OwnerStopHelpDialogs.ps1',
+ 'Test-V16OwnerHelpJournalRoute.ps1',
+ 'Test-V16GpuModalOcclusion.ps1',
+ 'Test-V16GpuSoftwareFallback.ps1','Test-V16OwnerAccountFooterLanguage.ps1',
+ 'Test-V16OwnerRawLog.ps1','Test-V16NodePrerequisite.ps1','Test-V16AutoConnectPreference.ps1','Test-V16WindowsAutostart.ps1','Test-V16RawLogParts.ps1','Test-V16RawLogPumpFailures.ps1','Test-V16RawLogSessions.ps1',
+ 'Test-V16OwnerModalVisualStyle.ps1',
+ 'Test-V16OwnerHelpFooterLayout.ps1',
+ 'Test-V16TrayGuiActivation.ps1',
+ 'Test-V16TrayV04Visual.ps1',
+ 'Test-V16OwnerTrayMenu.ps1',
+ 'Test-V16OwnerMenuVisual.ps1',
+ 'Test-V16AccountButtonCentering.ps1',
+ 'Test-V16AppIconV04.ps1',
+ 'Test-V16ReleaseInstallPolicy.ps1','Test-V16LegacyReleaseBuilderGate.ps1',
+ 'Test-V16ReleasePathDialog.ps1','Test-V16ReleaseMaintenance.ps1',
+ 'Test-V16ReleaseDurableStage.ps1',
+ 'Test-V16ReleaseReviewPackage.ps1',
+ 'Test-V16ThirdPartyNotices.ps1','Test-V16ReleaseSetupSandbox.ps1',
+ 'Test-V16ManualSetupPrompt.ps1',
+ 'Test-V16OwnerIdentityHeader.ps1','Test-V16BannerUptimeContract.ps1',
+ 'Test-V16FullOriginalStartupHeader.ps1',
+ 'Test-V16IdleHostHandoff.ps1',
+ 'Test-RemoteCharacterization.ps1','Test-RemoteLineClassifier.ps1',
+ 'Test-ProcessOwnershipCharacterization.ps1','Test-WindowLifecycleCharacterization.ps1',
+ 'Test-UiLifecycle.ps1','Test-UpdateNoticeClick.ps1',
+ 'Test-UpdateNoticeVersionRefresh.ps1','Test-NpxRecovery.ps1')
+$exe=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$pass=0;$fail=0
+foreach($name in $names){
+ $file=Join-Path $PSScriptRoot $name
+ if(-not [IO.File]::Exists($file)){Write-Output ('FAIL '+$name+' MISSING');$fail++;continue}
+ $psi=New-Object Diagnostics.ProcessStartInfo
+ $psi.FileName=$exe
+ $psi.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$file+'"'
+ $psi.WorkingDirectory=$PSScriptRoot
+ $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
+ $psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+ $p=[Diagnostics.Process]::Start($psi)
+ $outTask=$p.StandardOutput.ReadToEndAsync()
+ $errTask=$p.StandardError.ReadToEndAsync()
+ if(-not $p.WaitForExit(120000)){
+  Write-Output ('NOT CHECKED '+$name+' TIMEOUT PID='+$p.Id+' NO FORCE STOP')
+  $fail++;$p.Dispose();break
+ }
+ $out=$outTask.GetAwaiter().GetResult()
+ $err=$errTask.GetAwaiter().GetResult()
+ if($p.ExitCode -eq 0){
+  $pass++;Write-Output ('PASS '+$name+' EXIT=0')
+ }else{
+  $fail++;Write-Output ('FAIL '+$name+' EXIT='+$p.ExitCode)
+  if($out.Length -gt 350){$out=$out.Substring($out.Length-350)}
+  if($err.Length -gt 350){$err=$err.Substring($err.Length-350)}
+  Write-Output ('STDOUT '+$out+' STDERR '+$err)
+ }
+ $p.Dispose()
+}
+Write-Output ('RC1_SAFE_REGRESSION_PASS='+$pass+' FAIL='+$fail+' TOTAL='+$names.Count)
+if($fail){exit 1}
+exit 0

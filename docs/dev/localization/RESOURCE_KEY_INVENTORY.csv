@@ -1,0 +1,304 @@
+﻿SemanticKey,ru-RU,en-US,Parameters,SourceRefs,BindingStatus
+dialog.accessibility.warningIcon,Стандартный значок предупреждения.,Standard warning icon.,,Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.button.no,Нет,No,,Source/RdcOwnerRuntime.cs;Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.button.yes,Да,Yes,,Source/RdcOwnerRuntime.cs;Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.reconnect.question,Переподключить Remote?,Reconnect Remote?,,Source/RdcOwnerRuntime.cs;Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.reconnect.title,Переподключение Remote,Reconnecting Remote,,Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.stop.question,Остановить Remote?,Stop Remote?,,Source/RdcOwnerRuntime.cs;Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.stop.title,Остановка Remote,Stopping Remote,,Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.switch.disconnection,Смена аккаунта разорвёт текущее соединение и отзовёт авторизацию этого устройства.,Switching accounts will disconnect the current session and revoke authorization for this device.,,Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.switch.intro,"Сначала откройте сайт Desktop Commander и войдите в аккаунт, на который хотите переключиться.",First open the Desktop Commander website and sign in to the account you want to switch to.,,Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.switch.question,Продолжить смену аккаунта?,Continue switching accounts?,,Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.switch.reauthorization,После выхода из аккаунта RDC Relay запустит новый Remote и начнёт процедуру авторизации устройства.,"After signing out, RDC Relay will start a new Remote and begin device authorization.",,Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.switch.signOut,Выйти из аккаунта,Sign out,,Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.switch.signOutDescription,Открывает официальный кабинет Desktop Commander. Выход из аккаунта выполняется вручную на сайте.,Opens the official Desktop Commander account portal. Sign out manually on the website.,,Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.switch.title,Смена аккаунта Desktop Commander,Switch Desktop Commander account,,Source/remote-window.ps1,SOURCE_REFERENCED
+dialog.switch.websiteError,Не удалось открыть сайт Desktop Commander.,Could not open the Desktop Commander website.,,Source/remote-window.ps1,SOURCE_REFERENCED
+gui.accessibility.accountDeviceManagement,Аккаунт: переход к управлению устройствами без изменения Remote.,Account: opens device management without changing Remote.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.account.infoTooltip,"Аккаунт Desktop Commander, к которому привязан этот компьютер",Desktop Commander account associated with this computer,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.account.tooltip,Действия с аккаунтом,Account actions,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.account.unknown,не определён,Not identified,,Source/remote-window.ps1,SOURCE_REFERENCED
+gui.help.accessible,Справка / О программе,Help / About,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.menu.account,Аккаунт,Account,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.menu.autoUpdateDesc,Автоматическая установка при запуске; проверка версии и кнопка обновления остаются доступными.,Automatically install updates at startup; version checks and the update button remain available.,,,UNWIRED_PREVIEW
+gui.menu.devices,Управление устройствами…,Manage devices…,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.menu.quotaDesc,Флажок: включить или выключить автоматическое отображение остатка вызовов.,Checkbox: enable or disable automatic display of remaining calls.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.menu.switchAccount,Сменить аккаунт…,Switch account…,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.quota.unknown,Остаток вызовов: --%,Remaining calls: --%,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.quota.value,Остаток вызовов: {percent}%,Remaining calls: {percent}%,{percent},Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.runtime.uptime,Время работы {0:00}:{1:00}:{2:00},Uptime {0:00}:{1:00}:{2:00},{0:00};{1:00};{2:00},Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.title.managedRemote,RDC Relay 1.6.0 RC1 — управляемый Host/GUI,RDC Relay 1.6.0 RC1 — managed Host/GUI,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.title.observedRemote,RDC Relay 1.6.0 RC1 — существующий Remote (только чтение),RDC Relay 1.6.0 RC1 — existing Remote (read-only),,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.title.testMode,RDC Relay 1.6.0 RC1 — Remote не подключён (режим проверки),RDC Relay 1.6.0 RC1 — Remote disconnected (test mode),,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.tooltip.legacyRemote,Существующий Remote принадлежит старой оболочке. После её штатного завершения RC1 создаст новую управляемую сессию.,"The existing Remote belongs to the legacy UI. After it exits normally, RC1 will create a new managed session.",,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.tooltip.manageOwnedRemote,Управление только собственным Remote этого Host.,Only Remote owned by this Host can be controlled.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.tooltip.ownedRemoteOnly,"Запуск или остановка только Remote, принадлежащего текущему Host.",Only Remote owned by the current Host can be started or stopped.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+gui.tooltip.unownedRemote,Управление существующим Remote недоступно: сессия не принадлежит RC1.,The existing Remote cannot be controlled: the session is not owned by RC1.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+help.dialog.close,Закрыть,Close,,Source/remote-window.ps1,SOURCE_REFERENCED
+help.dialog.contentAccessible,Справка RDC Relay,RDC Relay Help,,Source/remote-window.ps1,SOURCE_REFERENCED
+help.dialog.heading,Справка / О программе,Help / About,,Source/remote-window.ps1,SOURCE_REFERENCED
+help.dialog.iconAccessible,Стандартный значок вопроса.,Standard question icon.,,Source/remote-window.ps1,SOURCE_REFERENCED
+help.dialog.showJournal,Показать журнал,Show journal,,Source/remote-window.ps1,SOURCE_REFERENCED
+help.dialog.showJournalAccessible,Показать журнал событий,Show event journal,,Source/remote-window.ps1,SOURCE_REFERENCED
+help.dialog.title,RDC Relay — справка,RDC Relay — Help,,Source/remote-window.ps1,SOURCE_REFERENCED
+help.owner.fake,RDC Relay 1.6.0 RC1{nl}{nl}Режим проверки: Desktop Commander Remote не подключён.{nl}Закрытие окна закрывает только GUI; Host продолжает работать.{nl}Повторное открытие через трей восстанавливает состояние и журнал.,RDC Relay 1.6.0 RC1{nl}{nl}Test mode: Desktop Commander Remote is not connected.{nl}Closing the window closes only the GUI; Host keeps running.{nl}Reopening from the tray restores the state and journal.,{nl};{nl};{nl};{nl},Source/remote-window.ps1,SOURCE_REFERENCED
+help.owner.managed,RDC Relay 1.6.0 RC1{nl}{nl}Host запускает Desktop Commander Remote 0.2.52.{nl}Закрытие окна закрывает только GUI; Host и Remote продолжают работать.{nl}Повторное открытие через трей восстанавливает состояние и журнал.{nl}Статистику вызовов при необходимости можно подключить повторно в меню «Аккаунт».,RDC Relay 1.6.0 RC1{nl}{nl}Host starts Desktop Commander Remote 0.2.52.{nl}Closing the window closes only the GUI; Host and Remote keep running.{nl}Reopening from the tray restores the state and journal.{nl}Call statistics can be reconnected from the “Account” menu if needed.,{nl};{nl};{nl};{nl};{nl},Source/remote-window.ps1,SOURCE_REFERENCED
+help.owner.observed,"RDC Relay 1.6.0 RC1{nl}{nl}Найден уже работающий Desktop Commander Remote. Приложение показывает его состояние, не прерывая подключение.{nl}Закрытие окна закрывает только GUI; Host и Remote продолжают работать.{nl}Повторное открытие через трей восстанавливает состояние и журнал.{nl}Полное завершение RDC Relay через трей не отключает ранее запущенный Remote.",RDC Relay 1.6.0 RC1{nl}{nl}An existing Desktop Commander Remote is running. Its status is shown without interrupting the connection.{nl}Closing the window closes only the GUI; Host and Remote keep running.{nl}Reopening from the tray restores the state and journal.{nl}Exiting RDC Relay completely from the tray does not disconnect a previously started Remote.,{nl};{nl};{nl};{nl};{nl},Source/remote-window.ps1,SOURCE_REFERENCED
+installer.legacy.installBusy,Другая установка или обновление RDC Relay уже выполняется.,Another RDC Relay installation or update is already in progress.,,,UNWIRED_PREVIEW
+installer.legacy.installFailed,"Не удалось установить RDC Relay.
+
+{error}","Could not install RDC Relay.
+
+{error}",{error},,UNWIRED_PREVIEW
+installer.legacy.installedSuccess,"RDC Relay v{version} установлен.
+
+Используйте ярлык «RDC Relay» на рабочем столе или в меню Пуск.","RDC Relay v{version} was installed.
+
+Use the “RDC Relay” shortcut on the desktop or Start menu.",{version},,UNWIRED_PREVIEW
+installer.legacy.launchFailed,"Не удалось запустить RDC Relay.
+
+{error}","Could not start RDC Relay.
+
+{error}",{error},,UNWIRED_PREVIEW
+installer.legacy.openWindowFirst,Закройте окно RDC Relay перед установкой. Работающая версия не изменена.,Close the RDC Relay window before installing. The running version has not been changed.,,,UNWIRED_PREVIEW
+installer.legacy.setPrimaryPrompt,Установить RDC Relay {version} как основную оболочку?,Set RDC Relay {version} as the primary interface?,{version},,UNWIRED_PREVIEW
+installer.legacy.upgradeTitle,RDC Relay — обновление,RDC Relay — Update,,,UNWIRED_PREVIEW
+installer.maintenance.cancel,Отмена,Cancel,,Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.close,Закрыть,Close,,Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.errorHeading,Не удалось продолжить установку,Could not continue setup,,Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.installedHeading,RDC Relay уже установлен,RDC Relay is already installed,,Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.newerDescription,На компьютере уже установлена версия {installedVersion}. Установщик версии {targetVersion} не может её заменить.,This computer already has version {installedVersion} installed. Setup version {targetVersion} cannot replace it.,{installedVersion};{targetVersion},Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.newerHeading,Установлена более новая версия,A newer version is installed,,Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.pilotMigrationBlocked,"Обнаружена тестовая версия RDC Relay. Чтобы продолжить установку, завершите переход с тестовой версии.",A test version of RDC Relay was detected. Complete migration from the test version before continuing setup.,,Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.repair,Восстановить,Repair,,Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.repairDescription,Установлена версия {installedVersion}. Выберите действие.,Installed version {installedVersion}. Choose an action.,{installedVersion},Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.title,RDC Relay — установка,RDC Relay — Setup,,Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.uninstall,Удалить,Uninstall,,Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.unverifiedInstall,Не удалось проверить установленную программу. Ничего не изменено.,Could not verify the installed application. Nothing was changed.,,Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.update,Обновить,Update,,Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.upgradeDescription,Установлена версия {installedVersion}. Доступна версия {targetVersion}.,Installed version {installedVersion}. Available version {targetVersion}.,{installedVersion};{targetVersion},Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.maintenance.upgradeHeading,Доступно обновление,Update available,,Installer/RdcReleaseMaintenanceDialog.cs,SOURCE_REFERENCED
+installer.path.browse,Обзор…,Browse…,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.browseTitle,Выберите папку для установки RDC Relay,Choose a folder to install RDC Relay,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.cancel,Отмена,Cancel,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.cannotRelocate,При обновлении папку установки изменить нельзя.,The installation folder cannot be changed during an update.,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.continue,Продолжить,Continue,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.dialogTitle,RDC Relay — путь установки,RDC Relay — Installation folder,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.folderLabel,Папка установки,Installation folder,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.freshDescription,Программа будет установлена в выбранную папку.,The application will be installed in the selected folder.,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.heading,Выберите папку установки,Choose installation folder,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.install,Установить,Install,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.invalidFolder,Не удалось использовать эту папку. Выберите другую.,Cannot use this folder. Choose another one.,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.nonemptyFolder,В этой папке уже есть файлы. Выберите другую папку.,This folder already contains files. Choose another folder.,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.upgradeDescription,Программа будет обновлена в текущей папке.,The application will be updated in its current folder.,,Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+installer.path.windowTitle,Установка RDC Relay {version},Installing RDC Relay {version},{version},Installer/RdcReleasePathDialog.cs,SOURCE_REFERENCED
+journal.ack.actionConfirmed,Host подтвердил выполнение: {action},Host confirmed the action: {action},{action},Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.ack.switchAccountAccepted,Host принял смену аккаунта; ожидается штатный выход и новый вход.,Host accepted the account switch; waiting for the normal sign-out and new sign-in.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.banner.keepRunning,Это окно можно закрыть: RDC Relay продолжит работу в области уведомлений.,You can close this window; RDC Relay continues running in the system tray.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.banner.stopRemote,"Нажмите «Остановить», чтобы отключить Remote.",Click Stop to disconnect Remote.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.event.authenticationPending,⏳ Авторизация → ожидание,⏳ Authentication → pending,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.event.channelUnavailable,❌ Канал Remote → недоступен,❌ Remote channel → unavailable,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.event.genericPrefix,• Событие → ,• Event → ,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.event.mcpRecovering,⏳ MCP → восстановление,⏳ MCP → recovering,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.event.remoteConnected,🔌 Remote → подключён,🔌 Remote → connected,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.event.remoteReplaced,🔌 Сессия Remote → обновлена,🔌 Remote session → refreshed,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.event.remoteStartFailed,❌ Запуск Remote → ошибка,❌ Remote start → failed,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.event.toolUnspecifiedPrefix,• Событие инструмента → ,• Tool event → ,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.owner.activity.hold,ожидание,on hold,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.activity.idle,ожидание вызова,idle,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.activity.unknown,неизвестно,unknown,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.activity.working,выполняется,working,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.activityPrefix, | Активность: , | Activity: ,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.closeButton,Закрыть,Close,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.contentAccessible,Диагностический журнал RDC Relay,RDC Relay diagnostic journal,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.copy,Копировать,Copy,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.diagHeading,ДИАГНОСТИКА HOST (последние доступные записи),HOST DIAGNOSTICS (latest available entries),,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.dialogTitle,RDC Relay - Журнал,RDC Relay - Journal,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.empty,Журнал пока пуст.,The journal is empty.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.heading,Журнал,Journal,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.historyHeading,ИСТОРИЯ СОБЫТИЙ (до 512 последних записей текущего окна),EVENT HISTORY (up to 512 recent entries from this window),,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.intro,Отображаются обезличенные события Host и Remote; сырой stdout и содержимое файлов исключены.,Sanitized Host and Remote events are shown; raw stdout and file contents are excluded.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.modePrefix, | Режим: , | Mode: ,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.noDiagnostics,  Нет доступных диагностических записей.,  No diagnostic records available.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.noEvents,  Событий пока нет.,  No events yet.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.openRaw,Открыть лог,Open log,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.ownership.adopted,наблюдение,observed,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.ownership.owned,управляемый Host,Host-owned,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.ownership.unknown,неизвестно,unknown,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.processPrefix,Процесс Remote: PID ,Remote process: PID ,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.rawDescription,Выбирает часть исходного лога Remote и открывает её локальную копию. Сохраните свою копию отдельно.,Selects a raw Remote log part and opens a local copy. Save your own copy separately.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.rawError,Не удалось открыть исходный лог Remote.,Could not open the raw Remote log.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.rawFilter,Файлы логов (*.log),Log files (*.log),,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.rawFinalizePending,Завершение записи логов ещё не подтверждено.,Log finalization is not yet confirmed.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.rawRecoveryPending,Восстановление сохранённых логов ещё не завершено.,Recovery of saved logs is not yet complete.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.rawSaveCopy,Сохранить копию лога,Save a log copy,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.rawSelect,Выберите часть лога,Select a log part,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.rawSessionFailure,Не удалось подтвердить сохранение сессии логов.,Could not confirm log session storage.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.rawStorageUnavailable,Не удалось сохранить исходный лог.,Could not store the raw log.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.rawStreamUnavailable,Поток исходного лога недоступен.,The raw log stream is unavailable.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.rawUnavailable,Исходный лог Remote пока недоступен.,The raw Remote log is not available yet.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.remotePrefix,Remote: ,Remote: ,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.saveButton,Сохранить TXT,Save TXT,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.saveError,Не удалось сохранить журнал. Проверьте выбранную папку.,Could not save the journal. Check the selected folder.,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.saveFilter,Текстовый документ (*.txt)|*.txt,Text document (*.txt)|*.txt,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.saveTitle,Сохранить журнал RDC Relay,Save RDC Relay journal,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.selectAll,Выделить всё,Select all,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.sessionHeading,СОСТОЯНИЕ СЕАНСА,SESSION STATUS,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.snapshotPrefix,Последний снимок Host: ,Last Host snapshot: ,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.timeNote,"Время записей истории — получение GUI (UTC), не время выполнения команды.","History timestamps indicate when the GUI received events (UTC), not when commands ran.",,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.owner.title,RDC Relay — подробный диагностический журнал,RDC Relay — detailed diagnostic journal,,Source/remote-window.ps1,SOURCE_REFERENCED
+journal.receipt.received,получено,received,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.synthetic.fakeJournal,RC1: синтетический журнал Host.,RC1: synthetic Host journal.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.synthetic.managedRestore,RC1: восстановлен журнал управляемого Remote из Host.,RC1: restored managed Remote journal from Host.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.synthetic.observedRestore,RC1: восстановлен обезличенный журнал наблюдения Host.,RC1: restored sanitized Host observation journal.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.synthetic.streamEpochPrefix,Поток событий Remote: эпоха ,Remote event stream: epoch ,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.target.unknown,без уточнения,unspecified,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.createDirectory,Создание папки,Create folder,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.editFile,Изменение файла,Edit file,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.fileInfo,Сведения о файле,File information,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.listDirectory,Просмотр папки,Browse folder,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.listProcesses,Просмотр процессов,List processes,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.moveFile,Перемещение файла,Move file,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.operation,Операция,Operation,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.processInput,Ввод в процесс,Process input,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.processOutput,Вывод процесса,Process output,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.readFile,Чтение файла,Read file,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.readMultipleFiles,Чтение файлов,Read files,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.search,Поиск,Search,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.searchResults,Результаты поиска,Search results,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.settings,Настройки,Settings,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.startProcess,Запуск программы,Start program,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.startRequest,Запрос запуска программы,Program launch request,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.stopSearch,Остановка поиска,Stop search,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+journal.tool.writeFile,Запись файла,Write file,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+legacy.gui.npxMissing,npx.cmd не найден. Установите Node.js 18 или новее.,npx.cmd was not found. Install Node.js 18 or later.,,,UNWIRED_PREVIEW
+legacy.gui.titleWithState,RDC Relay — {state},RDC Relay — {state},{state},,UNWIRED_PREVIEW
+owner.action.reconnect,переподключение,reconnect,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.action.start,запуск,start,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.action.stop,остановку,stop,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.action.switch,смену аккаунта,account switch,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.action.unknown,операцию,the action,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.auth.logout,Выход из аккаунта,Signing out,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.auth.observed,Ожидание подтверждения; только наблюдение,Awaiting confirmation; observation only,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.auth.verifyDevice,Ожидание подтверждения,Awaiting confirmation,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.connecting.observed,Проверка существующего подключения,Checking existing connection,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.connecting.starting,Запуск Remote,Starting Remote,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.connecting.waiting,Установление связи,Establishing connection,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.disconnected.newSession,Подготовка к запуску,Preparing to start,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.disconnected.observed,Предыдущая сессия завершена,Previous session ended,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.disconnected.processExited,Remote завершил работу,Remote has exited,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.disconnected.waitingOld,Ожидание завершения сессии,Waiting for session to end,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.fault.authRevoked,Авторизация отозвана; запуск не удался,Authorization revoked; startup failed,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.fault.autoStart,Запустите Remote вручную,Start Remote manually,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.fault.channel,Канал недоступен,Channel unavailable,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.fault.generic,Подробности в журнале,See journal for details,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.fault.logoutUnconfirmed,Выход не подтверждён; Remote остановлен,Sign-out unconfirmed; Remote stopped,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.fault.nodeMissing,Требуется повторная установка RDC Relay,Run RDC Relay Setup again,,Source/rc1-owner-gui.ps1;Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+owner.connection.detail.fault.observed,Сессия недоступна,Session unavailable,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.fault.start,Не удалось запустить Remote,Could not start Remote,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.fault.switchRefused,Смена аккаунта отклонена; Remote остановлен,Account switch refused; Remote stopped,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.ready.managed,Ожидание запроса,Waiting for a request,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.ready.observed,Только наблюдение,Read-only observation,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.ready.toolConfirmed,Ожидание запроса,Waiting for a request,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.reconnecting.managed,Восстановление связи,Restoring connection,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.reconnecting.observed,Проверка связи; только наблюдение,Checking connection; observation only,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.unknown,Состояние уточняется,Checking status,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.waiting,Ожидание запроса,Waiting for a request,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.detail.working,Выполнение запроса,Processing request,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.connection.name.auth,Авторизация,Authenticating,,Source/remote-window.ps1,SOURCE_REFERENCED
+owner.connection.name.connecting,Подключение,Connecting,,Source/rc1-owner-gui.ps1;Source/remote-window.ps1,SOURCE_REFERENCED
+owner.connection.name.disconnected,Отключён,Disconnected,,Source/rc1-owner-gui.ps1;Source/remote-window.ps1,SOURCE_REFERENCED
+owner.connection.name.fault,Ошибка связи,Connection error,,Source/rc1-owner-gui.ps1;Source/remote-window.ps1,SOURCE_REFERENCED
+owner.connection.name.ready,Подключён,Connected,,Source/rc1-owner-gui.ps1;Source/remote-window.ps1,SOURCE_REFERENCED
+owner.connection.name.reconnecting,Восстановление,Reconnecting,,Source/rc1-owner-gui.ps1;Source/remote-window.ps1,SOURCE_REFERENCED
+owner.connection.name.unknown,Состояние неизвестно,Status unknown,,Source/rc1-owner-gui.ps1;Source/remote-window.ps1,SOURCE_REFERENCED
+owner.error.actionDetail,Действие отклонено: {action},Action denied: {action},{action},Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.error.actionName,Операция отклонена,Action denied,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.error.hostDetail,Состояние неизвестно; остановка недоступна,Status unknown; stopping is prohibited,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.error.hostName,Связь с Host,Host connection,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.error.navigationDetail,Переход не выполнен; Remote без изменений,Navigation failed; Remote was not changed,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.error.navigationName,Операция не выполнена,Action not completed,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.label.deviceId,- ID устройства: ,- Device ID: ,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.label.deviceName,- Имя устройства: ,- Device Name: ,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.label.ownership,Принадлежность: ,Ownership: ,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.label.process,Процесс: ,Process: ,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.label.status,Состояние: ,Status: ,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.label.user,- Пользователь: ,- User: ,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.ownership.adopted,Существующая сессия: только наблюдение,Adopted: read-only,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.ownership.managed,Управляемая сессия Host,Managed: Host-owned Job,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.proof.receivedMarker,Host получил подтверждение подключения Remote,Remote connection marker received by Host,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.proof.unconfirmed,Подключение пока не подтверждено,Connected state not currently confirmed,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.status.authenticating,Авторизация,Authenticating,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.status.connected,Подключён,Connected,,,UNWIRED_PREVIEW
+owner.fallback.status.connecting,Подключение,Connecting,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.status.connectionFault,Ошибка связи,Connection fault,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.status.disconnected,Отключён,Disconnected,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.status.online,В сети,Online,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.status.reconnecting,Восстановление,Reconnecting,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.status.unknown,Неизвестно,Unknown,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.value.notReported,не указано,not reported,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.fallback.value.notStarted,не запущен,not started,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.initial.fakeDetail,Нет активной сессии Remote,No active Remote session,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.initial.fakeEvent,RDC Relay 1.6.0 RC1. Host использует синтетическое состояние; настоящий Remote не запущен.,RDC Relay 1.6.0 RC1. Host is using synthetic state; no actual Remote session is running.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.initial.fakeName,Тестовый режим,Test mode,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.initial.managedEvent,RDC Relay RC1: управление Remote выполняет постоянный Host. X закрывает только это окно.,RDC Relay RC1: a persistent Host controls Remote. X closes only this window.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.initial.managedName,Отключён,Disconnected,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.initial.observedDetail,Проверка существующего подключения,Checking existing connection,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.initial.observedEvent,RC1 подключён к работающему Desktop Commander Remote только для наблюдения. X закрывает GUI; Remote не затрагивается.,RC1 is observing a running Desktop Commander Remote. X closes the GUI; Remote keeps running.,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.initial.observedName,Подключение,Connecting,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.progress.switchDetail,Выход из аккаунта,Signing out,,Source/remote-window.ps1,SOURCE_REFERENCED
+owner.progress.switchName,Смена аккаунта…,Switching accounts…,,Source/remote-window.ps1,SOURCE_REFERENCED
+owner.runtime.adopted,Remote: существующая сессия / Adopted,Remote: existing session / Adopted,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.runtime.adoptedShort,Существующая сессия / Adopted,Existing session / Adopted,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.runtime.disconnected,Remote отключён,Remote disconnected,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.runtime.fakeDetail,Нет активной сессии Remote,No active Remote session,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.runtime.fakeHost,Тестовый Host / Remote не подключён,Test Host / Remote disconnected,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.runtime.managedWaiting,Remote: Host-owned / ожидание запуска,Remote: Host-owned / waiting to start,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+owner.runtime.notConnected,Remote НЕ подключён | RC1,Remote NOT connected | RC1,,Source/rc1-owner-gui.ps1,SOURCE_REFERENCED
+settings.language,Язык / Language,Language / Язык,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.confirm.exit,Завершить RDC Relay?,Exit RDC Relay?,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.confirm.switchAccount,Сменить аккаунт? Remote будет остановлен. Потребуется новая авторизация.,Switch accounts? Remote will stop. New authorization will be required.,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.about,Справка о программе,About RDC Relay,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.autoConnect,Автоподключение,Auto-connect,,Source/rc1-owner-gui.ps1;Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.autoConnectTooltip,Запуск Remote при следующем запуске RDC Relay.,Start Remote the next time RDC Relay launches.,,Source/rc1-owner-gui.ps1;Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.autoStart,Автозапуск,Autostart,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.autoStartTooltip,Запуск RDC Relay в трее при входе в Windows. Фактическое разрешение — в параметрах автозагрузки Windows.,Starts RDC Relay in the tray when signing in to Windows. Check Windows Startup apps for the actual permission.,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.autoUpdate,Автообновление,Automatic updates,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.autoUpdateTooltip,Установка при запуске; поиск обновлений и ручная кнопка работают отдельно,Install updates at startup; update checks and the manual button work separately,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.exit,Завершить RDC Relay,Exit RDC Relay,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.manageDevices,Управление устройствами,Manage devices,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.openWindow,Открыть окно RDC Relay,Open RDC Relay window,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.reconnect,Переподключить,Reconnect,,Source/rc1-owner-gui.ps1;Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.showRemainingCalls,Выводить остаток вызовов,Show remaining calls,,Source/rc1-owner-gui.ps1;Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.start,Запустить,Start,,Source/rc1-owner-gui.ps1;Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.stop,Остановить,Stop,,Source/rc1-owner-gui.ps1;Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.menu.switchAccount,Сменить аккаунт,Switch account,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.notice.actionFailed,Действие не выполнено: {error}. Проверьте состояние Remote в окне RDC Relay.,Action could not be completed: {error}. Check Remote status in the RDC Relay window.,{error},Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.notice.autoConnectSaveFailed,Не удалось сохранить настройку автоподключения.,Could not save the auto-connect preference.,,Source/rc1-owner-gui.ps1;Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.notice.autoStartFailed,Не удалось изменить автозапуск. Проверьте параметры автозагрузки Windows.,Could not change autostart. Check Windows Startup apps.,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.notice.autoUpdateSaveFailed,Не удалось сохранить настройку автообновления.,Could not save the automatic update preference.,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.notice.devicesFailed,Не удалось открыть управление устройствами.,Could not open device management.,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.notice.exitBlocked,Remote ещё работает; полное завершение заблокировано.,Remote is still running; full exit is blocked.,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.notice.languageSaveFailed,Не удалось сохранить язык интерфейса.,Could not save the interface language.,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.notice.quotaSaveFailed,Не удалось сохранить настройку остатка вызовов.,Could not save the remaining calls display preference.,,Source/RdcOwnerRuntime.cs;Source/remote-window.ps1,SOURCE_REFERENCED
+tray.notice.stopFailed,Не удалось безопасно остановить Remote. Подробности в журнале.,Could not safely stop Remote. See journal for details.,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.notice.switchPending,Смена аккаунта ещё выполняется. Дождитесь результата.,Account switch in progress. Wait for it to finish.,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.notice.windowDisplayFailed,Не удалось вывести окно RDC Relay. Remote продолжает работу.,Could not display the RDC Relay window. Remote keeps running.,,Source/RdcUiLanguage.cs,SOURCE_REFERENCED
+tray.notice.windowIdentityMismatch,Невозможно подтвердить окно RDC Relay. Remote не затронут.,Cannot confirm the RDC Relay window. Remote was not affected.,,Source/RdcUiLanguage.cs,SOURCE_REFERENCED
+tray.notice.windowLaunchFailed,RDC Relay не смог открыть окно. Remote не затронут; проверьте журнал Host.,RDC Relay could not open its window. Remote was not affected; check the Host journal.,,Source/RdcUiLanguage.cs,SOURCE_REFERENCED
+tray.notice.windowNotReady,Окно RDC Relay пока не появилось. Повторите открытие через трей; Remote не затронут.,The RDC Relay window has not appeared yet. Try opening it again from the tray; Remote was not affected.,,Source/RdcUiLanguage.cs,SOURCE_REFERENCED
+tray.notice.windowPending,Окно RDC Relay ещё не появилось. Попробуйте открыть его через трей ещё раз.,The RDC Relay window has not appeared yet. Try opening it from the tray again.,,Source/RdcUiLanguage.cs,SOURCE_REFERENCED
+tray.notice.windowUnverified,Окно RDC Relay не удалось проверить. Remote продолжает работу; проверьте журнал.,Could not verify the RDC Relay window. Remote keeps running; check the journal.,,Source/RdcUiLanguage.cs,SOURCE_REFERENCED
+tray.status.authenticating,Авторизация,Authenticating,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.status.connecting,Подключение,Connecting,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.status.connectionError,Ошибка соединения,Connection error,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.status.disconnected,Отключён,Disconnected,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.status.ready,Готов к работе,Ready,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.status.testPrefix,Тест | ,Test | ,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.status.waitingForCall,Ожидание следующего вызова,Waiting for the next call,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.status.working,Выполнение,Working,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.title.managedHost,Host,Host,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+tray.title.observed,Наблюдение,Observation,,Source/RdcOwnerRuntime.cs,SOURCE_REFERENCED
+update.owner.availableAccessible,Доступна стабильная версия RDC Relay v{version}. Установка из RC1 отключена.,Stable RDC Relay version v{version} is available. Installation from RC1 is disabled.,{version},Source/update-notice.ps1,SOURCE_REFERENCED
+update.owner.availableTooltip,Опубликована стабильная версия v{version}. RC1: автоматическая установка отключена.,Stable version v{version} published. RC1: automatic installation is disabled.,{version},Source/update-notice.ps1,SOURCE_REFERENCED
+update.owner.idleTooltip,RDC Relay RC1: проверка опубликованной версии. Автоматическая установка отключена.,RDC Relay RC1: checking the published version. Automatic installation is disabled.,,Source/update-notice.ps1,SOURCE_REFERENCED

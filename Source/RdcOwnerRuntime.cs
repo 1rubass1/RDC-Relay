@@ -1,0 +1,2987 @@
+// RDC Relay 1.6.0 RC1 branch-only product Tray Host.
+// Host can observe existing Remote read-only or start a NEW managed Remote
+// inside its own kernel Job. Never adopts stop rights for preexisting Remote.
+// The complete original remote-window.ps1 is the replaceable GUI renderer.
+using System;
+using System.IO;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Windows.Forms;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Text;
+using System.Threading;
+using System.Management;
+
+// Incremental UTF-8 + physical-line reader for the Host-owned Remote log.
+// Decoder.GetChars(..., flush:false) retains partial multi-byte sequences
+// across separate FileStream.Read calls. Refuse to treat a tail fragment of
+// a discarded oversized line as a new marker; resume at its next newline.
+// No raw Remote text is sent over IPC by this helper.
+public sealed class RdcOwnerUtf8LogBuffer {
+ const int MaxPhysicalLineChars=8192;
+ readonly Decoder decoder=new UTF8Encoding(false,false).GetDecoder();
+ readonly StringBuilder partial=new StringBuilder();
+ bool discardUntilNewline;
+ public string[] Feed(byte[] bytes,int offset,int count){
+  if(bytes==null||offset<0||count<0||offset>bytes.Length-count)
+   throw new ArgumentOutOfRangeException("count","RC1_LOG_UTF8_BYTES_BOUNDS");
+  if(count==0)return new string[0];
+  char[] chars=new char[count+4];
+  int decoded=decoder.GetChars(bytes,offset,count,chars,0,false);
+  var lines=new List<string>();
+  for(int i=0;i<decoded;i++){
+   char ch=chars[i];
+   if(ch=='\n'){
+    if(!discardUntilNewline)lines.Add(partial.ToString().TrimEnd('\r'));
+    partial.Length=0;discardUntilNewline=false;
+   }else if(!discardUntilNewline){
+    if(partial.Length<MaxPhysicalLineChars)partial.Append(ch);
+    else{partial.Length=0;discardUntilNewline=true;}
+   }
+  }
+  return lines.ToArray();
+ }
+ public void Reset(){
+  decoder.Reset();partial.Length=0;discardUntilNewline=false;
+ }
+}
+
+// Host-local, bounded correlation of pinned Remote call IDs. Only the
+// generated ordinal, allowlisted tool and safe basename reach GUI IPC.
+public sealed class RdcOwnerToolJournal {
+ sealed class Entry {public long Number;public string Tool,Target;public bool Ambiguous;}
+ readonly Dictionary<string,Entry> pending=new Dictionary<string,Entry>(StringComparer.Ordinal);
+ readonly List<string> order=new List<string>();
+ long nextNumber=0;
+ static readonly string[] known={"start_process","read_process_output","interact_with_process",
+  "read_file","read_multiple_files","list_directory","get_file_info",
+  "list_processes","start_search","get_more_search_results","stop_search",
+  "get_config","write_file","edit_block","create_directory","move_file"};
+ static readonly System.Text.RegularExpressions.Regex start=
+  new System.Text.RegularExpressions.Regex(
+   @"\A🔧 Received tool call (?<id>[A-Za-z0-9_-]{1,100}):\s*(?<tool>[a-z][a-z0-9_]{1,39})(?:\s+(?<args>.*))?\z");
+ static readonly System.Text.RegularExpressions.Regex end=
+  new System.Text.RegularExpressions.Regex(
+   @"\A[✅❌] Tool call (?<id>[A-Za-z0-9_-]{1,100}) (?:completed|failed):");
+ static readonly System.Text.RegularExpressions.Regex param=
+  new System.Text.RegularExpressions.Regex(
+   @"(?<!\\)""(?<key>file_path|path|directory|command)""\s*:\s*""(?<value>(?:\\.|[^""\\]){1,260})""");
+ public void Reset(){pending.Clear();order.Clear();nextNumber=0;}
+ static string SafeTarget(string tool,string args){
+  if(args==null||args.Length>8192)return "";
+  // Numeric PID is bounded metadata; never echo stdout or process arguments.
+  if(tool=="read_process_output" || tool=="interact_with_process"){
+   var pid=System.Text.RegularExpressions.Regex.Match(args,
+    @"""pid""\s*:\s*(?<n>[1-9][0-9]{0,8})(?=\s*[,}])");
+   int number;
+   return pid.Success && int.TryParse(pid.Groups["n"].Value,out number) && number>0
+    ?"PID "+number.ToString(System.Globalization.CultureInfo.InvariantCulture):"";
+  }
+  if(tool=="read_multiple_files"){
+   // Report only the *first* safe basename, not a private list of paths.
+   var paths=System.Text.RegularExpressions.Regex.Match(args,
+    @"""paths""\s*:\s*\[\s*""(?<p>(?:\\.|[^""\\]){1,260})""");
+   if(paths.Success){
+    string value=paths.Groups["p"].Value.Replace("\\\\","\\").Replace("\\/","/");
+    int slash=value.LastIndexOfAny(new char[]{'\\','/'});
+    string name=value.Substring(slash+1);
+    if(name.Length>0 && name.Length<=54 && name[0]!='.' &&
+       System.Text.RegularExpressions.Regex.IsMatch(name,@"\A[\p{L}\p{Nd}_ .()\-]{1,54}\z") &&
+       !System.Text.RegularExpressions.Regex.IsMatch(name,@"(?i)(secret|password|token|credential|private.key)"))
+     return name+" (первый)";
+   }
+  }
+  foreach(System.Text.RegularExpressions.Match m in param.Matches(args)){
+   string key=m.Groups["key"].Value;
+   string value=m.Groups["value"].Value.Replace("\\\\","\\").Replace("\\/","/");
+   if(tool=="start_process" && key=="command"){
+    var command=System.Text.RegularExpressions.Regex.Match(value,
+     @"\A\s*(?:&\s*)?['""]?(?<exe>powershell(?:\.exe)?|pwsh(?:\.exe)?|cmd(?:\.exe)?|git(?:\.exe)?|python(?:\.exe)?|py(?:\.exe)?|node(?:\.exe)?|npm(?:\.cmd)?|npx(?:\.cmd)?|dotnet(?:\.exe)?|java(?:\.exe)?|cmake(?:\.exe)?)(?=\s|['""]|$)",
+     System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    if(command.Success){
+     string exe=command.Groups["exe"].Value.ToLowerInvariant();
+     if(exe.StartsWith("powershell")||exe.StartsWith("pwsh"))return "PowerShell";
+     if(exe.StartsWith("cmd"))return "CMD";
+     if(exe.StartsWith("git"))return "Git";
+     if(exe.StartsWith("python")||exe.StartsWith("py."))return "Python";
+     if(exe.StartsWith("node"))return "Node.js";
+     if(exe.StartsWith("npm"))return "npm";
+     if(exe.StartsWith("npx"))return "npx";
+     if(exe.StartsWith("dotnet"))return ".NET";
+     if(exe.StartsWith("java"))return "Java";
+     if(exe.StartsWith("cmake"))return "CMake";
+    }
+    // Recognize a directly invoked executable without exposing the path
+    // or any arguments. Complex shell scripts remain unnamed rather than
+    // guessing what application will eventually be launched.
+    string direct=value.TrimStart();
+    if(direct.StartsWith("& ",StringComparison.Ordinal))direct=direct.Substring(2).TrimStart();
+    string first="";
+    if(direct.Length>1 && (direct[0]=='"' || direct[0]=='\'')){
+     int endQuote=direct.IndexOf(direct[0],1);
+     if(endQuote>1)first=direct.Substring(1,endQuote-1);
+    }else{
+     int space=direct.IndexOfAny(new char[]{' ','\t','\r','\n'});
+     first=space<0?direct:direct.Substring(0,space);
+    }
+    string binary=first.Replace('/','\\');
+    int exeSlash=binary.LastIndexOf('\\');
+    binary=binary.Substring(exeSlash+1);
+    if(binary.Length<=64 &&
+       System.Text.RegularExpressions.Regex.IsMatch(binary,@"\A[A-Za-z0-9][A-Za-z0-9_.-]{1,55}\.(?:exe|cmd|bat)\z",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase) &&
+       !System.Text.RegularExpressions.Regex.IsMatch(binary,@"(?i)(secret|password|token|credential|private)"))
+     return binary;
+    return "";
+   }
+   if(key=="command")continue;
+   int slash=value.LastIndexOfAny(new char[]{'\\','/'});
+   string name=value.Substring(slash+1);
+   if(name.Length<1||name.Length>64||name[0]=='.'||name.IndexOf('@')>=0)continue;
+   if(System.Text.RegularExpressions.Regex.IsMatch(name,@"(?i)(secret|password|token|credential|private.key)"))continue;
+   if(System.Text.RegularExpressions.Regex.IsMatch(name,@"\A[\p{L}\p{Nd}_ .()\-]{1,64}\z") &&
+      !System.Text.RegularExpressions.Regex.IsMatch(name,@"\A[. ]+\z"))
+    return name;
+  }
+  return "";
+ }
+ public string Format(string raw,string marker){
+  if(marker.StartsWith("Remote tool started",StringComparison.Ordinal)){
+   if(raw==null||raw.Length>8192)return marker;
+   var m=start.Match(raw);
+   if(!m.Success)return marker;
+   string id=m.Groups["id"].Value,tool=m.Groups["tool"].Value;
+   if(Array.IndexOf(known,tool)<0)return marker;
+   if(pending.ContainsKey(id))return ""; // duplicate start, not new work
+   while(pending.Count>=64 && order.Count>0){pending.Remove(order[0]);order.RemoveAt(0);}
+   bool ambiguous=false;
+   foreach(var item in pending.Values){if(item.Tool==tool){item.Ambiguous=true;ambiguous=true;}}
+   var entry=new Entry{Number=++nextNumber,Tool=tool,Target=SafeTarget(tool,m.Groups["args"].Value),Ambiguous=ambiguous};
+   pending[id]=entry;order.Add(id);
+   return "Remote tool started|"+entry.Number+"|"+entry.Tool+"|"+entry.Target;
+  }
+  if(marker.StartsWith("Remote tool completed",StringComparison.Ordinal)||
+     marker.StartsWith("Remote tool failed",StringComparison.Ordinal)){
+   if(raw==null||raw.Length>8192)return marker;
+   var m=end.Match(raw);
+   if(!m.Success)return marker;
+   string token=m.Groups["id"].Value;
+   Entry entry;
+   bool exactId=pending.TryGetValue(token,out entry);
+   // The pinned Remote 0.2.52 completion marker normally names the tool,
+   // not the request UUID from Received tool call. Pair by tool only when
+   // there is exactly one unambiguous outstanding call of that type.
+   if(!exactId && Array.IndexOf(known,token)>=0){
+    int count=0;string oldest=null;
+    foreach(string id in order){Entry candidate;
+     if(pending.TryGetValue(id,out candidate) && candidate.Tool==token){
+      count++;if(oldest==null){oldest=id;entry=candidate;}
+     }
+    }
+    if(oldest!=null){
+     pending.Remove(oldest);order.Remove(oldest);
+     if(count!=1 || entry.Ambiguous)
+      return marker+": "+token;
+    }else return marker+": "+token;
+   }else if(!exactId)return marker;
+   else{pending.Remove(token);order.Remove(token);}
+   return (marker.StartsWith("Remote tool completed",StringComparison.Ordinal)?
+    "Remote tool completed|":"Remote tool failed|")+entry.Number+"|"+entry.Tool+"|"+entry.Target;
+  }
+  return marker;
+ }
+}
+// One grace interval for both tray activation and the asynchronous startup probe.
+// A second OpenGui request during warm-up must never trigger an early warning.
+public static class RdcOwnerGuiStartupNotice {
+ public const int GraceSeconds=8;
+ public static bool IsDue(DateTime spawnedUtc,DateTime nowUtc,bool alreadyWarned,bool ownedWindowPresent){
+  return !alreadyWarned && !ownedWindowPresent && spawnedUtc!=DateTime.MinValue &&
+   (nowUtc-spawnedUtc).TotalSeconds>=GraceSeconds;
+ }
+}
+// Mirror of the GUI renderer, unchanged, compiled in the independent Tray Host.
+// It must stay pixel-equivalent to the embedded original GUI style block.
+public class RdcMenuColorTable : ProfessionalColorTable {
+    private readonly Color accent = Color.FromArgb(191,118,67);
+    private readonly Color accentSoft = Color.FromArgb(166,98,55);
+
+    public RdcMenuColorTable() {
+        UseSystemColors = false;
+    }
+
+    public override Color ImageMarginGradientBegin { get { return accent; } }
+    public override Color ImageMarginGradientMiddle { get { return accent; } }
+    public override Color ImageMarginGradientEnd { get { return accent; } }
+
+    public override Color CheckBackground { get { return accent; } }
+    public override Color CheckPressedBackground { get { return accentSoft; } }
+    public override Color CheckSelectedBackground { get { return accent; } }
+
+    // Keep the selection outline fully opaque, but let the menu surface show
+    // through the purple interior at exactly half alpha.
+    public override Color MenuItemSelected { get { return Color.FromArgb(128,91,67,126); } }
+    public override Color MenuItemBorder { get { return Color.FromArgb(123,95,162); } }
+    public override Color MenuItemPressedGradientBegin { get { return Color.FromArgb(128,74,55,103); } }
+    public override Color MenuItemPressedGradientMiddle { get { return Color.FromArgb(128,74,55,103); } }
+    public override Color MenuItemPressedGradientEnd { get { return Color.FromArgb(128,74,55,103); } }
+}
+
+// Owner-only checkbox affordance: the orange image-margin is shared by all
+// Account commands, so show an actual high-contrast square for the quota toggle.
+// ToolStripMenuItem still owns Checked/CheckOnClick, keyboard and accessibility.
+public class RdcOwnerAccountMenuRenderer : ToolStripProfessionalRenderer {
+    // Both Account and tray share the same user-affordance painter.
+    // Names are intentionally bounded to the four known checkbox actions.
+    private const string QuotaItemName = "rc1-quota-display-toggle";
+    private const string AutoUpdateItemName = "rc1-auto-update-toggle";
+    private const string TrayQuotaItemName = "rc1-tray-quota-toggle";
+    private const string TrayAutoUpdateItemName = "rc1-tray-auto-update-toggle";
+    public const int CornerRadius = 6; // RdcRoundedButton.OnPaint Rounded(r,6f)
+    private static bool IsCheckItem(ToolStripItem item) {
+        if (item == null) return false;
+        return item.Name == QuotaItemName || item.Name == AutoUpdateItemName ||
+               item.Name == TrayQuotaItemName || item.Name == TrayAutoUpdateItemName ||
+               item.Name == "rc1-auto-connect-toggle" || item.Name == "rc1-tray-auto-connect-toggle" ||
+               item.Name == "rc1-tray-auto-start-toggle" ||
+               item.Name == "rc1-tray-language_ru" || item.Name == "rc1-tray-language_en";
+    }
+
+    public RdcOwnerAccountMenuRenderer(ProfessionalColorTable colors) : base(colors) { }
+
+    // Owner Account only: remove the orange image-column fill without
+    // changing the shared color table (used by the Help and legacy menus).
+    // Use the actual menu BackColor so the glyph gutter joins the text area.
+    protected override void OnRenderImageMargin(ToolStripRenderEventArgs e) {
+        using (Brush brush = new SolidBrush(e.ToolStrip.BackColor))
+            e.Graphics.FillRectangle(brush, e.AffectedBounds);
+    }
+
+    public static Rectangle QuotaBoxBounds(ToolStripItem item) {
+        const int side = 16;
+        // Owner-approved correction: retain the 3px horizontal inset
+        // and lower the prior glyph position by exactly one pixel.
+        return new Rectangle(8, Math.Max(0, (item.Height - side) / 2), side, side);
+    }
+
+    public static void PaintQuotaBox(Graphics g, ToolStripMenuItem item) {
+        Rectangle rect = QuotaBoxBounds(item);
+        if (rect.Right > item.Width || rect.Bottom > item.Height) return;
+
+        SmoothingMode oldSmoothing = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        try {
+            // Let Windows supply actual contrast colors when High Contrast is on.
+            bool highContrast = SystemInformation.HighContrast;
+            Color fill = highContrast
+                ? (item.Checked ? SystemColors.Highlight : SystemColors.Window)
+                : (item.Enabled
+                  ? (item.Checked ? Color.FromArgb(63, 46, 82) : Color.FromArgb(37, 40, 47))
+                  : Color.FromArgb(66, 66, 70));
+            Color outline = highContrast
+                ? (item.Checked ? SystemColors.HighlightText : SystemColors.WindowText)
+                : (!item.Enabled ? Color.FromArgb(148, 148, 148)
+                  : (item.Selected ? Color.White
+                  : (item.Checked ? Color.FromArgb(255, 224, 160) : Color.FromArgb(238, 238, 238))));
+            using (Brush brush = new SolidBrush(fill))
+                g.FillRectangle(brush, rect);
+            using (Pen border = new Pen(outline, 1.35f))
+                g.DrawRectangle(border, rect.X + 0.65f, rect.Y + 0.65f,
+                                rect.Width - 1.3f, rect.Height - 1.3f);
+            if (item.Checked) {
+                Color tick = highContrast ? SystemColors.HighlightText
+                    : (item.Enabled ? Color.White : Color.FromArgb(195, 195, 195));
+                using (Pen pen = new Pen(tick, 2.15f)) {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    pen.LineJoin = LineJoin.Round;
+                    g.DrawLines(pen, new PointF[] {
+                        new PointF(rect.X + 3.5f, rect.Y + 8.0f),
+                        new PointF(rect.X + 6.6f, rect.Y + 11.2f),
+                        new PointF(rect.X + 12.3f, rect.Y + 4.9f)
+                    });
+                }
+            }
+        } finally { g.SmoothingMode = oldSmoothing; }
+    }
+
+    // Single contract for both popup surfaces. The Region clips the actual
+    // native drop-down HWND, not just a painted fake rounded border.
+    public static GraphicsPath RoundedMenuPath(RectangleF bounds) {
+        GraphicsPath path = new GraphicsPath();
+        float r = Math.Min(CornerRadius, Math.Min(bounds.Width,bounds.Height)/2f);
+        if(r<=0){path.AddRectangle(bounds);return path;}
+        float d=2f*r;
+        path.AddArc(bounds.Left,bounds.Top,d,d,180f,90f);
+        path.AddArc(bounds.Right-d,bounds.Top,d,d,270f,90f);
+        path.AddArc(bounds.Right-d,bounds.Bottom-d,d,d,0f,90f);
+        path.AddArc(bounds.Left,bounds.Bottom-d,d,d,90f,90f);
+        path.CloseFigure();
+        return path;
+    }
+    public static void ApplyRoundedRegion(ContextMenuStrip menu) {
+        if(menu==null||menu.IsDisposed||menu.Width<=CornerRadius*2||
+           menu.Height<=CornerRadius*2)return;
+        using(GraphicsPath p=RoundedMenuPath(new RectangleF(0f,0f,menu.Width,menu.Height))){
+            Region previous=menu.Region;
+            menu.Region=new Region(p);
+            if(previous!=null)previous.Dispose();
+        }
+    }
+    public static void ConfigureOwnerMenu(ContextMenuStrip menu){
+        if(menu==null)throw new ArgumentNullException("menu");
+        menu.BackColor=Color.FromArgb(38,41,46);
+        menu.ForeColor=Color.Gainsboro;
+        // Caller owns the renderer; this helper only owns the shared shape.
+        menu.SizeChanged+=(s,e)=>ApplyRoundedRegion(menu);
+        menu.Opening+=(s,e)=>ApplyRoundedRegion(menu);
+        ApplyRoundedRegion(menu);
+        // One extra pixel above every command row, not above separators.
+        // Apply once when inserted, including language submenu items.
+        foreach(ToolStripItem item in menu.Items)PadCommandRow(item);
+        menu.ItemAdded+=(s,e)=>PadCommandRow(e.Item);
+        // Cancel only the native ItemClicked dismissal for preference rows.
+        // Escape, outside clicks, focus loss and explicit Close stay native.
+        bool keepOpen=false;
+        menu.Opening+=(s,e)=>keepOpen=false;
+        menu.ItemClicked+=(s,e)=>{
+            ToolStripMenuItem item=e.ClickedItem as ToolStripMenuItem;
+            keepOpen=item!=null && (item.CheckOnClick ||
+                item.Name=="rc1-tray-language_ru" || item.Name=="rc1-tray-language_en");
+        };
+        menu.Closing+=(s,e)=>{
+            if(e.CloseReason==ToolStripDropDownCloseReason.ItemClicked && keepOpen)
+                e.Cancel=true;
+            keepOpen=false;
+        };
+    }
+    static void PadCommandRow(ToolStripItem item){
+        if(!(item is ToolStripMenuItem))return;
+        Padding p=item.Padding;
+        item.Padding=new Padding(p.Left,p.Top+1,p.Right,p.Bottom);
+    }
+    public static Rectangle SeparatorLineBounds(ToolStrip strip,ToolStripItem item){
+        if(strip==null||item==null)return Rectangle.Empty;
+        // OnRenderSeparator receives an ITEM-LOCAL graphics surface:
+        // using item.Bounds.Top (menu coordinates) silently clips the
+        // whole line out of the actual popup. Separator items start at
+        // menu x=2 and end 2px from the opposite edge by native layout.
+        return new Rectangle(0,item.Height/2,Math.Max(0,item.Width),1);
+    }
+    protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e){
+        if(!(e.ToolStrip is ContextMenuStrip)){base.OnRenderSeparator(e);return;}
+        Rectangle line=SeparatorLineBounds(e.ToolStrip,e.Item);
+        if(line.Width<=0)return;
+        Color ink=SystemInformation.HighContrast
+             ?SystemColors.WindowText:Color.FromArgb(188,195,207);
+        using(Brush b=new SolidBrush(ink))e.Graphics.FillRectangle(b,line);
+    }
+    protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e){
+        if(!(e.ToolStrip is ContextMenuStrip)){base.OnRenderToolStripBorder(e);return;}
+        Rectangle bounds=e.ToolStrip.ClientRectangle;
+        if(bounds.Width<3||bounds.Height<3)return;
+        SmoothingMode prev=e.Graphics.SmoothingMode;
+        e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+        try{
+            using(GraphicsPath p=RoundedMenuPath(
+                   new RectangleF(0.5f,0.5f,bounds.Width-1f,bounds.Height-1f)))
+            using(Pen outline=new Pen(SystemInformation.HighContrast
+                   ?SystemColors.WindowText:Color.FromArgb(110,118,130),1f)){
+                e.Graphics.DrawPath(outline,p);
+            }
+        }finally{e.Graphics.SmoothingMode=prev;}
+    }
+    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e) {
+        if(!(e.ToolStrip is ContextMenuStrip)){
+            base.OnRenderMenuItemBackground(e);
+            return;
+        }
+        ToolStripMenuItem item=e.Item as ToolStripMenuItem;
+        if(item==null){base.OnRenderMenuItemBackground(e);return;}
+        // Paint *every* row on its item-local surface; inherited native
+        // Professional hover rendering varies with system menus. One
+        // explicit purple selection formula now serves Account and tray.
+        using(Brush background=new SolidBrush(e.ToolStrip.BackColor))
+            e.Graphics.FillRectangle(background,new Rectangle(Point.Empty,item.Size));
+        if(item.Selected && item.Enabled){
+            if(SystemInformation.HighContrast)base.OnRenderMenuItemBackground(e);
+            else{
+                SmoothingMode prior=e.Graphics.SmoothingMode;
+                e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+                try{
+                    // Selection outline is intentionally RECTANGULAR; only
+                    // the outer menu window retains the 6px rounded region.
+                    RectangleF selected = new RectangleF(
+                        2.5f, 0.5f, Math.Max(0,item.Width-4f),
+                        Math.Max(0,item.Height-1f));
+                    using(Brush fill=new SolidBrush(Color.FromArgb(128,91,67,126)))
+                    using(Pen edge=new Pen(Color.FromArgb(123,95,162),1f)){
+                        e.Graphics.FillRectangle(fill,selected);
+                        e.Graphics.DrawRectangle(edge,selected.X,selected.Y,
+                                                 selected.Width,selected.Height);
+                    }
+                }finally{e.Graphics.SmoothingMode=prior;}
+            }
+        }
+        if(IsCheckItem(item))PaintQuotaBox(e.Graphics,item);
+        if(item.Name=="rc1-tray-auto-start-toggle" && item.Image!=null){
+            Rectangle rect=RightArtworkBounds(item);
+            if(item.Enabled)e.Graphics.DrawImage(item.Image,rect);
+            else ControlPaint.DrawImageDisabled(e.Graphics,item.Image,rect.X,rect.Y,e.ToolStrip.BackColor);
+        }
+    }
+    // Right-edge artwork lives outside the checkbox gutter. The tray reserves
+    // room for it based on actual localized text widths.
+    // Keep the accepted top edge; grow square artwork downward and about
+    // its horizontal center. Odd-pixel growth is rounded toward the center.
+    public static Rectangle LeftArtworkBounds(ToolStripItem item){
+        Rectangle box=QuotaBoxBounds(item);
+        int extra=item.Name=="rc1-tray-open"?3:(item.Name=="rc1-tray-auto-start-toggle"?2:1);
+        return new Rectangle(box.X-extra/2,box.Y,box.Width+extra,box.Height+extra);
+    }
+    public static Rectangle RightArtworkBounds(ToolStripItem item){
+        Rectangle left=LeftArtworkBounds(item);
+        return new Rectangle(Math.Max(0,item.Width-left.Right),
+            left.Y,left.Width,left.Height);
+    }
+    protected override void OnRenderItemImage(ToolStripItemImageRenderEventArgs e) {
+        if(e.Item.Name=="rc1-tray-auto-start-toggle")return;
+        if((e.Item.Name=="rc1-tray-help" || e.Item.Name=="rc1-tray-open") && e.Image!=null){
+            Rectangle rect=LeftArtworkBounds(e.Item);
+            e.Graphics.DrawImage(e.Image,rect);
+            return;
+        }
+        Rectangle native=e.ImageRectangle;
+        if(e.ToolStrip is ContextMenuStrip)native.Offset(0,1);
+        base.OnRenderItemImage(new ToolStripItemImageRenderEventArgs(e.Graphics,e.Item,e.Image,native));
+    }
+    protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) {
+        if (IsCheckItem(e.Item)) return;
+        Rectangle native=e.ImageRectangle;
+        if(e.ToolStrip is ContextMenuStrip)native.Offset(0,1);
+        base.OnRenderItemCheck(new ToolStripItemImageRenderEventArgs(e.Graphics,e.Item,e.Image,native));
+    }
+    protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e){
+        if(e.ToolStrip is ContextMenuStrip && e.Item is ToolStripMenuItem){
+            Rectangle text=e.TextRectangle;
+            text.Offset(0,1);
+            e.TextRectangle=text;
+        }
+        base.OnRenderItemText(e);
+    }
+    protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e){
+        if(e.Item is ToolStripMenuItem && e.Item.Owner is ContextMenuStrip){
+            Rectangle arrow=e.ArrowRectangle;
+            arrow.Offset(0,1);
+            e.ArrowRectangle=arrow;
+        }
+        base.OnRenderArrow(e);
+    }
+}
+
+// Native ContextMenuStrip ignores direct Padding assignments in its
+// ToolStripDropDownMenu layout. Override DefaultPadding instead so first and
+// last rows clear the outer popup's 6px rounded corners by one extra pixel.
+public class RdcOwnerPaddedContextMenuStrip : ContextMenuStrip {
+    public const int ExtraEdgeSpace = RdcOwnerAccountMenuRenderer.CornerRadius + 1;
+    protected override Padding DefaultPadding {
+        get {
+            Padding original = base.DefaultPadding;
+            return new Padding(original.Left, original.Top + ExtraEdgeSpace,
+                               original.Right, original.Bottom + ExtraEdgeSpace);
+        }
+    }
+}
+
+// Native tray menu: only presentation and user-click dispatch live here.
+// The owning Host decides which operations are allowed, with its existing
+// private Job and observed/read-only guards. Testable without Host startup.
+public sealed class RdcOwnerLanguageContextMenuStrip : RdcOwnerPaddedContextMenuStrip {
+ // Owned WinForms drop-downs override managed Location in SetBoundsCore.
+ // Move only our own popup HWND after native placement, including relayout.
+ [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+ struct NativeRect {public int left,top,right,bottom;}
+ [System.Runtime.InteropServices.DllImport("user32.dll",SetLastError=true)]
+ static extern bool GetWindowRect(IntPtr hwnd,out NativeRect rect);
+ [System.Runtime.InteropServices.DllImport("user32.dll",SetLastError=true)]
+ static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int cx,int cy,uint flags);
+ const uint SWP_NOSIZE=1,SWP_NOZORDER=4,SWP_NOACTIVATE=0x10,SWP_NOOWNERZORDER=0x200;
+ bool positioning;
+ void ApplyNativePosition(){
+  ToolStripItem owner=OwnerItem;
+  if(positioning||!Visible||!IsHandleCreated||IsDisposed||owner==null||owner.Owner==null||!owner.Owner.Visible)return;
+  NativeRect actual;
+  if(!GetWindowRect(Handle,out actual))return;
+  int width=actual.right-actual.left,height=actual.bottom-actual.top;
+  if(width<=0||height<=0)return;
+  Rectangle row=new Rectangle(owner.Owner.PointToScreen(owner.Bounds.Location),owner.Bounds.Size);
+  Rectangle work=Screen.FromRectangle(row).WorkingArea;
+  // Recompute from the owner each time: no cumulative pixel drift.
+  bool left=actual.left<row.Left;
+  Rectangle native=new Rectangle(left?row.Left-width:row.Right,row.Top,width,height);
+  Point target=RdcOwnerTrayMenu.LanguagePopupLocation(native,work);
+  if(target.X==actual.left&&target.Y==actual.top)return;
+  positioning=true;
+  try{SetWindowPos(Handle,IntPtr.Zero,target.X,target.Y,0,0,
+      SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOOWNERZORDER);}
+  finally{positioning=false;}
+ }
+ protected override void OnOpened(EventArgs e){
+  base.OnOpened(e);
+  ApplyNativePosition();
+ }
+ protected override void SetBoundsCore(int x,int y,int width,int height,BoundsSpecified specified){
+  base.SetBoundsCore(x,y,width,height,specified);
+  ApplyNativePosition();
+ }
+}
+
+public sealed class RdcOwnerTrayMenu : IDisposable {
+ public readonly ContextMenuStrip Menu=new RdcOwnerPaddedContextMenuStrip();
+ public readonly ToolStripMenuItem OpenItem,SwitchItem,ReconnectItem,
+  DevicesItem,QuotaItem,AutoUpdateItem,AutoConnectItem,AutoStartItem,StartStopItem,HelpItem,ExitItem,
+  LanguageItem,LanguageRussianItem,LanguageEnglishItem;
+ // The tray command is based on the last Host-owned state, never the localized label.
+ bool ownedRunning;
+ public RdcOwnerTrayMenu(Action<string> onClick) {
+  if(onClick==null)throw new ArgumentNullException("onClick");
+  // Exact same palette, checkbox glyphs, full-width separators and 6px
+  // native rounded popup Region as the main-window Account menu.
+  Menu.Renderer=new RdcOwnerAccountMenuRenderer(new RdcMenuColorTable());
+  RdcOwnerAccountMenuRenderer.ConfigureOwnerMenu(Menu);
+  OpenItem=Item("Открыть окно RDC Relay","OPEN",onClick);
+  SwitchItem=Item("Сменить аккаунт","SWITCH_ACCOUNT",onClick);
+  ReconnectItem=Item("Переподключить","RECONNECT",onClick);
+  DevicesItem=Item("Управление устройствами","DEVICES",onClick);
+  QuotaItem=new ToolStripMenuItem("Выводить остаток вызовов");
+  QuotaItem.Name="rc1-tray-quota-toggle";
+  QuotaItem.CheckOnClick=true;
+  QuotaItem.Click+=(s,e)=>onClick(QuotaItem.Checked?"QUOTA_ON":"QUOTA_OFF");
+  AutoUpdateItem=new ToolStripMenuItem("Автообновление");
+  AutoUpdateItem.Name="rc1-tray-auto-update-toggle";
+  AutoUpdateItem.CheckOnClick=true;
+  AutoUpdateItem.ToolTipText="Установка при запуске; поиск обновлений и ручная кнопка работают отдельно";
+  AutoUpdateItem.Click+=(s,e)=>onClick(AutoUpdateItem.Checked?"AUTO_UPDATE_ON":"AUTO_UPDATE_OFF");
+  AutoStartItem=new ToolStripMenuItem("Автозапуск");
+  AutoStartItem.Name="rc1-tray-auto-start-toggle";
+  AutoStartItem.CheckOnClick=true;
+  AutoStartItem.Click+=(s,e)=>onClick(AutoStartItem.Checked?"AUTO_START_ON":"AUTO_START_OFF");
+  LanguageItem=new ToolStripMenuItem("Язык / Language");
+  LanguageItem.Name="rc1-tray-language";
+  var languageMenu=new RdcOwnerLanguageContextMenuStrip();
+  languageMenu.Renderer=Menu.Renderer;
+  RdcOwnerAccountMenuRenderer.ConfigureOwnerMenu(languageMenu);
+  LanguageItem.DropDown=languageMenu;
+  // Native owned-popup positioning is handled by the dedicated subclass.
+  LanguageRussianItem=Item("Русский","LANGUAGE_RU",onClick);
+  LanguageEnglishItem=Item("English","LANGUAGE_EN",onClick);
+  LanguageItem.DropDownItems.Add(LanguageRussianItem);
+  LanguageItem.DropDownItems.Add(LanguageEnglishItem);
+  StartStopItem=new ToolStripMenuItem("Запустить");
+  StartStopItem.Name="rc1-tray-start-stop";
+  StartStopItem.Click+=(s,e)=>onClick(ownedRunning?"STOP":"START");
+  AutoConnectItem=new ToolStripMenuItem("Автоподключение");
+  AutoConnectItem.Name="rc1-tray-auto-connect-toggle";
+  AutoConnectItem.CheckOnClick=true;
+  AutoConnectItem.Click+=(s,e)=>onClick(AutoConnectItem.Checked?"AUTO_CONNECT_ON":"AUTO_CONNECT_OFF");
+  HelpItem=Item("Справка о программе","HELP",onClick);
+  HelpItem.Image=SystemIcons.Question.ToBitmap();
+  ExitItem=new ToolStripMenuItem("Завершить RDC Relay");
+  ExitItem.Name="rc1-tray-exit";
+  Menu.Items.Add(OpenItem);
+  Menu.Items.Add(new ToolStripSeparator());
+  Menu.Items.Add(SwitchItem);
+  Menu.Items.Add(ReconnectItem);
+  Menu.Items.Add(StartStopItem);
+  Menu.Items.Add(AutoConnectItem);
+  Menu.Items.Add(new ToolStripSeparator());
+  Menu.Items.Add(DevicesItem);
+  Menu.Items.Add(QuotaItem);
+  Menu.Items.Add(new ToolStripSeparator());
+  Menu.Items.Add(AutoStartItem);
+  Menu.Items.Add(AutoUpdateItem);
+  Menu.Items.Add(LanguageItem);
+  Menu.Items.Add(HelpItem);
+  Menu.Items.Add(new ToolStripSeparator());
+  Menu.Items.Add(ExitItem);
+  AutoStartItem.Image=WindowsArtwork();
+  ReserveRightArtwork();
+ }
+ // A small monochrome four-pane Windows mark; no external asset or download.
+ static Bitmap WindowsArtwork(){
+  var b=new Bitmap(16,16);
+  using(Graphics g=Graphics.FromImage(b))
+  using(Brush ink=new SolidBrush(Color.FromArgb(174,210,246))){
+   g.FillRectangle(ink,1,1,6,6);g.FillRectangle(ink,8,1,7,6);
+   g.FillRectangle(ink,1,8,6,7);g.FillRectangle(ink,8,8,7,7);
+  }
+  return b;
+ }
+ public void SetApplicationIcon(string iconPath){
+  Bitmap artwork=null;
+  try{
+   // The approved ICO contains an exact 16px PNG frame. Decode that frame
+   // directly; Icon.ToBitmap can corrupt alpha/color on PNG-backed ICOs.
+   var file=new FileInfo(iconPath);
+   if(file.Length<22||file.Length>1048576)return;
+   byte[] data=File.ReadAllBytes(iconPath);
+   if(BitConverter.ToUInt16(data,0)!=0||BitConverter.ToUInt16(data,2)!=1)return;
+   int count=BitConverter.ToUInt16(data,4);
+   if(count<1||6+16*count>data.Length)return;
+   for(int i=0;i<count;i++){
+    int entry=6+16*i;
+    if(data[entry]!=16||data[entry+1]!=16)continue;
+    uint size=BitConverter.ToUInt32(data,entry+8),offset=BitConverter.ToUInt32(data,entry+12);
+    if(size<8||offset<6+16*count||offset+(ulong)size>(ulong)data.Length)continue;
+    if(data[(int)offset]!=137||data[(int)offset+1]!=80)continue;
+    using(var frame=new MemoryStream(data,(int)offset,(int)size,false))
+    using(var png=Image.FromStream(frame)){
+     if(png.Width==16&&png.Height==16)artwork=new Bitmap(png);
+    }
+    if(artwork!=null)break;
+   }
+  }catch{}
+  if(artwork==null)return;
+  Image previous=OpenItem.Image;
+  OpenItem.Image=artwork;
+  if(previous!=null)previous.Dispose();
+  ReserveRightArtwork();
+ }
+ void ReserveRightArtwork(){
+  int width=0;
+  foreach(ToolStripItem item in Menu.Items){
+   if(!(item is ToolStripMenuItem))continue;
+   int textWidth=TextRenderer.MeasureText(item.Text,item.Font).Width;
+   width=Math.Max(width,textWidth+ (item==AutoStartItem?78:48));
+  }
+  Menu.MinimumSize=new Size(width,0);
+  Menu.PerformLayout();
+ }
+ public static Point LanguagePopupLocation(Rectangle nativeBounds,Rectangle work){
+  int x=Math.Max(work.Left,Math.Min(work.Right-nativeBounds.Width,nativeBounds.X+2));
+  int y=Math.Max(work.Top,Math.Min(work.Bottom-nativeBounds.Height,nativeBounds.Y-9));
+  return new Point(x,y);
+ }
+ static ToolStripMenuItem Item(string text,string verb,Action<string> onClick){
+  var item=new ToolStripMenuItem(text);
+  item.Name="rc1-tray-"+verb.ToLowerInvariant();
+  item.Click+=(s,e)=>onClick(verb);
+  return item;
+ }
+ public void Refresh(bool managed,bool observed,bool ownedRunning,
+   bool ownedReady,bool accountBusy,bool shuttingDown,bool quotaEnabled,
+   bool autoUpdateEnabled) {
+  Refresh(managed,observed,ownedRunning,ownedReady,accountBusy,shuttingDown,quotaEnabled,autoUpdateEnabled,true);
+ }
+ public void Refresh(bool managed,bool observed,bool ownedRunning,
+   bool ownedReady,bool accountBusy,bool shuttingDown,bool quotaEnabled,
+   bool autoUpdateEnabled,bool autoConnectEnabled) {
+  OpenItem.Enabled=!shuttingDown;
+  SwitchItem.Enabled=managed&&!observed&&ownedRunning&&ownedReady&&!accountBusy&&!shuttingDown;
+  ReconnectItem.Enabled=managed&&!observed&&ownedRunning&&!accountBusy&&!shuttingDown;
+  DevicesItem.Enabled=(managed||observed)&&!shuttingDown;
+  QuotaItem.Enabled=managed&&!observed&&!shuttingDown;
+  QuotaItem.Checked=quotaEnabled;
+  AutoUpdateItem.Enabled=!shuttingDown;
+  AutoUpdateItem.Checked=autoUpdateEnabled;
+  AutoStartItem.Enabled=false;
+  AutoStartItem.Checked=false;
+  AutoConnectItem.Enabled=managed&&!observed&&!accountBusy&&!shuttingDown;
+  AutoConnectItem.Checked=autoConnectEnabled;
+  this.ownedRunning=ownedRunning;
+  StartStopItem.Text=ownedRunning?"Остановить":"Запустить";
+  StartStopItem.Enabled=managed&&!observed&&!accountBusy&&!shuttingDown;
+  LanguageItem.Enabled=!shuttingDown;
+  HelpItem.Enabled=!shuttingDown;
+  ExitItem.Enabled=!shuttingDown;
+ }
+ public void ApplyLanguage(string locale,IDictionary<string,string> catalog){
+  OpenItem.Text=RdcUiLanguage.Text(catalog,"tray.menu.openWindow","Открыть окно RDC Relay");
+  SwitchItem.Text=RdcUiLanguage.Text(catalog,"tray.menu.switchAccount","Сменить аккаунт");
+  ReconnectItem.Text=RdcUiLanguage.Text(catalog,"tray.menu.reconnect","Переподключить");
+  DevicesItem.Text=RdcUiLanguage.Text(catalog,"tray.menu.manageDevices","Управление устройствами");
+  QuotaItem.Text=RdcUiLanguage.Text(catalog,"tray.menu.showRemainingCalls","Выводить остаток вызовов");
+  AutoStartItem.Text=RdcUiLanguage.Text(catalog,"tray.menu.autoStart","Автозапуск");
+  AutoStartItem.ToolTipText=RdcUiLanguage.Text(catalog,"tray.menu.autoStartTooltip","Запуск RDC Relay в трее при входе в Windows. Фактическое разрешение — в параметрах автозагрузки Windows.");
+  AutoUpdateItem.Text=RdcUiLanguage.Text(catalog,"tray.menu.autoUpdate","Автообновление");
+  AutoConnectItem.Text=RdcUiLanguage.Text(catalog,"tray.menu.autoConnect","Автоподключение");
+  AutoConnectItem.ToolTipText=RdcUiLanguage.Text(catalog,"tray.menu.autoConnectTooltip","Запуск Remote при следующем запуске RDC Relay.");
+  AutoUpdateItem.ToolTipText=RdcUiLanguage.Text(catalog,"tray.menu.autoUpdateTooltip",
+    "Установка при запуске; поиск обновлений и ручная кнопка работают отдельно");
+  StartStopItem.Text=ownedRunning
+    ?RdcUiLanguage.Text(catalog,"tray.menu.stop","Остановить")
+    :RdcUiLanguage.Text(catalog,"tray.menu.start","Запустить");
+  HelpItem.Text=RdcUiLanguage.Text(catalog,"tray.menu.about","Справка о программе");
+  ExitItem.Text=RdcUiLanguage.Text(catalog,"tray.menu.exit","Завершить RDC Relay");
+  LanguageItem.Text=RdcUiLanguage.Text(catalog,"settings.language","Язык / Language");
+  LanguageRussianItem.Checked=locale==RdcUiLanguage.Russian;
+  LanguageEnglishItem.Checked=locale==RdcUiLanguage.English;
+  ReserveRightArtwork();
+  Menu.Invalidate();
+  LanguageItem.DropDown.Invalidate();
+ }
+ public void Dispose(){
+  var help=HelpItem.Image;var open=OpenItem.Image;var windows=AutoStartItem.Image;
+  HelpItem.Image=null;OpenItem.Image=null;AutoStartItem.Image=null;
+  Menu.Dispose();if(help!=null)help.Dispose();if(open!=null)open.Dispose();if(windows!=null)windows.Dispose();
+ }
+}
+
+// Shared quota opt-out encoding: identical to rc1-owner-gui.ps1 and
+// rc1-tray-host.ps1. No secrets, network access or additional OAuth flow.
+public static class RdcOwnerTrayQuotaPreference {
+ public static string CurrentPath {
+  get {return Path.Combine(Environment.GetFolderPath(
+    Environment.SpecialFolder.LocalApplicationData),"RDCRelayOwnerPilot","quota-display.opt-in");}
+ }
+ public static bool Enabled(string path) {
+  try{
+   if(String.IsNullOrWhiteSpace(path)||!File.Exists(path))return !String.IsNullOrWhiteSpace(path);
+   var info=new FileInfo(path);
+   if(info.Length!=10&&info.Length!=11)return false;
+   if((info.Attributes&FileAttributes.ReparsePoint)!=0)return false;
+   return File.ReadAllText(path,Encoding.UTF8)=="enabled-v1";
+  }catch{return false;}
+ }
+ public static void Set(string path,bool enabled) {
+  if(String.IsNullOrWhiteSpace(path))throw new InvalidOperationException("RC1_QUOTA_SETTING_PATH_REQUIRED");
+  string absolute=Path.GetFullPath(path);
+  string dir=Path.GetDirectoryName(absolute);
+  if(String.IsNullOrEmpty(dir))throw new InvalidOperationException("RC1_QUOTA_SETTING_PARENT_REQUIRED");
+  if(Directory.Exists(dir)&&(File.GetAttributes(dir)&FileAttributes.ReparsePoint)!=0)
+   throw new InvalidOperationException("RC1_QUOTA_SETTING_REPARSE_DENIED");
+  if(enabled){
+   if(File.Exists(absolute)){
+    if((File.GetAttributes(absolute)&FileAttributes.ReparsePoint)!=0)
+     throw new InvalidOperationException("RC1_QUOTA_SETTING_REPARSE_DENIED");
+    File.Delete(absolute);
+   }
+   if(File.Exists(absolute))throw new IOException("RC1_QUOTA_SETTING_ENABLE_FAILED");
+   return;
+  }
+  if(!Directory.Exists(dir))Directory.CreateDirectory(dir);
+  if((File.GetAttributes(dir)&FileAttributes.ReparsePoint)!=0)
+   throw new InvalidOperationException("RC1_QUOTA_SETTING_REPARSE_DENIED");
+  string temp=Path.Combine(dir,"quota-display-"+Guid.NewGuid().ToString("N")+".tmp");
+  string backup=Path.Combine(dir,"quota-display-"+Guid.NewGuid().ToString("N")+".bak");
+  try{
+   File.WriteAllText(temp,"disabled-v1",new UTF8Encoding(false));
+   if(File.Exists(absolute)){
+    if((File.GetAttributes(absolute)&FileAttributes.ReparsePoint)!=0)
+     throw new InvalidOperationException("RC1_QUOTA_SETTING_REPARSE_DENIED");
+    File.Replace(temp,absolute,backup);
+   }else File.Move(temp,absolute);
+   if(File.ReadAllText(absolute,Encoding.UTF8)!="disabled-v1")
+    throw new IOException("RC1_QUOTA_SETTING_VERIFY_FAILED");
+  }finally{
+   if(File.Exists(temp))File.Delete(temp);
+   if(File.Exists(backup))File.Delete(backup);
+  }
+ }
+}
+// A durable, per-user auto-update *startup-install* opt-out, independent of
+// update availability checks, version labels, manual clicks and RC1 release
+// safety policy. Missing file is ON; corrupt/unreadable setting fails closed.
+public static class RdcOwnerTrayAutoUpdatePreference {
+ public static string CurrentPath {
+  get {return Path.Combine(Environment.GetFolderPath(
+    Environment.SpecialFolder.LocalApplicationData),"RDCRelayOwnerPilot","auto-update.opt-out");}
+ }
+ public static bool Enabled(string path){
+  try{
+   if(String.IsNullOrWhiteSpace(path))return false;
+   if(!File.Exists(path))return true;
+   var info=new FileInfo(path);
+   if((info.Attributes&FileAttributes.ReparsePoint)!=0)return false;
+   if(info.Length!=10&&info.Length!=11)return false;
+   return File.ReadAllText(path,Encoding.UTF8)=="enabled-v1";
+  }catch{return false;}
+ }
+ public static void Set(string path,bool enabled){
+  if(String.IsNullOrWhiteSpace(path))throw new InvalidOperationException("RC1_AUTO_UPDATE_PATH_REQUIRED");
+  string full=Path.GetFullPath(path);
+  string dir=Path.GetDirectoryName(full);
+  if(String.IsNullOrEmpty(dir))throw new InvalidOperationException("RC1_AUTO_UPDATE_PARENT_REQUIRED");
+  if(Directory.Exists(dir)&&(File.GetAttributes(dir)&FileAttributes.ReparsePoint)!=0)
+   throw new InvalidOperationException("RC1_AUTO_UPDATE_REPARSE_DENIED");
+  if(enabled){
+   if(File.Exists(full)){
+    if((File.GetAttributes(full)&FileAttributes.ReparsePoint)!=0)
+     throw new InvalidOperationException("RC1_AUTO_UPDATE_REPARSE_DENIED");
+    File.Delete(full);
+   }
+   if(File.Exists(full))throw new IOException("RC1_AUTO_UPDATE_ENABLE_FAILED");
+   return;
+  }
+  if(!Directory.Exists(dir))Directory.CreateDirectory(dir);
+  if((File.GetAttributes(dir)&FileAttributes.ReparsePoint)!=0)
+   throw new InvalidOperationException("RC1_AUTO_UPDATE_REPARSE_DENIED");
+  string temp=Path.Combine(dir,"auto-update-"+Guid.NewGuid().ToString("N")+".tmp");
+  string backup=Path.Combine(dir,"auto-update-"+Guid.NewGuid().ToString("N")+".bak");
+  try{
+   File.WriteAllText(temp,"disabled-v1",new UTF8Encoding(false));
+   if(File.Exists(full)){
+    if((File.GetAttributes(full)&FileAttributes.ReparsePoint)!=0)
+     throw new InvalidOperationException("RC1_AUTO_UPDATE_REPARSE_DENIED");
+    File.Replace(temp,full,backup);
+   }else File.Move(temp,full);
+   if(File.ReadAllText(full,Encoding.UTF8)!="disabled-v1")
+    throw new IOException("RC1_AUTO_UPDATE_VERIFY_FAILED");
+  }finally{
+   if(File.Exists(temp))File.Delete(temp);
+   if(File.Exists(backup))File.Delete(backup);
+  }
+ }
+}
+ // Display-only read of the same short-lived official who_am_i cache as Owner GUI.
+ // No OAuth, browser or Remote IPC calls. Account changes and invalid input fail closed.
+ public static class RdcOwnerTrayQuotaSnapshot {
+  public static string CachePath {
+   get{return Path.Combine(Environment.GetFolderPath(
+    Environment.SpecialFolder.LocalApplicationData),"RDCRelayOwnerPilot","remote-usage-cache.json");}
+  }
+  public static int? Read(string path,string account,DateTime nowUtc){
+   if(String.IsNullOrWhiteSpace(path)||String.IsNullOrWhiteSpace(account))return null;
+   try{
+    var f=new FileInfo(path);
+    if(!f.Exists||f.Length<40||f.Length>512||
+       (f.Attributes&FileAttributes.ReparsePoint)!=0)return null;
+    string folder=Path.GetDirectoryName(Path.GetFullPath(path));
+    if(String.IsNullOrEmpty(folder)||
+       (File.GetAttributes(folder)&FileAttributes.ReparsePoint)!=0)return null;
+    byte[] bytes=File.ReadAllBytes(path);
+    if(bytes.Length<40||bytes.Length>512)return null; // file can change after FileInfo
+    string json=new UTF8Encoding(false,true).GetString(bytes);
+    var values=new System.Web.Script.Serialization.JavaScriptSerializer().
+      Deserialize<Dictionary<string,object>>(json);
+    if(values==null||!values.ContainsKey("source")||
+       !String.Equals(Convert.ToString(values["source"]),"official-remote-who-am-i",StringComparison.Ordinal)||
+       !values.ContainsKey("accountEmail")||
+       !String.Equals(Convert.ToString(values["accountEmail"]),account.Trim(),StringComparison.OrdinalIgnoreCase)||
+       !values.ContainsKey("remainingPercent")||!values.ContainsKey("observedAtUtc"))return null;
+    int percent;
+    if(!Int32.TryParse(Convert.ToString(values["remainingPercent"],
+       System.Globalization.CultureInfo.InvariantCulture),
+       System.Globalization.NumberStyles.None,
+       System.Globalization.CultureInfo.InvariantCulture,out percent)||
+       percent<0||percent>100)return null;
+    DateTime observed;
+    if(!DateTime.TryParseExact(Convert.ToString(values["observedAtUtc"]),
+       "yyyy-MM-ddTHH:mm:ssZ",System.Globalization.CultureInfo.InvariantCulture,
+       System.Globalization.DateTimeStyles.AssumeUniversal|
+       System.Globalization.DateTimeStyles.AdjustToUniversal,out observed))return null;
+    double age=(nowUtc.ToUniversalTime()-observed).TotalMinutes;
+    if(age < -2 || age >= 60)return null;
+    return percent;
+   }catch{return null;}
+  }
+ }
+// Hidden top-level (not message-only) Host window: Windows broadcasts
+// WM_QUERYENDSESSION / WM_ENDSESSION even when the replaceable GUI is closed.
+public sealed class RdcOwnerEndSessionWindow : NativeWindow, IDisposable {
+ const int QueryEndSession=0x0011,EndSession=0x0016;
+ readonly Action confirmed;
+ bool notified,disposed;
+ public RdcOwnerEndSessionWindow(Action onConfirmed){
+  if(onConfirmed==null)throw new ArgumentNullException("onConfirmed");
+  confirmed=onConfirmed;
+  var parameters=new CreateParams();
+  parameters.Style=0;parameters.ExStyle=0x80; // hidden WS_EX_TOOLWINDOW
+  parameters.Parent=IntPtr.Zero;
+  CreateHandle(parameters);
+ }
+ protected override void WndProc(ref Message message){
+  if(message.Msg==QueryEndSession){
+   // Never block or mutate state on the provisional query.
+   message.Result=new IntPtr(1);return;
+  }
+  if(message.Msg==EndSession){
+   if(message.WParam!=IntPtr.Zero&&!notified){
+    notified=true;
+    try{confirmed();}catch{} // OS shutdown must not be blocked by a failure
+   }
+   message.Result=IntPtr.Zero;return;
+  }
+  base.WndProc(ref message);
+ }
+ public void Dispose(){
+  if(disposed)return;
+  disposed=true;
+  if(Handle!=IntPtr.Zero)DestroyHandle();
+ }
+}
+
+// Localized native WinForms controls: OS MessageBox Yes/No captions
+// follow Windows, not the selected app language. Keep the default No.
+public static class RdcOwnerTrayConfirmation {
+ public static Form Create(string question,string title,IDictionary<string,string> labels,bool warning){
+  var dialog=new Form();
+  dialog.Name="rc1-tray-confirmation";dialog.Text=title;
+  dialog.Font=SystemFonts.MessageBoxFont;dialog.AutoScaleMode=AutoScaleMode.Font;
+  dialog.FormBorderStyle=FormBorderStyle.FixedDialog;dialog.StartPosition=FormStartPosition.CenterScreen;
+  dialog.MinimizeBox=false;dialog.MaximizeBox=false;dialog.ShowInTaskbar=false;
+  dialog.AutoSize=true;dialog.AutoSizeMode=AutoSizeMode.GrowAndShrink;
+  var layout=new TableLayoutPanel{AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,
+   Dock=DockStyle.Fill,Padding=new Padding(16),ColumnCount=2,RowCount=2};
+  layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+  layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+  var image=(warning?SystemIcons.Warning:SystemIcons.Question).ToBitmap();
+  var picture=new PictureBox{Image=image,Size=new Size(32,32),SizeMode=PictureBoxSizeMode.CenterImage,Margin=new Padding(0,3,12,0)};
+  dialog.Disposed+=(s,e)=>image.Dispose();
+  var text=new Label{Text=question,AutoSize=true,MaximumSize=new Size(420,0),MinimumSize=new Size(220,32),Margin=new Padding(0,3,0,12)};
+  var row=new FlowLayoutPanel{AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,
+   Dock=DockStyle.Fill,FlowDirection=FlowDirection.RightToLeft,WrapContents=false,Margin=new Padding(0,10,0,0)};
+  var no=new Button{Name="rc1-tray-confirm-no",Text=RdcUiLanguage.Text(labels,"dialog.button.no","Нет"),DialogResult=DialogResult.No,AutoSize=true,MinimumSize=new Size(88,28)};
+  var yes=new Button{Name="rc1-tray-confirm-yes",Text=RdcUiLanguage.Text(labels,"dialog.button.yes","Да"),DialogResult=DialogResult.Yes,AutoSize=true,MinimumSize=new Size(88,28)};
+  row.Controls.Add(no);row.Controls.Add(yes);
+  layout.Controls.Add(picture,0,0);layout.Controls.Add(text,1,0);
+  layout.Controls.Add(row,0,1);layout.SetColumnSpan(row,2);
+  dialog.Controls.Add(layout);
+  dialog.AcceptButton=no;dialog.CancelButton=no;dialog.ActiveControl=no;
+  dialog.Shown+=(s,e)=>no.Select();
+  return dialog;
+ }
+ public static bool Ask(string question,string title,IDictionary<string,string> labels,bool warning){
+  using(Form dialog=Create(question,title,labels,warning))
+   return dialog.ShowDialog()==DialogResult.Yes;
+ }
+}
+
+public sealed class RdcOwnerRuntime : IDisposable {
+ readonly object gate=new object();
+ readonly string sourceRoot, guiScript, stateRoot, ticketFile, instance, generation, trialRoot;
+ readonly string pipeName, logonSid;
+ readonly RdcOwnerTicketStore ticketStore;
+ readonly int trialExitSeconds;
+ readonly Stopwatch trialClock=new Stopwatch();
+ bool trialFailGuiStartOnce=false;
+ int trialReopensRemaining=0;
+ readonly RdcOwnerRemoteState remoteSupervisor=new RdcOwnerRemoteState();
+ readonly RdcOwnerToolJournal toolJournal=new RdcOwnerToolJournal();
+ bool observedMode=false,managedMode=false,reopenAfterModeChange=false,autoStartPending=false;
+ DateTime nextAutoStartUtc=DateTime.MinValue;
+ DateTime nextTrayQuotaCheckUtc=DateTime.MinValue;
+ string lastTrayQuotaAccount="";
+  int? lastTrayRemainingPercent=null;
+ // Owner GUI focus is advisory: Windows may refuse activation from the tray.
+ // Limit diagnostics and balloon hints; never restart an unverified child.
+ DateTime guiSpawnUtc=DateTime.MinValue,lastGuiNoticeUtc=DateTime.MinValue;
+ bool guiWindowWarned=false;
+ RdcOwnerManagedProcess managedProcess=null;
+ RdcOwnerLogSessions managedLogSessions=null;
+ RdcOwnerLogPump managedLogPump=null;
+ bool managedSessionAccepted=false,managedLogFaultReported=false,managedLogFinishFaultReported=false,managedParserFault=false;
+ // Logout is a separate, bounded private Job; never execute in the GUI or
+ // borrow the running Remote's process tree or credential files.
+ RdcOwnerManagedProcess accountLogoutProcess=null;
+ DateTime accountLogoutDeadlineUtc=DateTime.MinValue;
+ bool accountSwitchFaultLatched=false;
+ readonly List<string> managedLogs=new List<string>();
+ string managedLogPath="",managedState="Disconnected",managedDetail="";
+ readonly RdcOwnerUtf8LogBuffer managedLogStream=new RdcOwnerUtf8LogBuffer();
+ // A process still running is not proof that its MCP channel is live.
+ // Only fresh top-level Remote channel/presence evidence renews this lease.
+ // Local tool completion is logged before upstream result upload and is NOT
+ // an authenticated transport-delivery or subscription proof.
+ DateTime managedReadyEvidenceUtc=DateTime.MinValue;
+ static readonly TimeSpan ReadyEvidenceLease=TimeSpan.FromMinutes(2);
+ string managedAccount="",managedDeviceName="",managedDeviceId="";
+ long managedBornUtcTicks=0;
+ readonly List<string> managedBannerArt=new List<string>();
+ readonly List<string> managedStartupHeader=new List<string>();
+ bool managedStartupComplete=false;
+ int managedStartupScanned=0;
+ int managedBannerScanned=0;
+ long managedLogOffset=0;
+ RdcOwnerTrayMenu trayMenu;
+  ToolStripMenuItem trayExitItem;
+  int trayHelpSequence=0;
+  DateTime trayHelpExpiresUtc=DateTime.MinValue;
+ bool runRootCreated=false;
+ readonly int hostPid, hostSession; readonly long hostBorn;
+ readonly Mutex singleton;
+ readonly EventWaitHandle reopenSignal;
+ readonly EventWaitHandle idleUpgradeSignal;
+ readonly EventWaitHandle guiReadySignal;
+ readonly EventWaitHandle hostReadySignal;
+ readonly ApplicationContext context=new ApplicationContext();
+ readonly NotifyIcon tray=new NotifyIcon();
+ readonly System.Windows.Forms.Timer pulse=new System.Windows.Forms.Timer();
+ // Animation cadence is independent from 250ms Host health/IPC polling.
+ readonly System.Windows.Forms.Timer trayFrameTimer=new System.Windows.Forms.Timer();
+ RdcOwnerTrayVisual trayVisual;
+ readonly RdcOwnerServer server;
+ readonly List<Dictionary<string,object>> events=new List<Dictionary<string,object>>();
+ readonly HashSet<string> requestIds=new HashSet<string>(StringComparer.Ordinal);
+ readonly Queue<string> requestOrder=new Queue<string>();
+ readonly HashSet<int> trialSnapshotClients=new HashSet<int>();
+ readonly HashSet<int> trialEventClients=new HashSet<int>();
+ Process gui;
+ System.Threading.Tasks.Task<string> guiErrorTask;
+ int childPid=0,childSession=0,guiStarts=0,guiFailures=0,closeGeneration=0;
+ long childBorn=0,sequence=0,lastRequestSequence=0;
+ string nonce="",guiState="NONE",lastGuiError="";
+ bool disposed=false,guiAuthenticated=false,exitRequested=false;
+ int windowsEnding;
+ RdcOwnerEndSessionWindow endSessionWindow;
+ readonly string fakeRemoteSession=Guid.NewGuid().ToString("N");
+ public string Generation { get {return generation;} }
+ public string Status { get {lock(gate){return guiState;}} }
+ public string LastGuiError {get{lock(gate){return lastGuiError;}}}
+ // Only a ready Remote launched into THIS Host's private Job can select
+ // the quota OAuth account. External/observed/fake identity never triggers login.
+ public string ActiveManagedAccount {
+  get {
+   lock(gate){
+    if(!managedMode||observedMode||trialRoot!=null||managedState!="Ready"||
+       managedProcess==null||!managedProcess.Running)return "";
+    return System.Text.RegularExpressions.Regex.IsMatch(managedAccount??"",
+      @"\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z")?
+      managedAccount:"";
+   }
+  }
+ }
+ public RdcOwnerRuntime(string root,bool fakeOnly):this(root,fakeOnly,null,false,0,false){}
+ public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot):this(root,fakeOnly,isolatedTrialRoot,false,30,false){}
+ public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot,bool failOnce,int exitSeconds,bool reopenOnce):
+  this(root,fakeOnly,isolatedTrialRoot,failOnce,exitSeconds,reopenOnce?1:0){}
+ public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot,bool failOnce,int exitSeconds,int reopenCount):
+  this(root,fakeOnly,isolatedTrialRoot,failOnce,exitSeconds,reopenCount,false){}
+ public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot,bool failOnce,int exitSeconds,int reopenCount,bool failConstructorAfterServerStart) {
+  if(!fakeOnly)throw new InvalidOperationException("RC1_REMOTE_NOT_AUTHORIZED");
+  trialRoot=ValidateTrialRoot(isolatedTrialRoot);
+  if(trialRoot==null && (failOnce||exitSeconds!=0||reopenCount!=0||failConstructorAfterServerStart))throw new InvalidOperationException("RC1_TRIAL_OPTIONS_WITHOUT_ROOT");
+  if(trialRoot!=null && (exitSeconds<15||exitSeconds>120))throw new InvalidOperationException("RC1_TRIAL_BOUNDED_DURATION");
+  if(reopenCount<0||reopenCount>10)throw new InvalidOperationException("RC1_TRIAL_REOPEN_BOUNDS");
+  trialExitSeconds=exitSeconds;trialFailGuiStartOnce=failOnce;trialReopensRemaining=reopenCount;
+  sourceRoot=Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
+  guiScript=Path.GetFullPath(Path.Combine(sourceRoot,"remote-window.ps1"));
+  if(Path.GetDirectoryName(guiScript)!=sourceRoot || !File.Exists(guiScript) ||
+     !File.Exists(Path.Combine(sourceRoot,"RdcOwnerWire.cs")) ||
+     !File.Exists(Path.Combine(sourceRoot,"RdcOwnerRuntime.cs")))throw new InvalidOperationException("RC1_SOURCE_ROOT");
+  CheckPath(guiScript);
+  logonSid=RdcOwnerWire.LogonSid();
+  byte[] key=new System.Security.Cryptography.SHA256Managed().ComputeHash(
+    Encoding.UTF8.GetBytes(sourceRoot.ToLowerInvariant()+"|"+logonSid));
+  string mutexKey=BitConverter.ToString(key).Replace("-","").Substring(0,32);
+  bool created=false;
+  singleton=new Mutex(true,@"Local\RdcRelayRC1Owner-"+mutexKey,out created);
+  if(!created){singleton.Dispose();throw new InvalidOperationException("RC1_HOST_ALREADY_RUNNING_NO_KILL");}
+  try{
+   // Only same-logon local callers can ask this Host to reopen its GUI.
+   // This event has no Remote/action authority and is scoped to this release.
+   var eventAcl=new EventWaitHandleSecurity();
+   eventAcl.SetAccessRuleProtection(true,false);
+   eventAcl.AddAccessRule(new EventWaitHandleAccessRule(new SecurityIdentifier(logonSid),
+     EventWaitHandleRights.FullControl,AccessControlType.Allow));
+   byte[] activationHash=new System.Security.Cryptography.SHA256Managed().ComputeHash(
+     Encoding.UTF8.GetBytes(sourceRoot.ToLowerInvariant()));
+   string activationName=@"Local\RdcRelayRC1Open-"+BitConverter.ToString(activationHash).Replace("-","").Substring(0,32);
+   bool eventCreated;
+   reopenSignal=new EventWaitHandle(false,EventResetMode.AutoReset,activationName,out eventCreated,eventAcl);
+   idleUpgradeSignal=new EventWaitHandle(false,EventResetMode.AutoReset,
+     @"Local\RdcRelayRC1IdleUpgrade-"+mutexKey,out eventCreated,eventAcl);
+   string readyName=@"Local\RdcRelayRC1GuiReady-"+BitConverter.ToString(activationHash).Replace("-","").Substring(0,32);
+   guiReadySignal=new EventWaitHandle(false,EventResetMode.ManualReset,readyName,out eventCreated,eventAcl);
+   guiReadySignal.Reset();
+   hostReadySignal=new EventWaitHandle(false,EventResetMode.ManualReset,activationName.Replace("RdcRelayRC1Open-","RdcRelayRC1HostReady-"),out eventCreated,eventAcl);
+   hostReadySignal.Reset();
+   instance=Guid.NewGuid().ToString("N");
+   generation=Guid.NewGuid().ToString("N");
+   pipeName="rdc-rc1-gui-"+instance;
+   hostPid=Process.GetCurrentProcess().Id;
+   hostBorn=RdcOwnerWire.Born(hostPid);
+   hostSession=RdcOwnerWire.Session(hostPid);
+   string local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+   if(String.IsNullOrEmpty(local))throw new InvalidOperationException("NO_OWNER_LOCALAPPDATA");
+   string pilotRoot=trialRoot==null?Path.Combine(local,"RDCRelayOwnerPilot","1.6.0-RC1"):
+     Path.Combine(trialRoot,"owner-state");
+   CheckParents(pilotRoot);
+   stateRoot=Path.Combine(pilotRoot,"run-"+instance);
+   if(Directory.Exists(stateRoot) || File.Exists(stateRoot))throw new InvalidOperationException("RUN_COLLISION");
+   DirectorySecurity acl=new DirectorySecurity();
+   acl.SetAccessRuleProtection(true,false);
+   acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(logonSid),
+     FileSystemRights.FullControl,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,
+     PropagationFlags.None,AccessControlType.Allow));
+   Directory.CreateDirectory(pilotRoot);
+   Directory.CreateDirectory(stateRoot,acl);
+   runRootCreated=true;
+   CheckPath(stateRoot);
+   ticketStore=new RdcOwnerTicketStore(stateRoot,generation,logonSid);
+   ticketFile=ticketStore.PathName;
+   server=new RdcOwnerServer(pipeName,Dispatch);
+   server.Start();
+   if(trialRoot!=null && failConstructorAfterServerStart)
+    throw new IOException("RC1_TRIAL_INJECTED_CONSTRUCTOR_FAILURE");
+   tray.Icon=SystemIcons.Information; // fallback only for incomplete fake-only fixtures
+   UpdateFallbackTrayText(RdcUiLanguage.LoadResources(sourceRoot,RdcUiLanguage.Current));
+   trayVisual=RdcOwnerTrayVisual.Load(sourceRoot,tray);
+   if(trayVisual!=null)trayVisual.Update(remoteSupervisor.Snapshot());
+   else Append("host","tray artwork missing in isolated fixture; fallback icon");
+   tray.Visible=true;
+   trayMenu=new RdcOwnerTrayMenu(HandleTrayMenuAction);
+   trayMenu.SetApplicationIcon(Path.Combine(sourceRoot,"RDCRelay.ico"));
+   trayExitItem=trayMenu.ExitItem;
+   trayMenu.Menu.Opening+=(s,e)=>RefreshTrayMenu();
+   RefreshTrayMenu();
+   trayExitItem.Click+=(s,e)=>{
+    var exitLabels=RdcUiLanguage.LoadResources(sourceRoot,RdcUiLanguage.Current);
+    string question=RdcUiLanguage.Text(exitLabels,"tray.confirm.exit","Завершить RDC Relay?");
+    if(!RdcOwnerTrayConfirmation.Ask(question,"RDC Relay 1.6.0 RC1",exitLabels,false))return;
+    lock(gate){
+     if(exitRequested||WindowsEnding)return;
+     if(accountLogoutProcess!=null){
+      MessageBox.Show(RdcUiLanguage.Text(exitLabels,"tray.notice.switchPending","Смена аккаунта ещё выполняется. Дождитесь результата."),
+       "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+      return;
+     }
+     if(managedMode && managedProcess!=null && managedProcess.Running){
+      try{
+       if(!managedProcess.StopOwnedOnly(10000)){
+        MessageBox.Show(RdcUiLanguage.Text(exitLabels,"tray.notice.exitBlocked","Remote ещё работает; полное завершение заблокировано."),"RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+        return;
+       }
+       FinishManagedLog(3000);
+       remoteSupervisor.ManagedStatus(0,false,"Disconnected","Host-owned Remote exited");
+      }catch(Exception error){
+       Append("remote","tray exit failed: "+error.GetType().Name);
+       MessageBox.Show(RdcUiLanguage.Text(exitLabels,"tray.notice.stopFailed","Не удалось безопасно остановить Remote. Подробности в журнале."),
+        "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Error);
+       return;
+      }
+     }
+     if(managedLogSessions!=null){try{FinishManagedLog(3000);}catch(Exception error){Append("remote","managed log finalization pending: "+error.GetType().Name);return;}}
+     exitRequested=true;closeGeneration++;
+     Append("host",observedMode?"observer detach requested":managedMode?"managed full exit requested":"fake-only graceful exit requested");
+    }
+   };
+   // Grouped native tray menu; no read-only status filler.
+   tray.ContextMenuStrip=trayMenu.Menu;
+   tray.DoubleClick+=(s,e)=>OpenGui();
+   trayFrameTimer.Interval=40; // 160ms color fades at 4 ticks; cached frames
+   trayFrameTimer.Tick+=(s,e)=>{
+    lock(gate){
+     if(disposed||trayVisual==null)return;
+     try{trayVisual.Advance();}
+     catch(Exception problem){
+      Append("host","tray icon render failed: "+problem.GetType().Name);
+      trayFrameTimer.Stop();
+      tray.Icon=SystemIcons.Information;
+      trayVisual.Dispose();trayVisual=null;
+     }
+    }
+   };
+   trayFrameTimer.Start();
+   pulse.Interval=250;
+   pulse.Tick+=(s,e)=>{
+    if(WindowsEnding)return;
+    lock(gate){
+     if(WindowsEnding)return;
+     RefreshGui();
+     // Cooperative same-logon Setup handoff. The Host itself authorizes its
+     // idle exit, never accepting PID/name-based termination from Setup.
+     if(idleUpgradeSignal!=null && idleUpgradeSignal.WaitOne(0) && !exitRequested){
+      try{
+       if(managedMode && !observedMode && accountLogoutProcess==null &&
+          !accountSwitchFaultLatched &&
+          (managedProcess==null || !managedProcess.Running) &&
+          !AnotherDesktopCommanderRemote() && !AnotherLegacyShell()){
+        autoStartPending=false;exitRequested=true;closeGeneration++;
+        Append("host","verified idle Host accepted cooperative RC1 upgrade");
+       }else Append("host","idle upgrade refused: Remote or legacy shell active");
+      }catch{Append("host","idle upgrade refused: OS identity scan unavailable");}
+     }
+     if(reopenAfterModeChange && gui==null && guiState=="NONE" && !exitRequested){
+      reopenAfterModeChange=false;OpenGui();
+     }
+     if(managedMode){
+      if(accountLogoutProcess!=null && !accountSwitchFaultLatched)AdvanceManagedAccountSwitch();
+      RefreshManagedRemote();
+      if(autoStartPending && guiAuthenticated && guiState=="CONNECTED" &&
+       !reopenAfterModeChange && DateTime.UtcNow>=nextAutoStartUtc)
+       TryAutoStartManagedRemote();
+     }
+     if(reopenSignal!=null && reopenSignal.WaitOne(0) && !exitRequested){
+      Append("host","verified local GUI activation requested");
+      OpenGui();
+     }
+     if(trialRoot!=null){
+      if(!exitRequested && trialReopensRemaining>0 && guiStarts>0 && gui==null && guiState=="NONE"){
+       trialReopensRemaining--;OpenGui();
+      }
+      if(!exitRequested && trialClock.Elapsed.TotalSeconds>=trialExitSeconds){
+       exitRequested=true;closeGeneration++;Append("host","bounded disposable trial exit requested");
+      }
+     }
+     // GUI is asked via closeGeneration; no process kill or orphan.
+     // An unverified ticket/child is NOT a clean full exit.
+     if(exitRequested && gui==null && guiState=="NONE")context.ExitThread();
+     // Reuse the official, account-bound cache; the Host's existing 30m who_am_i
+     // poll is the only network source. Read locally at most once every 15s.
+     // Identity/opt-out loss immediately removes a formerly shown percentage.
+     string quotaAccount=ActiveManagedAccount;
+     if(!RdcOwnerTrayQuotaPreference.Enabled(RdcOwnerTrayQuotaPreference.CurrentPath))
+      quotaAccount="";
+     if(!String.Equals(quotaAccount,lastTrayQuotaAccount,StringComparison.OrdinalIgnoreCase)){
+      lastTrayQuotaAccount=quotaAccount;
+      nextTrayQuotaCheckUtc=DateTime.MinValue;
+      lastTrayRemainingPercent=null;
+      if(trayVisual!=null)trayVisual.SetRemainingPercent(null);
+     }
+     if(DateTime.UtcNow>=nextTrayQuotaCheckUtc){
+      nextTrayQuotaCheckUtc=DateTime.UtcNow.AddSeconds(15);
+      int? remaining=String.IsNullOrEmpty(quotaAccount)?(int?)null:
+       RdcOwnerTrayQuotaSnapshot.Read(RdcOwnerTrayQuotaSnapshot.CachePath,quotaAccount,DateTime.UtcNow);
+      lastTrayRemainingPercent=remaining;
+       if(trayVisual!=null)trayVisual.SetRemainingPercent(remaining);
+       else UpdateFallbackTrayText(RdcUiLanguage.LoadResources(sourceRoot,RdcUiLanguage.Current));
+     }
+     // Host state snapshots are sampled at 250ms; the 40ms timer only
+     // advances an already-selected cached icon, without allocating snapshots.
+     if(trayVisual!=null){
+      try{trayVisual.Update(remoteSupervisor.Snapshot());}
+      catch(Exception problem){
+       Append("host","tray state render failed: "+problem.GetType().Name);
+       trayFrameTimer.Stop();
+       tray.Icon=SystemIcons.Information;
+       trayVisual.Dispose();trayVisual=null;
+      }
+     }
+    }
+   };
+   endSessionWindow=new RdcOwnerEndSessionWindow(ConfirmWindowsEndSession);
+   if(trialRoot!=null)trialClock.Start();
+   pulse.Start();
+   remoteSupervisor.AddSyntheticLogLine("RDC Relay 1.6 RC1: Remote disabled until owner OS trial approval.");
+   Append("host","RC1 fake-only owner startup");
+  }catch{
+   // Fail-closed unwind of partly created host-owned resources.
+   try{if(endSessionWindow!=null)endSessionWindow.Dispose();}catch{}
+   try{pulse.Stop();pulse.Dispose();}catch{}
+   try{trayFrameTimer.Stop();trayFrameTimer.Dispose();}catch{}
+   try{if(reopenSignal!=null)reopenSignal.Dispose();}catch{}
+   try{if(idleUpgradeSignal!=null)idleUpgradeSignal.Dispose();}catch{}
+   try{if(guiReadySignal!=null)guiReadySignal.Dispose();}catch{}
+   try{if(hostReadySignal!=null)hostReadySignal.Dispose();}catch{}
+   try{tray.Visible=false;tray.Dispose();}catch{}
+   try{if(trayVisual!=null)trayVisual.Dispose();}catch{}
+   bool ipcClean=true;
+   try{if(server!=null)server.Dispose();}catch{ipcClean=false;}
+   bool ownTicketClean=true;
+   try{if(ticketStore!=null)ownTicketClean=ticketStore.RevokeOnlyOwned();}catch{ownTicketClean=false;}
+   bool cleaned=ownTicketClean && RemoveEmptyOwnedRunRoot();
+   try{singleton.ReleaseMutex();}catch{}
+   singleton.Dispose();
+   if(!cleaned || !ipcClean)throw new InvalidOperationException("RC1_CONSTRUCTOR_NOT_CLEAN_IPC_OR_RUN_ROOT");
+   throw;
+  }
+ }
+ static string ValidateTrialRoot(string candidate){
+  if(String.IsNullOrEmpty(candidate))return null;
+  string full=Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar);
+  string temp=Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar);
+  if(!String.Equals(Path.GetDirectoryName(full),temp,StringComparison.OrdinalIgnoreCase) ||
+     !System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(full),@"^RDC-RC1-OS-[a-f0-9]{32}$") ||
+     !Directory.Exists(full))throw new InvalidOperationException("RC1_TRIAL_ROOT_BOUNDARY");
+  CheckPath(full);
+  return full;
+ }
+ static void CheckParents(string path){
+  RdcOwnerCloudDesktopPath.CheckPath(path,"RC1_REPARSE_PARENT");
+ }
+ static void CheckPath(string path) {
+  CheckParents(path);
+ }
+ string TicketPayload(){
+  return RdcOwnerWire.Json.Serialize(new Dictionary<string,object>{
+    {"pipe",pipeName},{"nonce",nonce},{"hostPid",hostPid},{"hostTicks",hostBorn},
+    {"hostSession",hostSession},{"hostGeneration",generation},
+    {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":managedMode?"MANAGED_OWNER_RC1":"FAKE_ONLY_RC1"},{"protocol",1}});
+ }
+ bool RemoveOwnedManagedLogs(){
+  if(!managedMode)return true;
+  if(managedProcess!=null && managedProcess.Running)return false;
+  if(accountLogoutProcess!=null && accountLogoutProcess.Running)return false;
+  foreach(string path in managedLogs){
+   try{
+    if(Path.GetDirectoryName(path)!=stateRoot ||
+       !System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(path),
+        @"^(?:remote|logout)-[0-9a-f]{32}\.log$",System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+     return false;
+    CheckPath(path);
+    if(File.Exists(path))File.Delete(path);
+   }catch{return false;}
+  }
+  return true;
+ }
+ bool RemoveEmptyOwnedRunRoot(){
+  if(!runRootCreated)return String.IsNullOrEmpty(stateRoot) || !Directory.Exists(stateRoot);
+  try{
+   if(String.IsNullOrEmpty(stateRoot) || instance==null ||
+      Path.GetFileName(stateRoot)!="run-"+instance)return false;
+   CheckPath(stateRoot);
+   if(!Directory.Exists(stateRoot))return true;
+   if(Directory.GetFileSystemEntries(stateRoot).Length!=0)return false;
+   Directory.Delete(stateRoot,false);
+   return !Directory.Exists(stateRoot);
+  }catch{return false;}
+ }
+ void Append(string src,string message){
+  sequence++;
+  if(message==null)message="";
+  if(message.Length>120)message=message.Substring(0,120);
+  events.Add(new Dictionary<string,object>{{"sequence",sequence},{"source",src},{"text",message}});
+  remoteSupervisor.NoteHostEvent(src+": "+message);
+  if(events.Count>128)events.RemoveAt(0);
+ }
+   // Asset-fallback tray uses the same brand | quota | status format.
+  // Its locale and cached quota survive tray menu reopen without a version.
+  void UpdateFallbackTrayText(IDictionary<string,string> labels){
+   if(trayVisual!=null)return;
+   string status=observedMode?
+    RdcUiLanguage.Text(labels,"tray.title.observed","Наблюдение"):
+    managedMode?RdcUiLanguage.Text(labels,"tray.title.managedHost","Host"):
+    RdcUiLanguage.Text(labels,"tray.status.testPrefix","Тест | ").Replace(" | ",": ")+
+    RdcUiLanguage.Text(labels,"tray.status.disconnected","Отключён");
+   string middle=lastTrayRemainingPercent.HasValue?
+    lastTrayRemainingPercent.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)+"%":"--%";
+   string caption="RDC Relay | "+middle+" | "+status;
+   tray.Text=caption.Length<=63?caption:caption.Substring(0,63);
+  }
+void RefreshTrayMenu(){
+  if(trayMenu==null)return;
+  lock(gate){
+   bool running=false;
+   try{running=managedMode&&managedProcess!=null&&managedProcess.Running;}catch{}
+   trayMenu.Refresh(managedMode,observedMode,running,managedState=="Ready",
+    accountLogoutProcess!=null,disposed||exitRequested,
+    RdcOwnerTrayQuotaPreference.Enabled(RdcOwnerTrayQuotaPreference.CurrentPath),
+    RdcOwnerTrayAutoUpdatePreference.Enabled(RdcOwnerTrayAutoUpdatePreference.CurrentPath),
+    RdcOwnerAutoConnectPreference.Enabled(RdcOwnerAutoConnectPreference.CurrentPath));
+    string locale=RdcUiLanguage.Current;
+    var labels=RdcUiLanguage.LoadResources(sourceRoot,locale);
+    trayMenu.ApplyLanguage(locale,labels);
+    bool installed=trialRoot==null&&(managedMode||observedMode)&&RdcOwnerStartup.IsActiveSource(sourceRoot);
+    int startup=installed?RdcOwnerStartup.State():0;
+    trayMenu.AutoStartItem.Checked=startup==1;
+    trayMenu.AutoStartItem.Enabled=installed&&startup>=0&&!disposed&&!exitRequested&&!WindowsEnding;
+    // Display-only tooltip update on a language change. No frame/motion restart.
+     if(trayVisual!=null)trayVisual.ApplyLanguage(labels);
+     else UpdateFallbackTrayText(labels);
+  }
+ }
+ static bool ConfirmTrayAction(string question,string title,IDictionary<string,string> labels){
+  return RdcOwnerTrayConfirmation.Ask(question,title,labels,true);
+ }
+ void HandleTrayMenuAction(string command){
+  if(disposed||exitRequested||WindowsEnding)return;
+  if(command=="AUTO_START_ON"||command=="AUTO_START_OFF"){
+   lock(gate){
+    if(disposed||exitRequested||WindowsEnding||trialRoot!=null||(!managedMode&&!observedMode))return;
+    try{RdcOwnerStartup.Set(sourceRoot,command=="AUTO_START_ON");}
+    catch{MessageBox.Show(RdcUiLanguage.Text(RdcUiLanguage.LoadResources(sourceRoot,RdcUiLanguage.Current),"tray.notice.autoStartFailed","Не удалось изменить автозапуск. Проверьте параметры автозагрузки Windows."),"RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);}
+    finally{RefreshTrayMenu();}
+   }
+   return;
+  }
+  if(command=="LANGUAGE_RU"||command=="LANGUAGE_EN"){
+   // Display preference only. Never enters Remote action/IPC dispatcher.
+   try{RdcUiLanguage.SetPreference(RdcUiLanguage.PreferencePath,
+     command=="LANGUAGE_EN"?RdcUiLanguage.English:RdcUiLanguage.Russian);}
+   catch{
+    string locale=RdcUiLanguage.Current;
+    MessageBox.Show(RdcUiLanguage.Text(RdcUiLanguage.LoadResources(sourceRoot,locale),
+      "tray.notice.languageSaveFailed","Не удалось сохранить язык интерфейса."),
+      "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+   }
+   RefreshTrayMenu();
+   return;
+  }
+  if(command=="OPEN"){OpenGui();return;}
+  if(command=="HELP"){
+   // Exactly the same About dialog as the GUI '?' button; no duplicate
+   // Host-owned Help UI. The authenticated GUI consumes this one-time hint.
+   lock(gate){
+    if(disposed||exitRequested)return;
+    trayHelpSequence=trayHelpSequence==Int32.MaxValue?1:trayHelpSequence+1;
+    trayHelpExpiresUtc=DateTime.UtcNow.AddSeconds(20);
+    OpenGui();
+   }
+   return;
+  }
+  if(command=="DEVICES"){
+   if(!managedMode&&!observedMode)return;
+   // Fixed official destination: identical to authenticated OPEN_EXTERNAL.
+   try{
+    var browser=new ProcessStartInfo("https://mcp.desktopcommander.app/");
+    browser.UseShellExecute=true;
+    Process.Start(browser);
+   }catch{
+    MessageBox.Show(RdcUiLanguage.Text(RdcUiLanguage.LoadResources(sourceRoot,RdcUiLanguage.Current),"tray.notice.devicesFailed","Не удалось открыть управление устройствами."),
+     "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+   }
+   return;
+  }
+  if(command=="AUTO_CONNECT_ON"||command=="AUTO_CONNECT_OFF"){
+   lock(gate){
+    if(!managedMode||observedMode||disposed||exitRequested||accountLogoutProcess!=null){RefreshTrayMenu();return;}
+    try{
+     bool enabled=command=="AUTO_CONNECT_ON";
+     RdcOwnerAutoConnectPreference.Set(RdcOwnerAutoConnectPreference.CurrentPath,enabled);
+     if(!enabled)autoStartPending=false;
+    }catch{
+     MessageBox.Show(RdcUiLanguage.Text(RdcUiLanguage.LoadResources(sourceRoot,RdcUiLanguage.Current),
+      "tray.notice.autoConnectSaveFailed","Не удалось сохранить настройку автоподключения."),
+      "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+    }
+    RefreshTrayMenu();
+   }
+   return;
+  }
+  if(command=="AUTO_UPDATE_ON"||command=="AUTO_UPDATE_OFF"){
+   lock(gate){
+    if(disposed||exitRequested){RefreshTrayMenu();return;}
+    try{
+     RdcOwnerTrayAutoUpdatePreference.Set(
+      RdcOwnerTrayAutoUpdatePreference.CurrentPath,command=="AUTO_UPDATE_ON");
+     Append("host","automatic startup update preference changed by tray");
+    }catch{
+     MessageBox.Show(RdcUiLanguage.Text(RdcUiLanguage.LoadResources(sourceRoot,RdcUiLanguage.Current),"tray.notice.autoUpdateSaveFailed","Не удалось сохранить настройку автообновления."),
+      "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+    }
+    RefreshTrayMenu(); // re-read persisted truth after any write or failure
+   }
+   return;
+  }
+  if(command=="QUOTA_ON"||command=="QUOTA_OFF"){
+   lock(gate){
+    if(!managedMode||observedMode||disposed||exitRequested){
+     RefreshTrayMenu();return;
+    }
+    try{
+     RdcOwnerTrayQuotaPreference.Set(RdcOwnerTrayQuotaPreference.CurrentPath,command=="QUOTA_ON");
+     Append("host","quota display preference updated by tray");
+    }catch{
+     MessageBox.Show(RdcUiLanguage.Text(RdcUiLanguage.LoadResources(sourceRoot,RdcUiLanguage.Current),"tray.notice.quotaSaveFailed","Не удалось сохранить настройку остатка вызовов."),
+      "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+    }
+    RefreshTrayMenu(); // always restore truth, including on any write failure
+   }
+   return;
+  }
+  if(command!="START"&&command!="STOP"&&command!="RECONNECT"&&command!="SWITCH_ACCOUNT")return;
+  // These are actual local click actions, not background state changes.
+  // Never borrow the installed Remote: all methods below retain private-Job
+  // ownership checks, including the official/logout safety boundary.
+  var promptLabels=RdcUiLanguage.LoadResources(sourceRoot,RdcUiLanguage.Current);
+  string prompt=command=="SWITCH_ACCOUNT"?
+   RdcUiLanguage.Text(promptLabels,"tray.confirm.switchAccount","Сменить аккаунт? Remote будет остановлен. Потребуется новая авторизация."):
+   command=="RECONNECT"?
+   RdcUiLanguage.Text(promptLabels,"dialog.reconnect.question","Переподключить Remote?"):
+   command=="STOP"?RdcUiLanguage.Text(promptLabels,"dialog.stop.question","Остановить Remote?"):"";
+  if(prompt!=""&&!ConfirmTrayAction(prompt,"RDC Relay",promptLabels))return;
+  lock(gate){
+   if(disposed||exitRequested||WindowsEnding||!managedMode||observedMode||
+      accountLogoutProcess!=null)return;
+   bool running=false;
+   try{running=managedProcess!=null&&managedProcess.Running;}
+   catch{RefreshTrayMenu();return;}
+   if((command=="START"&&running)||
+      (command!="START"&&!running)||
+      (command=="SWITCH_ACCOUNT"&&(accountSwitchFaultLatched||managedState!="Ready"))){
+    RefreshTrayMenu();return;
+   }
+   try{
+    if(command=="START")StartManagedRemote();
+    else if(command=="STOP")StopManagedRemote();
+    else if(command=="RECONNECT"){ResolvePinnedNpx();StopManagedRemote();StartManagedRemote();}
+    else BeginManagedAccountSwitch();
+    Append("remote","tray user confirmed managed action: "+command);
+   }catch(Exception failure){
+    Append("remote","tray managed action refused: "+failure.GetType().Name);
+    string locale=RdcUiLanguage.Current;
+    var labels=RdcUiLanguage.LoadResources(sourceRoot,locale);
+    bool missingNode=failure.Message=="RC1_PINNED_NPX_MISSING";
+    if(missingNode && !running){
+     autoStartPending=false;
+     managedState="Fault";
+     managedDetail="Required Node.js runtime is missing; run RDC Relay Setup";
+     remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
+    }
+    string notice=missingNode?
+      RdcUiLanguage.Text(labels,"owner.connection.detail.fault.nodeMissing",
+       "Node.js с npm/npx отсутствует или не готов к работе. Повторно запустите установщик RDC Relay."):
+      RdcUiLanguage.Text(labels,"tray.notice.actionFailed",
+       "Действие не выполнено: {error}. Проверьте состояние Remote в окне RDC Relay.");
+    MessageBox.Show(notice.Replace("{error}",failure.GetType().Name),
+      "RDC Relay",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+   }finally{RefreshTrayMenu();}
+  }
+ }
+ void NotifyGuiOpenIssue(string code,string message){
+  DateTime now=DateTime.UtcNow;
+  if((now-lastGuiNoticeUtc).TotalSeconds<8)return;
+  lastGuiNoticeUtc=now;
+  Append("gui",code);
+  try{
+   tray.BalloonTipTitle="RDC Relay";
+   // Translate only the display copy of an allowlisted issue code.
+   // Neither the Host diagnostic Append(code) nor GUI/Remote identity changes.
+   string noticeLocale=RdcUiLanguage.Current;
+   tray.BalloonTipText=RdcUiLanguage.GuiNotice(code,message,
+     RdcUiLanguage.LoadResources(sourceRoot,noticeLocale));
+   tray.BalloonTipIcon=ToolTipIcon.Info;
+   tray.ShowBalloonTip(3000);
+  }catch{} // notification availability is not Remote authority
+ }
+ void RefreshGui(){
+  if(gui==null)return;
+  try{
+   if(!gui.HasExited){
+    // A live process without a window can no longer be reported as
+    // successfully opened forever. Do not kill it or launch a duplicate.
+    if(!guiWindowWarned && guiSpawnUtc!=DateTime.MinValue &&
+       (DateTime.UtcNow-guiSpawnUtc).TotalSeconds>=RdcOwnerGuiStartupNotice.GraceSeconds){
+     gui.Refresh();
+     bool hasOwnedWindow=RdcOwnerActivate.FindOwnedWindow(childPid)!=IntPtr.Zero;
+     if(RdcOwnerGuiStartupNotice.IsDue(guiSpawnUtc,DateTime.UtcNow,guiWindowWarned,hasOwnedWindow))
+      NotifyGuiOpenIssue("window not ready",
+       "Окно RDC Relay пока не появилось. Повторите открытие через трей; Remote не затронут.");
+     guiWindowWarned=true; // one check per GUI generation, even if already visible
+    }
+    return;
+   }
+  }catch{guiState="UNVERIFIED";Append("gui","identity probe failed");return;}
+  if((trialRoot!=null || observedMode || managedMode) && guiErrorTask!=null){
+   try{if(!guiErrorTask.IsCompleted){Console.WriteLine("RC1_TRIAL_GUI_STDERR_PENDING");}
+    else {string detail=guiErrorTask.GetAwaiter().GetResult();
+    if(!String.IsNullOrWhiteSpace(detail)){
+     detail=detail.Replace('\r',' ').Replace('\n',' ');
+     Console.WriteLine("RC1_TRIAL_GUI_STDERR="+detail.Substring(0,Math.Min(detail.Length,900)));
+    }
+    }
+   }catch{Console.WriteLine("RC1_TRIAL_GUI_STDERR_UNAVAILABLE");}
+  }
+  guiErrorTask=null;
+  if(guiReadySignal!=null)guiReadySignal.Reset();
+  gui.Dispose();gui=null;childPid=0;childBorn=0;childSession=0;guiAuthenticated=false;
+  guiSpawnUtc=DateTime.MinValue;guiWindowWarned=false;
+  nonce="";lastRequestSequence=0;requestIds.Clear();requestOrder.Clear();
+  if(!ticketStore.RevokeOnlyOwned()){
+   guiState="UNVERIFIED";Append("gui","ticket ownership unverified; relaunch denied");return;
+  }
+  guiState="NONE";Append("gui","process exited");
+ }
+ public void OpenGui(){
+  lock(gate){
+   if(disposed||exitRequested||WindowsEnding)return;
+   if(guiState=="UNVERIFIED"){
+    NotifyGuiOpenIssue("open denied: unverified",
+      "Окно RDC Relay не удалось проверить. Remote продолжает работу; проверьте журнал.");
+    return;
+   }
+   RefreshGui();
+   if(guiState=="UNVERIFIED"){
+    NotifyGuiOpenIssue("open denied: unverified",
+      "Окно RDC Relay не удалось проверить. Remote продолжает работу; проверьте журнал.");
+    return;
+   }
+   if(gui!=null){
+    try{
+     // Refresh the cached MainWindowHandle after an asynchronous GUI launch.
+     // Only our recorded PID, session and birth time may be activated.
+     gui.Refresh();
+     if(gui.Id!=childPid || gui.SessionId!=childSession ||
+        gui.StartTime.ToUniversalTime().Ticks!=childBorn){
+      guiState="UNVERIFIED";
+      NotifyGuiOpenIssue("open denied: child identity mismatch",
+        "Невозможно подтвердить окно RDC Relay. Remote не затронут.");
+      return;
+     }
+     IntPtr target=gui.MainWindowHandle;
+     if(target==IntPtr.Zero)target=RdcOwnerActivate.FindOwnedWindow(childPid);
+     string result=RdcOwnerActivate.OpenOwned(target,childPid);
+     if(result=="ATTENTION"){
+      // Windows can deny focus activation even when this is the FIRST
+      // successful GUI launch. OpenOwned already flashes the taskbar.
+      // No misleading "window already open" balloon for that OS policy.
+      Append("gui","foreground activation deferred to Windows");
+     }else if(result=="NO_WINDOW"){
+      // Window creation is asynchronous. A tray or launcher retry during the
+      // first eight seconds is not a failed GUI open and needs no balloon.
+      if(RdcOwnerGuiStartupNotice.IsDue(guiSpawnUtc,DateTime.UtcNow,guiWindowWarned,false)){
+       guiWindowWarned=true;
+       NotifyGuiOpenIssue("open pending: no window",
+        "Окно RDC Relay ещё не появилось. Попробуйте открыть его через трей ещё раз.");
+      }
+     }else if(result=="NOT_OWNED"){
+      guiState="UNVERIFIED";
+      NotifyGuiOpenIssue("open denied: unverified window",
+       "Невозможно подтвердить окно RDC Relay. Remote не затронут.");
+     }
+    }catch(Exception problem){
+     NotifyGuiOpenIssue("open failed: "+problem.GetType().Name,
+      "Не удалось вывести окно RDC Relay. Remote продолжает работу.");
+    }
+    return; // verified live child: never launch a second GUI
+   }
+   try{
+    CheckPath(guiScript);
+    CheckPath(stateRoot);
+    if(guiReadySignal!=null)guiReadySignal.Reset();
+    nonce=Guid.NewGuid().ToString("N");
+    string ps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
+      @"WindowsPowerShell\v1.0\powershell.exe");
+    // Process-scoped execution policy only; never changes Windows policy or registry.
+    string args="-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File \""+guiScript+"\" -OwnerGui -OwnerTicketPath \""+ticketFile+"\"";
+    if(trialRoot!=null)args+=" -OwnerTrialRoot \""+trialRoot+"\"";
+    var info=new ProcessStartInfo(ps,args);
+    info.WorkingDirectory=sourceRoot;
+    info.UseShellExecute=false;
+    info.CreateNoWindow=true;
+    if(trialRoot!=null || observedMode || managedMode)info.RedirectStandardError=true;
+    gui=(Process)ticketStore.CreateThen(TicketPayload(),()=>{
+     if(trialRoot!=null && trialFailGuiStartOnce){
+      trialFailGuiStartOnce=false;
+      throw new IOException("RC1_TRIAL_INJECTED_GUI_START_FAILURE");
+     }
+     return Process.Start(info);
+    });
+    if(gui==null)throw new InvalidOperationException("RC1_GUI_START_FAILED");
+    if(trialRoot!=null || observedMode || managedMode)guiErrorTask=gui.StandardError.ReadToEndAsync();
+    childPid=gui.Id;childBorn=gui.StartTime.ToUniversalTime().Ticks;childSession=gui.SessionId;
+    guiStarts++;guiState="SPAWNING";guiAuthenticated=false;
+    guiSpawnUtc=DateTime.UtcNow;guiWindowWarned=false;
+    Append("gui","spawned");
+   }catch(Exception startError){
+    lastGuiError=startError.GetType().Name+": "+startError.Message;
+    if(lastGuiError.Length>180)lastGuiError=lastGuiError.Substring(0,180);
+    guiFailures++;guiState="NONE";Append("gui","launch failed");
+    NotifyGuiOpenIssue("GUI launch failed: "+startError.GetType().Name,
+     "RDC Relay не смог открыть окно. Remote не затронут; проверьте журнал Host.");
+    if(gui==null){
+     childPid=0;childBorn=0;childSession=0;nonce="";
+     if(ticketStore!=null){
+      bool cleared=!ticketStore.HasOwnedTicket || ticketStore.RevokeOnlyOwned();
+      if(!cleared || File.Exists(ticketFile) || Directory.Exists(ticketFile)){
+       guiState="UNVERIFIED";Append("gui","ticket ownership unverified; relaunch denied");
+      }
+     }
+    }
+    else {guiState="UNVERIFIED";Append("gui","started process identity incomplete");}
+    // Fail closed: a potentially running child retains its handle and blocks
+    // relaunch; do NOT kill it or clear its record after an identity failure.
+   }
+  }
+ }
+ // Product mode: actions are available ONLY for a newly spawned process
+ // in the private kernel Job of this exact Host. Legacy Remote remains Adopted.
+ public void EnableManagedRemote(){
+  lock(gate){
+   if(disposed||trialRoot!=null||observedMode||managedMode||gui!=null)
+    throw new InvalidOperationException("RC1_MANAGED_MODE_BOUNDARY");
+   managedMode=true;remoteSupervisor.EnableManaged();
+   RecoverManagedLogsIfSafe();
+   autoStartPending=RdcOwnerAutoConnectPreference.Enabled(RdcOwnerAutoConnectPreference.CurrentPath);nextAutoStartUtc=DateTime.MinValue;
+   if(trayVisual==null)UpdateFallbackTrayText(RdcUiLanguage.LoadResources(sourceRoot,RdcUiLanguage.Current));
+   Append("remote","managed ownership mode enabled");
+  }
+ }
+ // Automatic launch is one-shot at full Host boot or after a verified
+ // transition away from an EXTERNAL Remote; failure preserves the GUI.
+ public bool TryAutoStartManagedRemote(){
+  lock(gate){
+   if(disposed||exitRequested||WindowsEnding||observedMode||!managedMode||accountLogoutProcess!=null||
+      accountSwitchFaultLatched||!guiAuthenticated||guiState!="CONNECTED"||reopenAfterModeChange)return false;
+   if(!RdcOwnerAutoConnectPreference.Enabled(RdcOwnerAutoConnectPreference.CurrentPath)){autoStartPending=false;return false;}
+   if(managedProcess!=null&&managedProcess.Running){autoStartPending=false;return true;}
+   try{StartManagedRemote();autoStartPending=false;return true;}
+   catch(Exception problem){
+    string code=problem.Message??"";
+    bool external=(code=="RC1_EXISTING_REMOTE_ADOPTED_NO_DUPLICATE"||
+      code=="RC1_LEGACY_GUI_STILL_ACTIVE"||code=="RC1_EXTERNAL_REMOTE_SCAN_UNAVAILABLE"||
+      code=="RC1_LEGACY_SHELL_SCAN_UNAVAILABLE");
+    // Only a verified external blocker may be retried after a bounded delay.
+    // A genuine launch failure remains visible until an explicit user retry.
+    autoStartPending=external;
+    nextAutoStartUtc=DateTime.UtcNow.AddSeconds(5);
+    bool nodeMissing=code=="RC1_PINNED_NPX_MISSING";
+    string reason=external?
+     "Waiting for the previous Remote and shell to exit; no duplicate launched":
+     nodeMissing?"Required Node.js runtime is missing; run RDC Relay Setup":
+     "Remote startup failed; inspect Host status and retry manually";
+    remoteSupervisor.ManagedStatus(0,false,external?"Disconnected":"Fault",reason);
+    Append("remote","automatic start refused: "+problem.GetType().Name);
+    return false;
+   }
+  }
+ }
+ // A missing observer PID is insufficient for promotion. Check BOTH any
+ // genuine Remote launcher AND any other original GUI: either could restart
+ // Remote. Unknown WMI state is fail-closed and keeps Adopted read-only.
+ public bool CanPromoteObservedRemote(){
+  lock(gate){
+   if(disposed||!observedMode||managedMode||trialRoot!=null||exitRequested||WindowsEnding)return false;
+   try{return !AnotherDesktopCommanderRemote()&&!AnotherLegacyShell();}
+   catch{return false;}
+  }
+ }
+ public bool PromoteObservedRemoteToManaged(){
+  lock(gate){
+   if(!CanPromoteObservedRemote())return false;
+   // Recheck immediately before changing modes; never import old PID.
+   if(AnotherDesktopCommanderRemote()||AnotherLegacyShell())return false;
+   remoteSupervisor.PromoteObservedToManaged();
+   observedMode=false;managedMode=true;reopenAfterModeChange=true;
+   RecoverManagedLogsIfSafe();
+   autoStartPending=RdcOwnerAutoConnectPreference.Enabled(RdcOwnerAutoConnectPreference.CurrentPath);nextAutoStartUtc=DateTime.MinValue;
+   closeGeneration++; // old read-only GUI must exit before new ticket/GUI
+   if(trayVisual==null)UpdateFallbackTrayText(RdcUiLanguage.LoadResources(sourceRoot,RdcUiLanguage.Current));
+   Append("remote","verified external Remote and GUI gone; new Job-only session permitted");
+   return true;
+  }
+ }
+ static string ResolvePinnedNpx(){
+  string[] candidates=new string[]{
+   Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"nodejs","npx.cmd"),
+   Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"npm","npx.cmd"),
+   Path.Combine(Environment.GetEnvironmentVariable("ProgramFiles(x86)")??@"C:\Program Files (x86)","nodejs","npx.cmd")
+  };
+  foreach(string file in candidates){
+   CheckPath(file);
+   if(!File.Exists(file))continue;
+   string dir=Path.GetDirectoryName(file);
+   // Standard Node MSI includes Node itself, npm/npx shims and their CLI
+   // entrypoints. A leftover npx.cmd alone does not constitute a runtime.
+   // Same supported baseline as interactive Setup; do not execute a probe.
+   string node=Path.Combine(dir,"node.exe");
+   foreach(string required in new[]{node,Path.Combine(dir,"npm.cmd"),
+    Path.Combine(dir,"node_modules","npm","bin","npx-cli.js"),
+    Path.Combine(dir,"node_modules","npm","bin","npm-cli.js")}){
+    CheckPath(required);
+    if(!File.Exists(required))throw new FileNotFoundException("RC1_PINNED_NPX_MISSING");
+   }
+   var version=FileVersionInfo.GetVersionInfo(node);
+   if(version.FileMajorPart<22||(version.FileMajorPart==22&&version.FileMinorPart<12))
+    throw new FileNotFoundException("RC1_PINNED_NPX_MISSING");
+   return file;
+  }
+  throw new FileNotFoundException("RC1_PINNED_NPX_MISSING");
+ }
+ bool AnotherLegacyShell(){
+  try{
+   using(var search=new ManagementObjectSearcher(
+    "SELECT CommandLine FROM Win32_Process WHERE Name='powershell.exe' OR Name='pwsh.exe'")){
+    using(ManagementObjectCollection rows=search.Get()){
+     foreach(ManagementBaseObject row in rows){
+      string line=Convert.ToString(row["CommandLine"])??"";
+      if(line.IndexOf("remote-window.ps1",StringComparison.OrdinalIgnoreCase)>=0 &&
+         line.IndexOf(guiScript,StringComparison.OrdinalIgnoreCase)<0)return true;
+     }
+    }
+   }
+   return false;
+  }catch{throw new InvalidOperationException("RC1_LEGACY_SHELL_SCAN_UNAVAILABLE");}
+ }
+ static bool AnotherDesktopCommanderRemote(){
+  try{
+   using(var search=new ManagementObjectSearcher(
+    "SELECT CommandLine FROM Win32_Process WHERE Name='cmd.exe' OR Name='node.exe'")){
+    using(ManagementObjectCollection rows=search.Get()){
+     foreach(ManagementBaseObject row in rows){
+      string line=Convert.ToString(row["CommandLine"])??"";
+      if(line.IndexOf("desktop-commander",StringComparison.OrdinalIgnoreCase)>=0 &&
+        System.Text.RegularExpressions.Regex.IsMatch(line,@"\bremote\b",
+         System.Text.RegularExpressions.RegexOptions.IgnoreCase))return true;
+     }
+    }
+   }
+   return false;
+  }catch{throw new InvalidOperationException("RC1_EXTERNAL_REMOTE_SCAN_UNAVAILABLE");}
+ }
+ void StartManagedRemote(){
+  if(!managedMode||observedMode||exitRequested||WindowsEnding||accountLogoutProcess!=null)
+   throw new InvalidOperationException("RC1_NOT_MANAGED");
+  if(managedProcess!=null && managedProcess.Running)
+   throw new InvalidOperationException("RC1_OWNED_REMOTE_ALREADY_RUNNING");
+  if(AnotherLegacyShell())
+   throw new InvalidOperationException("RC1_LEGACY_GUI_STILL_ACTIVE");
+  if(AnotherDesktopCommanderRemote())
+   throw new InvalidOperationException("RC1_EXISTING_REMOTE_ADOPTED_NO_DUPLICATE");
+  string npx=ResolvePinnedNpx();
+  StartManagedCapture(npx,Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(stateRoot)),"Logs"));
+ }
+ // The production caller has already verified the no-external-Remote gate.
+ // The explicit root argument also permits a disposable, fake-only fixture.
+ void StartManagedCapture(string npx,string logRoot){
+  if(WindowsEnding)throw new InvalidOperationException("RC1_WINDOWS_ENDING");
+  if(managedProcess!=null){
+   int oldExit;
+   if(!managedProcess.TryGetCompletedExitCode(out oldExit))throw new InvalidOperationException("RC1_OWNED_REMOTE_ALREADY_RUNNING");
+   FinishManagedLog(3000);
+   managedProcess.Dispose();managedProcess=null;
+  }
+  var child=new RdcOwnerManagedProcess();
+  RdcOwnerLogSessions sessions=null;
+  RdcOwnerLogParts sink=null;
+  bool began=false;
+  try{
+   sessions=new RdcOwnerLogSessions(logRoot);sessions.Recover();
+   sink=sessions.Begin();began=true;
+   if(WindowsEnding)throw new InvalidOperationException("RC1_WINDOWS_ENDING");
+   child.StartCaptured(npx,"--yes @wonderwhy-er/desktop-commander@0.2.52 remote",sourceRoot);
+   managedProcess=child;managedLogSessions=sessions;
+   managedLogPump=new RdcOwnerLogPump(child.ReadCaptured,sink);
+   sink=null;sessions=null;
+   managedSessionAccepted=false;managedLogFaultReported=false;managedLogFinishFaultReported=false;managedParserFault=false;
+   managedLogPath="";managedLogOffset=0;
+   accountSwitchFaultLatched=false;
+   toolJournal.Reset();
+   managedLogStream.Reset();managedAccount="";managedDeviceName="";managedDeviceId="";
+   managedBornUtcTicks=child.BornUtcTicks;managedBannerArt.Clear();managedBannerScanned=0;
+   managedStartupHeader.Clear();managedStartupComplete=false;managedStartupScanned=0;
+   managedState="Connecting";managedDetail="Starting pinned Desktop Commander Remote";
+   remoteSupervisor.ManagedStatus(child.Pid,true,managedState,managedDetail);
+   autoStartPending=false;
+   Append("remote","new Host-owned Remote launched in verified private Job");
+  }catch{
+   // A failure after spawn must never abandon an untracked private Job.
+   if(!child.HasStarted){
+    try{if(sink!=null)sink.Dispose();if(sessions!=null&&began)sessions.FinalizeCurrent();}
+    finally{if(sessions!=null)sessions.Dispose();child.Dispose();}
+    throw;
+   }
+   bool stopped=false;
+   try{stopped=child.StopOwnedOnly(10000);}catch{}
+   if(sink!=null)sink.Dispose();
+   if(stopped){
+    if(managedLogPump!=null){
+     try{FinishManagedLog(3000);}catch{stopped=false;}
+    }else if(sessions!=null&&began){
+     try{sessions.FinalizeCurrent();}catch{stopped=false;}
+    }
+   }
+   if(stopped){
+    child.Dispose();if(managedProcess==child)managedProcess=null;
+    if(sessions!=null)sessions.Dispose();managedLogSessions=null;
+   }else{
+    // Preserve the lease/handle for explicit retry; no duplicate launch.
+    managedProcess=child;
+    if(sessions!=null)managedLogSessions=sessions;
+   }
+   throw;
+  }
+ }
+ void FinishManagedLog(int timeoutMs){
+  if(managedLogSessions==null)return;
+  if(managedProcess==null)throw new InvalidOperationException("RC1_LOG_JOB_NOT_COMPLETE");
+  int exitCode;
+  var wait=Stopwatch.StartNew();
+  while(!managedProcess.TryGetCompletedExitCode(out exitCode)){
+   if(wait.ElapsedMilliseconds>=timeoutMs)throw new InvalidOperationException("RC1_LOG_JOB_NOT_COMPLETE");
+   Thread.Sleep(10);
+  }
+  int remaining=(int)Math.Max(0,timeoutMs-wait.ElapsedMilliseconds);
+  if(managedLogPump!=null&&!managedLogPump.WaitForCompletion(remaining))
+   throw new IOException("RC1_LOG_DRAIN_PENDING");
+  managedLogSessions.FinalizeCurrent();managedLogSessions.Dispose();
+  managedLogSessions=null;managedLogPump=null;managedSessionAccepted=false;
+ }
+ // Only Host-owned Remote can be switched. The old Job must be fully
+ // drained before official logout: never revoke a borrowed/adopted session.
+ // Running logout gets its own private Job and the Host stays alive.
+ void BeginManagedAccountSwitch(){
+  if(disposed||exitRequested||WindowsEnding||observedMode||!managedMode||trialRoot!=null||
+     accountLogoutProcess!=null||accountSwitchFaultLatched||
+     managedProcess==null||!managedProcess.Running||managedState!="Ready")
+   throw new InvalidOperationException("RC1_ACCOUNT_SWITCH_NOT_OWNED_READY");
+  string npx=ResolvePinnedNpx();
+  if(AnotherLegacyShell())
+   throw new InvalidOperationException("RC1_ACCOUNT_SWITCH_LEGACY_SHELL");
+  bool stopped=false;
+  try{
+   StopManagedRemote();
+   stopped=true;
+   // The shared local device authorization must not be revoked if ANY other
+   // Remote or legacy GUI remains. Failure leaves this owned Remote stopped.
+   if(AnotherDesktopCommanderRemote()||AnotherLegacyShell())
+    throw new InvalidOperationException("RC1_ACCOUNT_SWITCH_EXTERNAL_REMOTE");
+   string file=Path.Combine(stateRoot,"logout-"+Guid.NewGuid().ToString("N")+".log");
+   CheckPath(file);
+   managedLogs.Add(file); // account for a partially created private log too
+   var worker=new RdcOwnerManagedProcess();
+   try{
+    if(WindowsEnding)throw new InvalidOperationException("RC1_WINDOWS_ENDING");
+    worker.Start(npx,"--yes @wonderwhy-er/desktop-commander@0.2.52 remote --logout",sourceRoot,file);
+    accountLogoutProcess=worker;
+   }catch{worker.Dispose();throw;}
+   accountLogoutDeadlineUtc=DateTime.UtcNow.AddSeconds(60);
+   managedState="AuthPending";managedDetail="Official device logout in progress";
+   remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
+   Append("remote","owner confirmed account change; private logout Job started");
+  }catch(Exception failure){
+   if(stopped){
+    accountSwitchFaultLatched=true;autoStartPending=false;
+    managedState="Fault";managedDetail="Account switch refused; owned Remote remains stopped";
+    remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
+    Append("remote","account change did not start: "+failure.GetType().Name);
+   }
+   throw;
+  }
+ }
+ void AdvanceManagedAccountSwitch(){
+  if(WindowsEnding)return;
+  if(accountLogoutProcess==null||accountSwitchFaultLatched)return;
+  bool logoutConfirmed=false;
+  try{
+   int code;
+   if(accountLogoutProcess.TryGetCompletedExitCode(out code)){
+    accountLogoutProcess.Dispose();accountLogoutProcess=null;
+    if(code!=0)throw new InvalidOperationException("RC1_ACCOUNT_LOGOUT_NONZERO_EXIT");
+    logoutConfirmed=true;
+    Append("remote","official logout succeeded; starting new browser pairing");
+    StartManagedRemote();
+    Append("remote","fresh Host-owned Remote started after confirmed logout");
+    return;
+   }
+   if(DateTime.UtcNow<accountLogoutDeadlineUtc)return;
+   if(!accountLogoutProcess.StopOwnedOnly(10000))
+    throw new TimeoutException("RC1_ACCOUNT_LOGOUT_JOB_SURVIVORS");
+   accountLogoutProcess.Dispose();accountLogoutProcess=null;
+   throw new TimeoutException("RC1_ACCOUNT_LOGOUT_TIMEOUT");
+  }catch(Exception failure){
+   // Stop only this newly-created logout Job; never kill by PID/name.
+   // If ownership cannot be verified, retain the handle and deny actions.
+   if(accountLogoutProcess!=null){
+    try{
+     if(accountLogoutProcess.StopOwnedOnly(10000)){
+      accountLogoutProcess.Dispose();accountLogoutProcess=null;
+     }
+    }catch{}
+   }
+   accountSwitchFaultLatched=true;autoStartPending=false;
+   managedState="Fault";
+   managedDetail=logoutConfirmed?"Authorization revoked; Remote restart failed":
+     "Logout not confirmed; Remote remains stopped";
+   remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
+   Append("remote","account switch failed: "+failure.GetType().Name);
+  }
+ }
+ void StopManagedRemote(){
+  if(!managedMode||managedProcess==null || !managedProcess.HasStarted)
+   throw new InvalidOperationException("RC1_NO_MANAGED_REMOTE");
+  if(!managedProcess.StopOwnedOnly(10000))
+   throw new InvalidOperationException("RC1_OWNED_REMOTE_SURVIVORS");
+  autoStartPending=false;
+  managedAccount="";managedDeviceName="";managedDeviceId="";managedBornUtcTicks=0;
+  managedBannerArt.Clear();managedBannerScanned=0;
+   managedStartupHeader.Clear();managedStartupComplete=false;managedStartupScanned=0;
+  managedState="Disconnected";managedDetail="Host-owned Remote stopped";
+  remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
+  Append("remote","all members of the private owned Job exited");
+  FinishManagedLog(3000);
+ }
+ // Permit only the pinned Remote's visible introductory output. No tool calls,
+ // arbitrary stdout, filesystem paths, endpoints, credentials or diagnostics.
+ // Preserve the real Unicode line prefixes/box art so the unchanged 1.5.18
+ // RdcLogBox colorizer can style the original header in exactly the same way.
+ static bool TrySafeStartupLine(string raw,out string visible) {
+  visible="";
+  if(raw==null||raw.Length>260)return false;
+  string line=System.Text.RegularExpressions.Regex.Replace(raw,
+   @"\x1B\[[0-?]*[ -/]*[@-~]","").TrimEnd('\r');
+  // UTF-16 surrogate pairs are valid emoji; only refuse stray surrogates.
+  if(line.Length>220 || System.Text.RegularExpressions.Regex.IsMatch(line,
+   @"[\p{Cc}]|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])"))
+   return false;
+  if(line.Length==0){visible="";return true;}
+  if(line.Length>=8 && System.Text.RegularExpressions.Regex.IsMatch(line,
+    @"\A[ \t\u2500-\u259F\u00A0/\\_|.]+\z")){
+   visible=line;return true;
+  }
+  string field,value;
+  if(TrySafeIdentityLine(line,out field,out value)){visible=line;return true;}
+  // Fixed instructions, lifecycle markers and command syntax; never accept
+  // arbitrary suffixes or commands returned by untrusted Remote output.
+  const string staticLabels=@"Remote Connection|Starting MCP Device\.\.\.|Connected to Desktop Commander MCP|Connected to Remote MCP|Session restored|Channel subscribed|Device marked as online|Device ready:|Desktop Commander Remote is connected|Next|Commands|Return to ChatGPT or Claude and continue your conversation\.|Keep this Terminal running\. You can minimize it\.|Press Ctrl\+C to disconnect\.|Run these in a new Terminal, or after disconnecting\.|Help:\s+npx @wonderwhy-er/desktop-commander@latest remote --help|Log out:\s+npx @wonderwhy-er/desktop-commander@latest remote --logout";
+  var match=System.Text.RegularExpressions.Regex.Match(line,
+   @"\A(?<dec>(?:[ \t\p{S}\p{P}\u200D\uFE0F]|[\uD800-\uDBFF][\uDC00-\uDFFF]){0,18})(?<label>"+
+   staticLabels+@")\z",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+  if(match.Success){visible=line;return true;}
+  if(System.Text.RegularExpressions.Regex.IsMatch(line,
+   @"\A\[DEBUG\] Verbose mode:\s+(true|false)\z",
+   System.Text.RegularExpressions.RegexOptions.IgnoreCase)){visible=line;return true;}
+  // Original banner prints a local executable path and Remote endpoint.
+  // Keep exact visible lifecycle wording, but not those private path values.
+  string[] dynamicSteps={
+   "Connecting to Local Desktop Commander MCP using:",
+   "Connecting to Remote MCP",
+   "Found persisted session for device",
+   "Presence tracked (device "
+  };
+  foreach(string label in dynamicSteps){
+   int pos=line.IndexOf(label,StringComparison.OrdinalIgnoreCase);
+   if(pos<0 || pos>18)continue;
+   string prefix=line.Substring(0,pos);
+   if(!System.Text.RegularExpressions.Regex.IsMatch(prefix,
+    @"\A(?:[ \t\p{S}\p{P}\u200D\uFE0F]|[\uD800-\uDBFF][\uDC00-\uDFFF]){0,18}\z"))continue;
+   if(label=="Found persisted session for device"||label=="Presence tracked (device "){
+    var uuid=System.Text.RegularExpressions.Regex.Match(line.Substring(pos+label.Length),
+     @"\A\s*[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}(?:\)|\s+visible as online\))?\s*\z");
+    if(!uuid.Success)continue;
+    if(label=="Found persisted session for device")
+     visible=prefix+"Found persisted session for device "+uuid.Value.Trim();
+    else visible=prefix+"Presence tracked (device "+uuid.Value.Trim();
+   } else visible=prefix+label.TrimEnd(':');
+   return true;
+  }
+  // This is a display-only device/status line, not a Remote control input.
+  match=System.Text.RegularExpressions.Regex.Match(line,
+   @"\A[ \t]{1,10}(Device:\s*|Status:\s*)([^\r\n]{1,80})\z");
+  if(match.Success){
+   string data=match.Groups[2].Value.Trim();
+   if(match.Groups[1].Value.StartsWith("Status:",StringComparison.Ordinal) &&
+      (data=="Online"||data=="Offline")){visible=line;return true;}
+   if(match.Groups[1].Value.StartsWith("Device:",StringComparison.Ordinal) &&
+     System.Text.RegularExpressions.Regex.IsMatch(data,@"\A[\p{L}\p{Nd} _().\-]{1,80}\z")){
+    visible=line;return true;
+   }
+  }
+  return false;
+ }
+ // During device re-verification the upstream terminal can print long runs
+ // of empty progress rows. Keep the first separator but do not spend the
+ // finite header/scan budget on duplicate blank rows. Nonblank artwork and
+ // all allowlisted wording remain byte-for-byte unchanged.
+ static bool ShouldKeepStartupLine(IList<string> accepted,string line){
+  if(!String.IsNullOrWhiteSpace(line))return true;
+  return accepted.Count>0 && !String.IsNullOrWhiteSpace(accepted[accepted.Count-1]);
+ }
+ void AcceptManagedStartupLine(string raw){
+  if(managedStartupComplete || managedStartupHeader.Count>=54)return;
+  if(raw.IndexOf("Received tool call",StringComparison.OrdinalIgnoreCase)>=0 ||
+     raw.IndexOf("Tool call ",StringComparison.OrdinalIgnoreCase)>=0){
+   managedStartupComplete=true;return;
+  }
+  if(managedStartupScanned>=90)return;
+  string line;
+  if(!TrySafeStartupLine(raw,out line)){
+   managedStartupScanned++;return;
+  }
+  if(!ShouldKeepStartupLine(managedStartupHeader,line))return;
+  // A single visual separator counts; an arbitrary number of extra blank
+  // progress rows cannot prevent later Next/Commands lines from appearing.
+  managedStartupScanned++;
+  if(String.IsNullOrWhiteSpace(line))line="";
+  if(String.Join("\n",managedStartupHeader.ToArray()).Length+line.Length>8192){
+   managedStartupComplete=true;return;
+  }
+  managedStartupHeader.Add(line);
+  remoteSupervisor.NoteHostEvent("Safe pinned Remote startup header updated");
+ }
+ void AcceptManagedBannerArt(string raw){
+  if(managedBannerScanned++>=12 || managedBannerArt.Count>=7)return;
+  string line=System.Text.RegularExpressions.Regex.Replace(raw,
+   @"\x1B\[[0-?]*[ -/]*[@-~]","").TrimEnd('\r');
+  if(line.Length<10 || line.Length>180)return;
+  // Colored original banner is graphic-only; reject text and identifiers.
+  if(!System.Text.RegularExpressions.Regex.IsMatch(line,
+   @"\A[\s\u2500-\u259F\u00A0/\\_|.]+\z"))return;
+  managedBannerArt.Add(line);
+  remoteSupervisor.NoteHostEvent("Safe startup art updated");
+ }
+ static bool TrySafeIdentityLine(string raw,out string label,out string value){
+  label="";value="";
+  if(String.IsNullOrEmpty(raw))return false;
+  // The pinned Remote's private startup log has a structured '- User:',
+  // '- Device Name:' and '- Device ID:' header. Never export raw lines.
+  string line=System.Text.RegularExpressions.Regex.Replace(raw,
+   @"\x1B\[[0-?]*[ -/]*[@-~]","").TrimEnd('\r','\n');
+  var match=System.Text.RegularExpressions.Regex.Match(line,
+   @"^\s*-\s*(User|Device Name|Device ID):\s*([^\r\n]{1,180})\s*$",
+   System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+  if(!match.Success)return false;
+  string field=match.Groups[1].Value.ToLowerInvariant();
+  string data=match.Groups[2].Value.Trim();
+  if(field=="user" &&
+    System.Text.RegularExpressions.Regex.IsMatch(data,
+      @"\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z")){
+   label="user";value=data;return true;
+  }
+  if(field=="device name" && data.Length<=80 &&
+    System.Text.RegularExpressions.Regex.IsMatch(data,@"\A[\p{L}\p{Nd} _().\-]{1,80}\z")){
+   label="deviceName";value=data;return true;
+  }
+  if(field=="device id" && System.Text.RegularExpressions.Regex.IsMatch(data,
+    @"\A[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\z")){
+   label="deviceId";value=data;return true;
+  }
+  return false;
+ }
+ void AcceptManagedIdentityLine(string line){
+  string field,value;
+  if(!TrySafeIdentityLine(line,out field,out value))return;
+  bool changed=false;
+  if(field=="user" && managedAccount!=value){managedAccount=value;changed=true;}
+  else if(field=="deviceName" && managedDeviceName!=value){managedDeviceName=value;changed=true;}
+  else if(field=="deviceId" && managedDeviceId!=value){managedDeviceId=value;changed=true;}
+  if(changed)remoteSupervisor.NoteHostEvent("Owned Remote identity metadata received: "+field);
+ }
+ // Only top-level status lines from the pinned Remote constitute health
+ // evidence. A tool result or JSON payload containing "Presence tracked" is
+ // not a connection proof. Allow only the known console status glyph prefixes.
+ static string RemoteStatusText(string line){
+  string text=(line??"").TrimStart();
+  foreach(string prefix in new[]{"🔌 ","✅ ","❌ ","⚠️ ","⚠ ","ℹ️ ","🔄 "}){
+   if(text.StartsWith(prefix,StringComparison.Ordinal)){
+    text=text.Substring(prefix.Length).TrimStart();break;
+   }
+  }
+  return text;
+ }
+ static bool HasRemoteStatus(string line,string marker){
+  return line.StartsWith(marker,StringComparison.OrdinalIgnoreCase);
+ }
+ static string SafeRemoteMarker(string line,out string next){
+  next="";
+  if(String.IsNullOrWhiteSpace(line))return "";
+  string statusLine=RemoteStatusText(line);
+  // Negative evidence must be consumed immediately, even while the private
+  // Job is still alive. These signatures match the proven legacy classifier.
+  if(HasRemoteStatus(statusLine,"Channel error:")||
+     HasRemoteStatus(statusLine,"Channel closed")||
+     HasRemoteStatus(statusLine,"Device marked as offline")||
+     HasRemoteStatus(statusLine,"Remote session expired and could not be renewed")||
+     HasRemoteStatus(statusLine,"Restart the terminal running Desktop Commander to reconnect")||
+     HasRemoteStatus(statusLine,"This device is now offline for remote calls")||
+     HasRemoteStatus(statusLine,"Device registered, but NOT reachable")||
+     HasRemoteStatus(statusLine,"Realtime channel is not open")||
+     HasRemoteStatus(statusLine,"Channel subscription timed out")||
+     HasRemoteStatus(statusLine,"Presence track remained unavailable")||
+     HasRemoteStatus(statusLine,"Presence published but the device row could not be updated")){
+   next="Fault";return "Remote channel unavailable";
+  }
+  if(HasRemoteStatus(statusLine,"Local Desktop Commander MCP went away")||
+     HasRemoteStatus(statusLine,"Could not restart local Desktop Commander MCP:")){
+   next="Reconnecting";return "Local MCP recovering";
+  }
+  if(HasRemoteStatus(statusLine,"Device startup failed:")){
+   next="Fault";return "Remote start failed";
+  }
+  if(HasRemoteStatus(statusLine,"Authenticating with Remote MCP server")||
+     HasRemoteStatus(statusLine,"waiting for authentication")){
+   next="AuthPending";return "Authentication pending";
+  }
+  if(HasRemoteStatus(statusLine,"Desktop Commander Remote is connected")||
+     HasRemoteStatus(statusLine,"Presence tracked (device ")){
+   next="Ready";return "Remote connected";
+  }
+  // Exact top-level pinned Remote tool markers only. Never forward raw
+  // arguments, tool output, request IDs, private paths or user data.
+  if(line.StartsWith("🔧 Received tool call ",StringComparison.Ordinal) &&
+     line.Length>"🔧 Received tool call ".Length){
+   // Only a known public tool identifier may be displayed. In particular,
+   // request ids, JSON arguments, stdout and file paths stay in the private log.
+   var name=System.Text.RegularExpressions.Regex.Match(line,
+    @"\A🔧 Received tool call [A-Za-z0-9_-]{1,100}:\s*(?<tool>[a-z][a-z0-9_]{1,39})(?=\s|$)");
+   if(name.Success){
+    string tool=name.Groups["tool"].Value;
+    string[] known={"start_process","read_process_output","interact_with_process",
+     "read_file","read_multiple_files","list_directory","get_file_info",
+     "list_processes","start_search","get_more_search_results","stop_search",
+     "get_config","write_file","edit_block","create_directory","move_file"};
+    if(Array.IndexOf(known,tool)>=0)return "Remote tool started: "+tool;
+   }
+   return "Remote tool started";
+  }
+  if(line.StartsWith("✅ Tool call ",StringComparison.Ordinal) &&
+     line.IndexOf(" completed:",StringComparison.Ordinal)>0)
+   return "Remote tool completed";
+  if(line.StartsWith("❌ Tool call ",StringComparison.Ordinal) &&
+     line.IndexOf(" failed:",StringComparison.Ordinal)>0)
+   return "Remote tool failed";
+  return "";
+ }
+ // A completed tool call is only a local execution marker. Pinned Remote
+ // 0.2.52 emits it before updateCallResult reaches the transport, which may
+ // fail or be swallowed internally. Only channel/presence status markers
+ // classified by SafeRemoteMarker may establish Ready.
+ static bool ManagedReadyEvidenceExpired(DateTime nowUtc,DateTime proofUtc){
+  return proofUtc==DateTime.MinValue || proofUtc>nowUtc ||
+    nowUtc-proofUtc>ReadyEvidenceLease;
+ }
+ void MarkManagedReadinessUnconfirmed(string detail,bool fault){
+  if(managedState!="Ready")return;
+  managedReadyEvidenceUtc=DateTime.MinValue;
+  managedState=fault?"Fault":"Reconnecting";
+  managedDetail=detail;
+  remoteSupervisor.ManagedStatus(managedProcess.Pid,true,managedState,managedDetail);
+  Append("remote","readiness unconfirmed; previous Ready revoked");
+ }
+ void ExpireManagedReadyEvidence(){
+  if(managedState=="Ready" &&
+     ManagedReadyEvidenceExpired(DateTime.UtcNow,managedReadyEvidenceUtc))
+   MarkManagedReadinessUnconfirmed(
+    "Remote channel unconfirmed; awaiting new connectivity evidence",false);
+ }
+ void RefreshManagedRemote(){
+  if(accountLogoutProcess!=null||accountSwitchFaultLatched)return;
+  if(!managedMode||managedProcess==null||!managedProcess.HasStarted)return;
+  if(!managedProcess.Running){
+   managedReadyEvidenceUtc=DateTime.MinValue;
+   managedLogStream.Reset();
+   if(managedLogSessions!=null){
+    try{FinishManagedLog(0);}
+    catch(Exception error){if(!managedLogFinishFaultReported){managedLogFinishFaultReported=true;Append("remote","managed log finalization pending: "+error.GetType().Name);}}
+   }
+   if(managedState!="Disconnected"){
+    managedAccount="";managedDeviceName="";managedDeviceId="";managedBornUtcTicks=0;
+    managedBannerArt.Clear();managedBannerScanned=0;
+   managedStartupHeader.Clear();managedStartupComplete=false;managedStartupScanned=0;
+    managedState="Disconnected";managedDetail="Host-owned Remote process exited";
+    remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
+    Append("remote","owned Job no longer running");
+   }
+   return;
+  }
+  // Expiration must run before all zero-byte/no-log early returns. An idle
+  // Remote process is not a health signal. No Remote control or probe is sent.
+  ExpireManagedReadyEvidence();
+  if(managedLogPump!=null){
+   RefreshCapturedRemote();return;
+  }
+  if(String.IsNullOrEmpty(managedLogPath)||!File.Exists(managedLogPath)){
+   MarkManagedReadinessUnconfirmed("Remote log absent; connectivity unconfirmed",true);
+   return;
+  }
+  try{
+   CheckPath(managedLogPath);
+   using(var stream=new FileStream(managedLogPath,FileMode.Open,FileAccess.Read,
+     FileShare.ReadWrite|FileShare.Delete)){
+    if(stream.Length<managedLogOffset){
+     managedLogOffset=0;managedLogStream.Reset();toolJournal.Reset();
+     MarkManagedReadinessUnconfirmed("Remote log rotated; awaiting fresh evidence",false);
+    }
+    long count=Math.Min(32768,stream.Length-managedLogOffset);
+    if(count<=0)return;
+    stream.Seek(managedLogOffset,SeekOrigin.Begin);
+    byte[] buffer=new byte[(int)count];
+    int read=stream.Read(buffer,0,buffer.Length);
+    managedLogOffset+=read;
+    // Never decode a byte chunk independently: the first or last byte of
+    // a four-byte Remote marker can sit in different 32 KiB reads.
+    AcceptManagedBytes(buffer,read);
+   }
+  }catch(Exception error){
+   MarkManagedReadinessUnconfirmed("Remote log unavailable; connectivity unconfirmed",true);
+   Append("remote","managed journal unavailable: "+error.GetType().Name);
+  }
+ }
+ void RefreshCapturedRemote(){
+  var pump=managedLogPump;
+  if(managedParserFault||pump.ReadFault||pump.ParserFault||pump.Complete){
+   FaultManagedCapture();
+   if(!managedLogFaultReported){managedLogFaultReported=true;Append("remote","managed log stream unavailable");}
+   return;
+  }
+  if(pump.StorageFault&&!managedLogFaultReported){
+   managedLogFaultReported=true;Append("remote","raw log storage unavailable");
+  }
+  try{
+   byte[] buffer=new byte[32768];
+   var budget=Stopwatch.StartNew();
+   // Bounded time per GUI/IPC tick; the background reader never waits
+   // for this parser and continues saving original bytes while GUI is closed.
+   for(int i=0;i<32&&budget.ElapsedMilliseconds<30;i++){
+    int read=pump.ReadPending(buffer);if(read==0)break;
+    AcceptManagedBytes(buffer,read);
+   }
+  }catch(Exception error){
+   managedParserFault=true;FaultManagedCapture();
+   if(!managedLogFaultReported){managedLogFaultReported=true;Append("remote","managed journal unavailable: "+error.GetType().Name);}
+  }
+ }
+ void FaultManagedCapture(){
+  if(managedState=="Ready")MarkManagedReadinessUnconfirmed("Remote log stream unconfirmed",true);
+  else if(managedState!="Fault"){
+   managedReadyEvidenceUtc=DateTime.MinValue;managedState="Fault";managedDetail="Remote log stream unconfirmed";
+   remoteSupervisor.ManagedStatus(managedProcess.Pid,true,managedState,managedDetail);
+  }
+ }
+ void AcceptManagedBytes(byte[] buffer,int read){
+    string[] lines=managedLogStream.Feed(buffer,0,read);
+    if(lines.Length==0)return;
+    // Process every bounded log-chunk marker, including concurrent calls.
+    // The store keeps only the last 64 sanitized entries for the GUI.
+    for(int i=0;i<lines.Length;i++){
+     string cleanLine=lines[i].TrimEnd('\r');
+     AcceptManagedBannerArt(cleanLine);
+     AcceptManagedIdentityLine(cleanLine);
+     AcceptManagedStartupLine(cleanLine);
+     string next;
+     string marker=SafeRemoteMarker(cleanLine,out next);
+     if(marker=="")continue;
+     if(marker.StartsWith("Remote tool ",StringComparison.Ordinal))
+      marker=toolJournal.Format(cleanLine,marker);
+     if(marker=="")continue;
+     // Journal start/completion/failure for UI activity only. Never
+     // recover Fault/Reconnecting or refresh the Ready evidence lease from
+     // local tool completion: the remote result could still fail to upload.
+     remoteSupervisor.AddSyntheticLogLine(marker);
+     if(next!=""){
+      if(next=="Ready"&&managedLogPump!=null&&(managedLogPump.ParserFault||managedLogPump.ReadFault)){FaultManagedCapture();return;}
+      if(next=="Ready"&&!managedSessionAccepted&&managedLogSessions!=null&&managedLogPump!=null&&!managedLogPump.StorageFault){
+       try{managedLogSessions.Accept();managedSessionAccepted=true;}
+       catch(Exception error){if(!managedLogFaultReported){managedLogFaultReported=true;Append("remote","log session acceptance failed: "+error.GetType().Name);}}
+      }
+      managedReadyEvidenceUtc=next=="Ready"?DateTime.UtcNow:DateTime.MinValue;
+      managedState=next;
+      managedDetail=marker;
+      remoteSupervisor.ManagedStatus(managedProcess.Pid,true,next,managedDetail);
+     }
+    }
+ }
+ // Read-only attachment to a preexisting legacy launcher. The caller must
+ // validate original cmd.exe commandline/log path and OS PID/birth/session.
+ // This grants no process ownership; RC1 never controls the adopted Remote.
+ public void EnableObservedRemote(int pid){
+  lock(gate){
+   if(disposed||gui!=null||observedMode||trialRoot!=null || pid<=0)
+    throw new InvalidOperationException("RC1_OBSERVER_MODE_BOUNDARY");
+   remoteSupervisor.AttachObservedReadOnly(pid);
+   toolJournal.Reset();observedMode=true;
+    if(trayVisual==null)UpdateFallbackTrayText(
+     RdcUiLanguage.LoadResources(sourceRoot,RdcUiLanguage.Current));
+   Append("remote","read-only existing Remote observer attached");
+  }
+ }
+ public void RetargetObservedRemote(int pid){
+  lock(gate){
+   if(disposed||!observedMode||pid<=0)throw new InvalidOperationException("RC1_NOT_OBSERVING");
+   remoteSupervisor.RetargetObservedReadOnly(pid);
+   toolJournal.Reset();
+   Append("remote","observed launcher replaced (read-only)");
+  }
+ }
+ public void UpdateObservedRemote(bool alive,string state,string detail){
+  lock(gate){
+   if(disposed||!observedMode)return;
+   string before=(string)remoteSupervisor.Snapshot()["state"];
+   remoteSupervisor.UpdateObservedReadOnly(alive,state,detail);
+   if(before!=state)Append("remote","observed state: "+state);
+  }
+ }
+ // Only invoked by the verified read-only observer, within Host process.
+ // Raw lines are immediately reduced to fixed categories, safe basename and
+ // a local ordinal. The remote call ID and original args never enter IPC.
+ public void ObservedToolLine(string raw){
+  lock(gate){
+   if(disposed||!observedMode)return;
+   string next;
+   string category=SafeRemoteMarker(raw??"",out next);
+   if(!category.StartsWith("Remote tool ",StringComparison.Ordinal))return;
+   string safe=toolJournal.Format(raw,category);
+   if(safe=="")return;
+   remoteSupervisor.AddObservedMarker(safe);
+   Append("remote","sanitized observed tool event");
+  }
+ }
+ public void ObservedMarker(string marker){
+  lock(gate){
+   if(disposed||!observedMode)return;
+   remoteSupervisor.AddObservedMarker(marker);
+   Append("remote",marker);
+  }
+ }
+ // Bounded observer test exit: detach RC1 GUI/Host, never signal Remote.
+ public void RequestObservedDetach(){
+  lock(gate){
+   if(disposed||!observedMode||exitRequested)return;
+   exitRequested=true;closeGeneration++;
+   Append("host","observer-only test detach requested");
+  }
+ }
+ Dictionary<string,object> Snapshot(){
+  var observed=remoteSupervisor.Snapshot();
+  return new Dictionary<string,object>{
+   {"hostPid",hostPid},{"hostGeneration",generation},{"hostTicks",hostBorn},
+   {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":managedMode?"MANAGED_OWNER_RC1":"FAKE_ONLY_RC1"},{"remoteId",remoteSupervisor.SessionId},
+   {"remote",observed},{"remoteConnected",(managedMode||observedMode) && (string)observed["state"]=="Ready"},
+   {"account",observedMode?"Existing Remote / read-only":managedMode?"RC1 Host-owned Remote":"DEMO: disabled"},
+   {"remoteBornUtcTicks",managedMode?managedBornUtcTicks:0L},
+   {"remoteStartupArt",managedMode?String.Join("\n",managedBannerArt.ToArray()):""},
+   {"remoteStartupHeader",managedMode?String.Join("\n",managedStartupHeader.ToArray()):""},
+   {"remoteIdentity",new Dictionary<string,object>{
+    {"user",managedMode?managedAccount:""},{"deviceName",managedMode?managedDeviceName:""},
+    {"deviceId",managedMode?managedDeviceId:""}
+   }},
+   {"logTail",observed["tail"]},{"logCursor",observed["logCursor"]},
+   {"logStreamEpoch",observed["logStreamEpoch"]},
+   {"trayHelpSequence",DateTime.UtcNow<=trayHelpExpiresUtc?trayHelpSequence:0},
+    {"guiPid",childPid},{"guiState",guiState},{"guiStarts",guiStarts},
+   {"guiFailures",guiFailures},{"closeGeneration",closeGeneration},{"lastEventSeq",sequence},
+   {"revision",sequence},{"remoteRevision",observed["revision"]},{"isActualRemote",observedMode||managedMode},
+   {"capabilities",new Dictionary<string,object>{
+     {"deviceManagementLink",observedMode||managedMode},{"deviceVerificationLink",false},
+     {"sanitizedJournal",true},{"about",true},
+     {"startRemote",managedMode && accountLogoutProcess==null && (managedProcess==null||!managedProcess.Running)},
+     {"stopRemote",managedMode && accountLogoutProcess==null && managedProcess!=null&&managedProcess.Running},
+     {"reconnectRemote",managedMode && accountLogoutProcess==null && managedProcess!=null&&managedProcess.Running},
+     {"switchAccount",managedMode && !observedMode && trialRoot==null &&
+       accountLogoutProcess==null && !accountSwitchFaultLatched &&
+       managedProcess!=null && managedProcess.Running && managedState=="Ready"},
+     {"update",false},{"fullExit",managedMode && accountLogoutProcess==null},
+     {"reason",observedMode?"ADOPTED_REMOTE_READ_ONLY":managedMode?"KERNEL_JOB_OWNED_ONLY":"NO_OWNED_REMOTE"}
+   }}
+  };
+ }
+ string Answer(string type,string requestId,object payload){
+  return RdcOwnerWire.Json.Serialize(new {type=type,protocol=1,requestId=requestId,payload=payload});
+ }
+ string Error(string requestId,string code){
+  return RdcOwnerWire.Json.Serialize(new {type="ERROR",protocol=1,requestId=requestId,code=code});
+ }
+ string Dispatch(Dictionary<string,object> request,int osPid,int osSession) {
+  lock(gate){
+   RefreshGui();
+   string requestId=RdcOwnerWire.String(request,"requestId");
+   if(String.IsNullOrEmpty(requestId)||requestId.Length>64)return Error("","INVALID_REQUEST_ID");
+   string verb=RdcOwnerWire.String(request,"type");
+   if(RdcOwnerWire.Number(request,"protocol")!=1)return Error(requestId,"PROTOCOL_MISMATCH");
+   if(!String.Equals(RdcOwnerWire.String(request,"hostGeneration"),generation,StringComparison.Ordinal))
+    return Error(requestId,"STALE_HOST");
+   if(childPid<1||gui==null||osPid!=childPid||osSession!=childSession ||
+      RdcOwnerWire.Born(childPid)!=childBorn)
+    return Error(requestId,"GUI_OS_IDENTITY");
+   if(!String.Equals(RdcOwnerWire.String(request,"nonce"),nonce,StringComparison.Ordinal))
+    return Error(requestId,"GUI_NONCE");
+   long reqSeq=RdcOwnerWire.Number(request,"requestSequence");
+   if(reqSeq<=0||reqSeq<=lastRequestSequence||reqSeq==long.MaxValue ||
+      requestIds.Contains(requestId))
+    return Error(requestId,"REPLAY");
+   lastRequestSequence=reqSeq;requestIds.Add(requestId);requestOrder.Enqueue(requestId);
+   while(requestOrder.Count>128)requestIds.Remove(requestOrder.Dequeue());
+   if(verb=="HELLO"){
+    if(RdcOwnerWire.String(request,"guiBuild")!="1.6.0 RC1")
+     return Error(requestId,"INCOMPATIBLE_GUI");
+    guiAuthenticated=true;guiState="CONNECTED";Append("gui","authenticated");
+    if(guiReadySignal!=null)guiReadySignal.Set();
+    return Answer("WELCOME",requestId,Snapshot());
+   }
+   if(!guiAuthenticated)return Error(requestId,"HELLO_REQUIRED");
+   if(verb=="GET_SNAPSHOT"){
+    if(trialRoot!=null || observedMode)trialSnapshotClients.Add(osPid);
+    return Answer("SNAPSHOT",requestId,Snapshot());
+   }
+   if(verb=="GET_EVENTS"){
+    if(trialRoot!=null || observedMode)trialEventClients.Add(osPid);
+    long after=RdcOwnerWire.Number(request,"afterSequence");
+    if(after<0||after>sequence)return Error(requestId,"INVALID_CURSOR");
+    bool gap=events.Count>0 && after<Convert.ToInt64(events[0]["sequence"])-1;
+    var batch=new List<Dictionary<string,object>>();
+    if(!gap)foreach(var item in events){
+     if(Convert.ToInt64(item["sequence"])>after)batch.Add(item);
+     if(batch.Count>=64)break;
+    }
+    bool more=batch.Count>0 && Convert.ToInt64(batch[batch.Count-1]["sequence"])<sequence;
+    return Answer("EVENT_BATCH",requestId,new {
+     hostGeneration=generation,lastEventSeq=sequence,gap=gap,moreAvailable=more,
+     events=batch});
+   }
+   if(verb=="OPEN_EXTERNAL"){
+    // GUI has no authority to synthesize a destination URL. Exact harmless
+    // official device pages only, with Host-side observed-mode permission.
+    if(!observedMode&&!managedMode)return Error(requestId,"NO_ACTUAL_REMOTE_FOR_NAVIGATION");
+    string destination=RdcOwnerWire.String(request,"navigation");
+    if(destination=="DEVICE_MANAGEMENT")return Answer("NAVIGATION",requestId,new {
+     route=destination,url="https://mcp.desktopcommander.app/"});
+    // RC1 device verification happens in the official browser authorization flow;
+    // no separate manual verification route is offered.
+    return Error(requestId,"NAVIGATION_NOT_ALLOWLISTED");
+   }
+   if(verb=="REMOTE_ACTION"){
+    if(WindowsEnding)return Error(requestId,"RC1_WINDOWS_ENDING");
+    string action=RdcOwnerWire.String(request,"action");
+    if(action!="START" && action!="STOP" && action!="RECONNECT" &&
+       action!="SWITCH_ACCOUNT" && action!="UPDATE" && action!="FULL_EXIT")
+     return Error(requestId,"REMOTE_ACTION_UNKNOWN");
+    if(observedMode)return Error(requestId,"ADOPTED_REMOTE_READ_ONLY");
+    if(!managedMode)return Error(requestId,"REMOTE_OWNER_NOT_VERIFIED");
+    // Only the authenticated active GUI's explicit click, not a background
+    // snapshot or tray discovery, can authorize a managed Remote action.
+    if(RdcOwnerWire.String(request,"userConfirmed")!="YES")
+     return Error(requestId,"REMOTE_ACTION_USER_CONFIRMATION_REQUIRED");
+    if(accountLogoutProcess!=null)return Error(requestId,"ACCOUNT_CHANGE_IN_PROGRESS");
+    if(action=="UPDATE")return Error(requestId,"REMOTE_ACTION_NOT_SAFELY_IMPLEMENTED");
+    try{
+     if(action=="SWITCH_ACCOUNT")BeginManagedAccountSwitch();
+     else if(action=="START")StartManagedRemote();
+     else if(action=="STOP")StopManagedRemote();
+     else if(action=="RECONNECT"){
+      ResolvePinnedNpx(); // Never stop a running Remote merely because its next launch dependency is missing.
+      StopManagedRemote();
+      StartManagedRemote();
+     }else if(action=="FULL_EXIT"){
+      if(managedProcess!=null&&managedProcess.Running)StopManagedRemote();
+      exitRequested=true;closeGeneration++;
+     }
+     return Answer("ACK",requestId,new {action=action,success=true});
+    }catch(Exception problem){
+     if(problem.Message=="RC1_PINNED_NPX_MISSING" &&
+        (managedProcess==null||!managedProcess.Running)){
+      autoStartPending=false;
+      managedState="Fault";
+      managedDetail="Required Node.js runtime is missing; run RDC Relay Setup";
+      remoteSupervisor.ManagedStatus(0,false,managedState,managedDetail);
+      Append("remote","managed action denied: RC1_PINNED_NPX_MISSING");
+      return Error(requestId,"MANAGED_NODE_MISSING");
+     }
+     Append("remote","managed action denied: "+problem.GetType().Name);
+     return Error(requestId,"MANAGED_"+problem.GetType().Name.ToUpperInvariant());
+    }
+   }
+   if(verb=="DETACH"){
+    guiAuthenticated=false;guiState="DETACHED";Append("gui","detached");
+    return Answer("ACK",requestId,new {detached=true});
+   }
+   return Error(requestId,"VERB_DENIED");
+  }
+ }
+ // The native notification is irreversible only after WM_ENDSESSION(TRUE).
+ // It does not use the interactive Stop/Exit dialogs or run account logout.
+ // A worker bounds the window callback even if a disk operation stalls.
+ bool WindowsEnding {get{return Thread.VolatileRead(ref windowsEnding)!=0;}}
+ void ConfirmWindowsEndSession(){
+  if(Interlocked.Exchange(ref windowsEnding,1)!=0)return;
+  var worker=new Thread(FinalizeWindowsEndSession);
+  worker.IsBackground=true;
+  worker.Name="RDC Relay Windows end-session";
+  worker.Start();
+  worker.Join(2200);
+ }
+ void FinalizeWindowsEndSession(){
+  var budget=Stopwatch.StartNew();
+  if(!Monitor.TryEnter(gate,50))return; // in-flight work: defer to recovery
+  try{
+   autoStartPending=false;
+   if(disposed||!managedMode||observedMode||managedProcess==null||
+      managedLogSessions==null||!managedProcess.HasStarted)return;
+   // The OS has confirmed logoff/shutdown. Stop only this exact private Job
+   // to close its output pipe; never scan for or terminate another Remote.
+   int code;
+   if(!managedProcess.TryGetCompletedExitCode(out code)&&!managedProcess.StopOwnedOnly(1000))return;
+   int remaining=(int)Math.Max(0,1900-budget.ElapsedMilliseconds);
+   FinishManagedLog(remaining);
+  }catch{
+   // Leave durable session markers intact. Startup recovery will retry
+   // only after exclusive ownership / external-process exclusion is proved.
+  }finally{Monitor.Exit(gate);}
+ }
+ void RecoverManagedLogsIfSafe(){
+  try{
+   string logs=Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(stateRoot)),"Logs");
+   if(!Directory.Exists(logs))return;
+   if(WindowsEnding||AnotherLegacyShell()||AnotherDesktopCommanderRemote())return;
+   using(var sessions=new RdcOwnerLogSessions(logs)){sessions.Recover();}
+  }catch(Exception error){
+   Append("remote","managed log recovery pending: "+error.GetType().Name);
+  }
+ }
+ public void Run(){if(hostReadySignal!=null)hostReadySignal.Set();Application.Run(context);}
+ public void Dispose(){
+  lock(gate){
+   if(disposed)return;
+   disposed=true;
+   if(endSessionWindow!=null){endSessionWindow.Dispose();endSessionWindow=null;}
+   pulse.Stop();pulse.Dispose();
+   trayFrameTimer.Stop();trayFrameTimer.Dispose();
+   tray.Visible=false;tray.Dispose();
+   if(trayVisual!=null){trayVisual.Dispose();trayVisual=null;}
+   if(reopenSignal!=null)reopenSignal.Dispose();
+   if(idleUpgradeSignal!=null)idleUpgradeSignal.Dispose();
+   if(guiReadySignal!=null)guiReadySignal.Dispose();
+   if(hostReadySignal!=null)hostReadySignal.Dispose();
+   bool ipcClean=true,filesClean=false,guiClean=(gui==null);
+   try{if(server!=null)server.Dispose();}catch{ipcClean=false;}
+   if(gui!=null)gui.Dispose(); // no force kill or unverified child stop
+   if(guiClean && ticketStore!=null){
+    filesClean=RemoveOwnedManagedLogs() && ticketStore.RevokeOnlyOwned() && RemoveEmptyOwnedRunRoot();
+   }
+   bool logClean=true;
+   if(managedLogSessions!=null){
+    try{FinishManagedLog(3000);}catch{
+     logClean=false;
+     // Unexpected Host exit is not proof of Job completion. Leave session
+     // state for recovery; do not promote an unverified live session.
+     if(managedLogPump!=null){managedLogPump.RequestStop();managedLogPump.WaitForCompletion(3000);}
+     if(managedLogPump==null||managedLogPump.Complete){managedLogSessions.Dispose();managedLogSessions=null;}
+    }
+   }
+   if(managedProcess!=null&&(managedLogPump==null||managedLogPump.Complete))managedProcess.Dispose();
+   if(accountLogoutProcess!=null)accountLogoutProcess.Dispose();
+   filesClean=filesClean&&logClean;
+   try{singleton.ReleaseMutex();}catch{}
+   singleton.Dispose();
+   if(trialRoot!=null){
+    Console.WriteLine("RC1_TRIAL_IPC_SNAPSHOT_GUI_COUNT="+
+     trialSnapshotClients.Count+" EVENT_GUI_COUNT="+trialEventClients.Count);
+    Console.WriteLine("RC1_TRIAL_IPC_REJECTED="+server.Rejected+
+     " TIMEOUTS="+server.Timeouts+" PEAK_ACTIVE="+server.PeakActive);
+   }
+   if(observedMode){
+    Console.WriteLine("RC1_OBSERVER_GUI_STARTS="+guiStarts+" FAILURES="+guiFailures+
+     " SNAPSHOT_GUI_COUNT="+trialSnapshotClients.Count+
+     " EVENT_GUI_COUNT="+trialEventClients.Count);
+    if(guiFailures>0)Console.WriteLine("RC1_OBSERVER_LAST_GUI_ERROR="+lastGuiError);
+    Console.WriteLine("RC1_OBSERVER_DETACHED_ONLY=TRUE");
+   }
+   if(!ipcClean || !filesClean || !guiClean)
+    throw new InvalidOperationException("RC1_OWNER_SHUTDOWN_NOT_CLEAN");
+  }
+ }
+}
+public static class RdcOwnerActivate {
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern bool ShowWindow(IntPtr h,int command);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern bool SetForegroundWindow(IntPtr h);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern bool IsWindow(IntPtr h);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern bool IsWindowVisible(IntPtr h);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern bool IsIconic(IntPtr h);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern IntPtr GetForegroundWindow();
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
+ [System.Runtime.InteropServices.DllImport("user32.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+ public static extern int GetWindowText(IntPtr h,System.Text.StringBuilder text,int count);
+ public delegate bool EnumWindowCallback(IntPtr h,IntPtr data);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern bool EnumWindows(EnumWindowCallback callback,IntPtr data);
+ // Process.MainWindowHandle is zero for a legitimate hidden WinForms form.
+ // Find the exact owned top-level RDC Relay window; never enumerate by name
+ // alone or activate another process's window.
+ public static IntPtr FindOwnedWindow(int expectedPid) {
+  if(expectedPid<=0)return IntPtr.Zero;
+  IntPtr result=IntPtr.Zero;
+  EnumWindows(delegate(IntPtr h,IntPtr data){
+   uint pid=0;
+   if(GetWindowThreadProcessId(h,out pid)==0||pid!=(uint)expectedPid)return true;
+   var title=new System.Text.StringBuilder(160);
+   GetWindowText(h,title,title.Capacity);
+   // A modal About/Journal window must not be mistaken for the main GUI.
+   // Owner GUI changes its caption after authenticated HELLO.
+   // Accept only the release-specific top-level main window, never the
+   // versionless About/Journal modal or another titled window in the PID.
+   if(!title.ToString().StartsWith("RDC Relay 1.6.0 RC1",StringComparison.Ordinal))return true;
+   result=h;return false;
+  },IntPtr.Zero);
+  return result;
+ }
+ [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+ public struct FlashInfo {
+  public uint cbSize;public IntPtr hwnd;public uint dwFlags,dwCount,dwTimeout;
+ }
+ [System.Runtime.InteropServices.DllImport("user32.dll")]
+ public static extern bool FlashWindowEx(ref FlashInfo info);
+ public static string OpenOwned(IntPtr handle,int expectedPid) {
+  if(handle==IntPtr.Zero || !IsWindow(handle))return "NO_WINDOW";
+  uint windowPid=0;
+  if(GetWindowThreadProcessId(handle,out windowPid)==0 ||
+     windowPid!=(uint)expectedPid)return "NOT_OWNED";
+  // Restore only when minimized/hidden. An already visible GUI is not
+  // forcibly repositioned or made topmost, especially over fullscreen apps.
+  if(IsIconic(handle)||!IsWindowVisible(handle))ShowWindow(handle,9);
+  bool accepted=SetForegroundWindow(handle);
+  IntPtr foreground=GetForegroundWindow();
+  uint foregroundPid=0;
+  if(foreground!=IntPtr.Zero)GetWindowThreadProcessId(foreground,out foregroundPid);
+  if(accepted && (foreground==handle||foregroundPid==(uint)expectedPid))
+   return "VISIBLE";
+  if(foreground==handle||foregroundPid==(uint)expectedPid)return "VISIBLE";
+  // Win32 foreground lock can deny the call. Signal taskbar attention instead
+  // of injecting Alt, forcing TopMost, retrying forever or killing the GUI.
+  var flash=new FlashInfo{cbSize=(uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(FlashInfo)),
+   hwnd=handle,dwFlags=2,dwCount=3,dwTimeout=0}; // FLASHW_TRAY, bounded
+  FlashWindowEx(ref flash);
+  return "ATTENTION";
+ }
+}
+
+// Pure visual-only phase gate: an animated frame family always finishes its
+// current complete cycle before another visual state is shown. The latest
+// authoritative Host snapshot, tooltip, IPC and Remote control are immediate.
+// The owner-approved Connecting/Authorization cycle is 1600ms, Working is
+// 1800ms; static states have no cycle to complete. At every boundary the
+// *latest* semantic state is selected (no queue of obsolete transient events).
+public sealed class RdcOwnerTrayPhaseGate {
+ const int SwapCycleMs=1600, WorkCycleMs=1800;
+ public string Visible {get;private set;}
+ public string Latest {get;private set;}
+ public long WaitingUntilMs {get;private set;}
+ public RdcOwnerTrayPhaseGate(){
+  Visible="";Latest="";WaitingUntilMs=-1;
+ }
+ public static int CycleDurationMs(string state){
+  if(state=="connecting"||state=="auth")return SwapCycleMs;
+  if(state=="working")return WorkCycleMs;
+  return 0;
+ }
+ // Returns true only when the visible state changes and its phase must reset.
+ // Every animated source finishes its current full cycle before *any*
+ // destination, including when a working tool pulse was very short.
+ public bool Update(string latest,bool motion,long elapsedMs){
+  Latest=String.IsNullOrEmpty(latest)?"offline":latest;
+  if(Visible==Latest){WaitingUntilMs=-1;return false;}
+  int period=motion?CycleDurationMs(Visible):0;
+  if(period>0){
+   if(WaitingUntilMs<0){
+    // The next exact full-cycle seam. The existing 40ms icon timer releases
+    // it; repeated or superseded snapshots never extend the cycle.
+    WaitingUntilMs=((Math.Max(0L,elapsedMs)/period)+1)*period;
+   }
+   return false;
+  }
+  // First state, static source and Windows reduced-motion: immediate.
+  WaitingUntilMs=-1;
+  Visible=Latest;
+  return true;
+ }
+ public bool Advance(bool motion,long elapsedMs){
+  if(WaitingUntilMs<0 || (motion && elapsedMs<WaitingUntilMs))return false;
+  WaitingUntilMs=-1;
+  Visible=Latest;
+  return true;
+ }
+}
+// Multi-size PNG-backed Windows icons derived only from the owner-approved tray
+// 04 package. One cached Icon per frame: no Bitmap or HICON allocation on ticks.
+public sealed class RdcOwnerTrayVisual : IDisposable {
+ readonly NotifyIcon tray;
+ readonly Dictionary<string,Icon> icons=new Dictionary<string,Icon>(StringComparer.Ordinal);
+ readonly List<MemoryStream> streams=new List<MemoryStream>();
+ readonly Stopwatch phase=Stopwatch.StartNew();
+ readonly RdcOwnerTrayPhaseGate phaseGate=new RdcOwnerTrayPhaseGate();
+ DateTime nextMotionQueryUtc=DateTime.MinValue;
+ bool animate=true,disposed=false;
+ string shownFrame="",shownTip="";
+ IDictionary<string,string> displayStrings;
+ string lastConnectionSemantic="offline",lastActivity="idle";
+ bool lastFake=false,hasLastSnapshot=false;
+ int? remainingPercent=null;
+ // Called from Host's bounded 15-second cache check; no icon phase restart.
+ public void SetRemainingPercent(int? percent){
+  if(disposed)return;
+  if(percent.HasValue && (percent.Value<0||percent.Value>100))percent=null;
+  if(remainingPercent==percent)return;
+  remainingPercent=percent;
+  if(hasLastSnapshot)UpdateCaption();
+ }
+ public void ApplyLanguage(IDictionary<string,string> labels){
+  if(disposed)return;
+  displayStrings=labels;
+  if(hasLastSnapshot)UpdateCaption();
+ }
+ static string UiText(IDictionary<string,string> labels,string key,string fallback){
+  string translated;
+  return labels!=null&&labels.TryGetValue(key,out translated)&&!String.IsNullOrEmpty(translated)
+     ?translated:fallback;
+ }
+ const int WorkPulseMs=1800, SwapMs=800;
+ // Exact owner-approved tray 04-final manifest order, including 36 pulse frames.
+ static readonly string[] keys=BuildKeys();
+ static string[] BuildKeys(){
+  var names=new List<string>{
+   "disconnected","connecting-a","connecting-b",
+   "authorization-a","authorization-b","ready","working-static","connection-error",
+   "connecting-mix-25","connecting-mix-50","connecting-mix-75",
+   "authorization-mix-25","authorization-mix-50","authorization-mix-75"
+  };
+  for(int i=1;i<=35;i++)names.Add("working-"+i.ToString("D2"));
+  return names.ToArray();
+ }
+ [System.Runtime.InteropServices.DllImport("user32.dll",CharSet=System.Runtime.InteropServices.CharSet.Auto)]
+ static extern bool SystemParametersInfo(uint action,uint param,out bool enabled,uint flags);
+ static bool MotionEnabled(){
+  bool enabled=false;
+  // SPI_GETCLIENTAREAANIMATION. Fall back to a static icon if unavailable.
+  return SystemParametersInfo(0x1042,0,out enabled,0) && enabled;
+ }
+ public static RdcOwnerTrayVisual Load(string sourceRoot,NotifyIcon target) {
+  string path=Path.Combine(sourceRoot,"RdcTrayV04.bin");
+  if(!File.Exists(path))return null; // legacy/incomplete fake-only fixtures
+  if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)
+   throw new InvalidDataException("RC1_TRAY_REPARSE_DENIED");
+  return new RdcOwnerTrayVisual(path,target);
+ }
+ RdcOwnerTrayVisual(string path,NotifyIcon target) {
+  if(target==null)throw new ArgumentNullException("target");
+  tray=target;
+  try{
+   var info=new FileInfo(path);
+   if(info.Length<100||info.Length>4194304)throw new InvalidDataException("RC1_TRAY_BUNDLE_SIZE");
+   // Attest the owner's approved v04 binary before handing icons to Win32.
+   const string approvedSha="64A4009133FFB5B7CC89BD71D85B37BA2897EE5C7A715BC3C3C014625CEC3B23";
+   using(var hashStream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read)){
+    var hasher=new System.Security.Cryptography.SHA256Managed();
+    string actual=BitConverter.ToString(hasher.ComputeHash(hashStream)).Replace("-","");
+    if(actual!=approvedSha)throw new InvalidDataException("RC1_TRAY_APPROVED_SHA_MISMATCH");
+   }
+   using(var reader=new BinaryReader(new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read))){
+    if(Encoding.ASCII.GetString(reader.ReadBytes(8))!="RDCTRAY4"||
+       reader.ReadUInt16()!=1||reader.ReadByte()!=keys.Length)
+     throw new InvalidDataException("RC1_TRAY_BUNDLE_HEADER");
+    for(int i=0;i<keys.Length;i++){
+     int nameLength=reader.ReadByte();
+     if(nameLength<1||nameLength>40)throw new InvalidDataException("RC1_TRAY_NAME_LENGTH");
+     string name=Encoding.ASCII.GetString(reader.ReadBytes(nameLength));
+     if(name!=keys[i])throw new InvalidDataException("RC1_TRAY_ASSET_ORDER");
+     int size=reader.ReadInt32();
+     if(size<100||size>1048576)throw new InvalidDataException("RC1_TRAY_ICON_BYTES");
+     byte[] ico=reader.ReadBytes(size);
+     if(ico.Length!=size||ico[0]!=0||ico[1]!=0||ico[2]!=1||ico[3]!=0||
+        ico[4]!=7||ico[5]!=0)throw new InvalidDataException("RC1_TRAY_ICON_FORMAT");
+     var backing=new MemoryStream(ico,false);
+     streams.Add(backing);
+     // Use the actual Windows notification-area small-icon metric (16px
+     // at 100%, commonly 20/24px at higher DPI), not a default 32px HICON.
+     icons.Add(name,new Icon(backing,SystemInformation.SmallIconSize));
+    }
+    if(reader.BaseStream.Position!=reader.BaseStream.Length)
+     throw new InvalidDataException("RC1_TRAY_BUNDLE_EXTRA_BYTES");
+   }
+   animate=MotionEnabled();
+   nextMotionQueryUtc=DateTime.UtcNow.AddSeconds(5);
+  }catch{Dispose();throw;}
+ }
+ public static string Semantic(string connection,string activity) {
+  // Source is the authoritative sanitized Remote supervisor snapshot.
+  // Fault and disconnected override any stale tool activity.
+  if(connection=="Fault")return "fault";
+  if(connection=="Connecting"||connection=="Reconnecting")return "connecting";
+  if(connection=="AuthPending")return "auth";
+  // Mirror the divider: both real tool execution and the shared
+  // bounded inter-call hold keep the purple tray animation active.
+  if(connection=="Ready")return (activity=="working"||activity=="hold")?"working":"ready";
+  return "offline";
+ }
+ // Display only: a quiet live owned session is not a confirmed Ready
+ // state, nor evidence of actual recovery. Explicit negative events win.
+ public static bool IsQuietWaiting(string state,string detail,string ownership,string processAlive){
+  return state=="Reconnecting" &&
+   detail=="Remote channel unconfirmed; awaiting new connectivity evidence" &&
+   ownership=="Owned" && processAlive=="observed_alive";
+ }
+ public static string DisplaySemantic(string state,string detail,string ownership,string processAlive,string activity){
+  return IsQuietWaiting(state,detail,ownership,processAlive)?Semantic("Ready",activity):Semantic(state,activity);
+ }
+ static string SwapFrame(string prefix,bool motion,long elapsedMs){
+  if(!motion)return prefix+"-a";
+  // Approved ICO sequence: A 680ms, 25/50/75% 40ms each, B 680ms,
+  // then the same intermediate frames in reverse order. Period 1600ms.
+  long position=elapsedMs%(2*SwapMs);
+  if(position<680)return prefix+"-a";
+  if(position<720)return prefix+"-mix-25";
+  if(position<760)return prefix+"-mix-50";
+  if(position<800)return prefix+"-mix-75";
+  if(position<1480)return prefix+"-b";
+  if(position<1520)return prefix+"-mix-75";
+  if(position<1560)return prefix+"-mix-50";
+  return prefix+"-mix-25";
+ }
+ public static string Frame(string state,bool motion,long elapsedMs) {
+  if(state=="connecting")return SwapFrame("connecting",motion,elapsedMs);
+  if(state=="auth")return SwapFrame("authorization",motion,elapsedMs);
+  if(state=="working"){
+   // Exact approved 1800ms sequence: static frame plus 35 animation frames.
+   // Reduced motion uses the specifically supplied static fallback.
+   if(!motion)return "working-static";
+   int index=(int)((elapsedMs%WorkPulseMs)/50);
+   return index==0?"working-static":"working-"+index.ToString("D2");
+  }
+  if(state=="ready")return "ready";
+  if(state=="fault")return "connection-error";
+  return "disconnected";
+ }
+ static string ShortStatus(string state,IDictionary<string,string> labels){
+  switch(state){
+   case "connecting":return UiText(labels,"tray.status.connecting","Подключение");
+   case "auth":return UiText(labels,"tray.status.authenticating","Авторизация");
+   case "ready":return UiText(labels,"tray.status.ready","Готов к работе");
+   case "working":return UiText(labels,"tray.status.working","Выполнение");
+   case "fault":return UiText(labels,"tray.status.connectionError","Ошибка соединения");
+   default:return UiText(labels,"tray.status.disconnected","Отключён");
+  }
+ }
+ void UpdateCaption(){
+  // Do not translate source status codes, icon keys or the animation gate.
+  string tipStatus=lastConnectionSemantic=="working" && lastActivity=="hold"
+   ?UiText(displayStrings,"tray.status.waitingForCall","Ожидание следующего вызова")
+   :ShortStatus(lastConnectionSemantic,displayStrings);
+  string middle=remainingPercent.HasValue?
+   remainingPercent.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)+"%":"--%";
+  // The percentage is always between the same two separators.
+  // Fake mode is part of status, not a third separator.
+  string fakePrefix=lastFake?
+   UiText(displayStrings,"tray.status.testPrefix","Тест | ").Replace(" | ",": "):"";
+  string tip="RDC Relay | "+middle+" | "+fakePrefix+tipStatus;
+  // NotifyIcon.Text is limited to 63 characters by WinForms.
+  if(tip!=shownTip){
+   tray.Text=tip.Length<=63?tip:tip.Substring(0,63);
+   shownTip=tip;
+  }
+ }
+ public void Update(Dictionary<string,object> snapshot){
+  if(disposed||snapshot==null)return;
+  string connection=snapshot.ContainsKey("state")?
+   Convert.ToString(snapshot["state"]):"Disconnected";
+  string activity=snapshot.ContainsKey("toolActivity")?
+   Convert.ToString(snapshot["toolActivity"]):"idle";
+  string detail=snapshot.ContainsKey("status")?Convert.ToString(snapshot["status"]):"";
+  string ownership=snapshot.ContainsKey("ownership")?Convert.ToString(snapshot["ownership"]):"";
+  string alive=snapshot.ContainsKey("processAlive")?Convert.ToString(snapshot["processAlive"]):"";
+
+  string next=DisplaySemantic(connection,detail,ownership,alive,activity);
+  if(phaseGate.Update(next,animate,phase.ElapsedMilliseconds))phase.Restart();
+  Advance();
+  // Display-only render from the last verified supervisor snapshot.
+  // Changing language never resets the phase clock or redraws icon frames.
+  lastConnectionSemantic=next;
+  lastActivity=activity;
+  lastFake=snapshot.ContainsKey("fake")&&Convert.ToBoolean(snapshot["fake"]);
+  hasLastSnapshot=true;
+  UpdateCaption();
+ }
+ public void Advance(){
+  if(disposed || String.IsNullOrEmpty(phaseGate.Visible))return;
+  if(DateTime.UtcNow>=nextMotionQueryUtc){
+   bool nextMotion=MotionEnabled();
+   if(nextMotion!=animate){animate=nextMotion;phase.Restart();}
+   nextMotionQueryUtc=DateTime.UtcNow.AddSeconds(5);
+  }
+  // Only the decorative frame is deferred. At every complete animation
+  // boundary the latest Host snapshot wins, not the first queued signal.
+  if(phaseGate.Advance(animate,phase.ElapsedMilliseconds))phase.Restart();
+  string frame=Frame(phaseGate.Visible,animate,phase.ElapsedMilliseconds);
+  if(frame!=shownFrame){
+   Icon icon;
+   if(!icons.TryGetValue(frame,out icon))throw new InvalidDataException("RC1_TRAY_FRAME_MISSING");
+   tray.Icon=icon;
+   shownFrame=frame;
+  }
+ }
+ public void Dispose(){
+  if(disposed)return;
+  disposed=true;
+  foreach(var icon in icons.Values)try{icon.Dispose();}catch{}
+  icons.Clear();
+  foreach(var stream in streams)try{stream.Dispose();}catch{}
+  streams.Clear();
+ }
+}

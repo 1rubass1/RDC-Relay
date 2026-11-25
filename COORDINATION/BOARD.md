@@ -1,5 +1,8 @@
 # RDC Relay — coordination board
 
+**2026-11-25 — RELEASE 1.6.0 PUBLISHED; post-release consolidation.** Owner and Architect GO; independent REV-R2-007 closed both remaining findings. Public tag v1.6.0 c5192a7, main/stable d2b78f3, both feeds active. Exact public assets downloaded and verified; live 1.5.18 updater delivered all 11 bridge files and accepted public Setup bytes. See [release evidence](../docs/dev/planning/V1-6-0-RELEASE-INSTALLER-INTEGRATION.md). Real reboot and further abrupt interruptions deferred by owner; live GUI click-to-Setup and complete OneDrive lifecycle not tested. No new feature implementation. Historical RC1 NO-GO entries below are superseded by publication, not current gates. Preserve current deferred monitor defect and future technical-debt/PowerShell assessment.
+
+
 ## 2026-11-25 — BUG-UI-MONITOR-001: геометрия окна и GPU-эффекта при переносе между мониторами
 
 **Статус: deferred / требуется воспроизведение на актуальной версии.** Источник: непосредственное наблюдение владельца на **v1.5.18**. На v1.6.0 дефект пока не подтверждён и не считается релизным блокером. Исправление не начато.
