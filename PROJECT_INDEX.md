@@ -15,6 +15,7 @@
 - [DECISIONS.md](DECISIONS.md) — substantial adopted decisions and open proposals.
 - [Development knowledge index](docs/dev/README.md) — categorized documents.
 
+- [Повторное ревью исправлений e8902a1](docs/dev/reviews/REV-R2-006-PUBLIC-CORRECTIVE.md) — 183/183, два остаточных сценария, NO-GO.
 - [Предрелизное ревью 1.6.0](docs/dev/reviews/REV-R2-005-PUBLIC-PREFLIGHT.md) — публичный кандидат a6580eb, NO-GO, четыре замечания.
 - [Reviewer 2 buffered-observer review](docs/dev/reviews/REV-R2-004-BUFFERED-F41B3D1.md) — f41b3d1 and exact private package: five R3 criteria PASS; release NO-GO pending remaining acceptance.
 - [Reviewer 2 readiness follow-up review](docs/dev/reviews/REV-R2-003-READINESS-1E59DE4.md) — 1e59de4: prior two defects closed, new partial-line observer regression.
