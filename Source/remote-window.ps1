@@ -356,7 +356,7 @@ function Ensure-InstalledAppRegistration {
         $key.SetValue('Publisher','RUBASS',[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('InstallLocation',$root,[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('DisplayIcon',$iconPath,[Microsoft.Win32.RegistryValueKind]::String)
-        $key.SetValue('URLInfoAbout','https://github.com/1rubass1/RDC-Relay',[Microsoft.Win32.RegistryValueKind]::String)
+        $key.SetValue('URLInfoAbout','https://github.com/Rubo-Facility/RDC-Relay',[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('UninstallString',$uninstall,[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('QuietUninstallString',$uninstall+' -Silent',[Microsoft.Win32.RegistryValueKind]::String)
         $key.SetValue('NoModify',1,[Microsoft.Win32.RegistryValueKind]::DWord)
