@@ -1016,6 +1016,8 @@ public sealed class RdcOwnerRuntime : IDisposable {
  bool managedExitReported=false,managedCaptureSummaryReported=false;
  bool managedAuthPendingObserved=false,managedLaunchRollback=false;
  string[] managedPrerequisiteObservations;
+ string[] managedAttemptSummary;
+ string managedCompletionKind="unknown";
  // Logout is a separate, bounded private Job; never execute in the GUI or
  // borrow the running Remote's process tree or credential files.
  RdcOwnerManagedProcess accountLogoutProcess=null;
@@ -1883,6 +1885,9 @@ void RefreshTrayMenu(){
     }else{
      var reason=problem.Message=="RC1_PINNED_NPX_MISSING"?
       RdcOwnerPreflightFailure.RuntimeUnavailable:RdcOwnerPreflightFailure.InspectionFailed;
+     var preflightInfo=new RdcOwnerFailedSessionInfo{PreflightFailure=reason,PrerequisiteObservations=observations.ToArray()};
+     managedCompletionKind=RdcOwnerCompletionDiagnostics.Classify(false,preflightInfo);
+     managedAttemptSummary=RdcOwnerLogSessions.AttemptDiagnostics("preflight_failed",false,preflightInfo);
      using(var store=new RdcOwnerLogSessions(logRoot))
       store.RecordPreflightFailure(reason,observations.ToArray());
      Append("remote","preflight failure report saved");
@@ -1907,6 +1912,9 @@ void RefreshTrayMenu(){
   managedExitReported=false;managedCaptureSummaryReported=false;
   managedAuthPendingObserved=false;managedLaunchRollback=false;
   managedPrerequisiteObservations=observations;
+  managedCompletionKind="unknown";
+  managedAttemptSummary=RdcOwnerLogSessions.AttemptDiagnostics("starting",false,
+   new RdcOwnerFailedSessionInfo{PrerequisiteObservations=observations});
   RdcOwnerLogSessions sessions=null;
   RdcOwnerLogParts sink=null;
   bool began=false;
@@ -1932,6 +1940,9 @@ void RefreshTrayMenu(){
   }catch{
    // A failure after spawn must never abandon an untracked private Job.
    if(!child.HasStarted){
+    var launchInfo=new RdcOwnerFailedSessionInfo{LaunchFailed=true,PrerequisiteObservations=managedPrerequisiteObservations};
+    managedCompletionKind="launch_failed";
+    managedAttemptSummary=RdcOwnerLogSessions.AttemptDiagnostics("launch_failed",false,launchInfo);
     try{if(sink!=null)sink.Dispose();if(sessions!=null&&began)sessions.FinalizeCurrentWithDiagnostics(new RdcOwnerFailedSessionInfo{LaunchFailed=true,PrerequisiteObservations=managedPrerequisiteObservations});}
     finally{if(sessions!=null)sessions.Dispose();child.Dispose();}
     throw;
@@ -1974,7 +1985,10 @@ void RefreshTrayMenu(){
     " stop_requested="+(managedProcess.StopRequested?"yes":"no")+" accepted_session="+(managedSessionAccepted?"yes":"no"));
    var completionInfo=new RdcOwnerFailedSessionInfo{CmdExit=exitCode,StopRequested=managedProcess.StopRequested,
     AuthPendingObserved=managedAuthPendingObserved,LaunchFailed=managedLaunchRollback};
-   Append("remote","completion_kind="+RdcOwnerCompletionDiagnostics.Classify(managedSessionAccepted,completionInfo));
+   managedCompletionKind=RdcOwnerCompletionDiagnostics.Classify(managedSessionAccepted,completionInfo);
+   completionInfo.PrerequisiteObservations=managedPrerequisiteObservations;
+   managedAttemptSummary=RdcOwnerLogSessions.AttemptDiagnostics("completed",managedSessionAccepted,completionInfo);
+   Append("remote","completion_kind="+managedCompletionKind);
    managedExitReported=true;
   }
   int remaining=(int)Math.Max(0,timeoutMs-wait.ElapsedMilliseconds);
@@ -2004,6 +2018,7 @@ void RefreshTrayMenu(){
    failureInfo.StorageFault=managedLogPump.StorageFault;
    failureInfo.ParserFault=managedLogPump.ParserFault||managedParserFault;
   }
+  managedAttemptSummary=RdcOwnerLogSessions.AttemptDiagnostics("completed",managedSessionAccepted,failureInfo);
   managedLogSessions.FinalizeCurrentWithDiagnostics(failureInfo);managedLogSessions.Dispose();
   managedLogSessions=null;managedLogPump=null;managedSessionAccepted=false;
  }
@@ -2528,7 +2543,9 @@ void RefreshTrayMenu(){
   return new Dictionary<string,object>{
    {"hostPid",hostPid},{"hostGeneration",generation},{"hostTicks",hostBorn},
    {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":managedMode?"MANAGED_OWNER_RC1":"FAKE_ONLY_RC1"},{"remoteId",remoteSupervisor.SessionId},
-   {"remote",observed},{"remoteConnected",(managedMode||observedMode) && (string)observed["state"]=="Ready"},
+   {"remote",observed},{"remoteCompletionKind",managedMode?(managedCompletionKind??"unknown"):"unknown"},
+   {"remoteAttemptDiagnostics",managedMode?(managedAttemptSummary??new string[0]):new string[0]},
+   {"remoteConnected",(managedMode||observedMode) && (string)observed["state"]=="Ready"},
    {"account",observedMode?"Existing Remote / read-only":managedMode?"RC1 Host-owned Remote":"DEMO: disabled"},
    {"remoteBornUtcTicks",managedMode?managedBornUtcTicks:0L},
    {"remoteStartupArt",managedMode?String.Join("\n",managedBannerArt.ToArray()):""},
