@@ -855,7 +855,7 @@ public static class RdcOwnerTrayAutoUpdatePreference {
  // normal poll, never an authorization or failure backoff.
  public sealed class RdcOwnerQuotaRefreshPolicy {
   public const long MinimumGapSeconds=300,NormalSeconds=1800,FailureSeconds=900;
-  string account="";
+  string account="",attemptAccount="";
   long nextAllowed=0,nextDue=0,lastOpen=-1;
   bool enabledBefore=false,openPending=false,attemptOutstanding=false;
   readonly HashSet<string> consentTried=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -882,14 +882,26 @@ public static class RdcOwnerTrayAutoUpdatePreference {
     if(canAuthorize){consentTried.Add(account);mode="-Authorize";}
    }else mode="-Poll";
    if(mode=="")return "";
-   nextAllowed=now+MinimumGapSeconds;nextDue=now+NormalSeconds;openPending=false;attemptOutstanding=true;
+   nextAllowed=now+MinimumGapSeconds;nextDue=now+NormalSeconds;openPending=false;attemptOutstanding=true;attemptAccount=account;
    return mode;
   }
   public void Complete(long now,bool success){
    if(!attemptOutstanding)return;
    attemptOutstanding=false;
-   nextDue=now+(success?NormalSeconds:FailureSeconds);
+   if(String.Equals(account,attemptAccount,StringComparison.OrdinalIgnoreCase))nextDue=now+(success?NormalSeconds:FailureSeconds);
    if(!success){nextAllowed=Math.Max(nextAllowed,now+FailureSeconds);openPending=false;}
+  }
+ }
+ public sealed class RdcOwnerQuotaCacheObservation {
+  public readonly string State;
+  public readonly int? Percent;
+  public readonly DateTime ObservedUtc;
+  internal RdcOwnerQuotaCacheObservation(string state,int? percent,DateTime observed){
+   State=state;Percent=percent;ObservedUtc=observed;
+  }
+  public bool Fresh(DateTime nowUtc,int minutes){
+   double age=(nowUtc.ToUniversalTime()-ObservedUtc).TotalMinutes;
+   return State=="match"&&age>=-2&&age<minutes;
   }
  }
  public static class RdcOwnerTrayQuotaSnapshot {
@@ -897,41 +909,67 @@ public static class RdcOwnerTrayAutoUpdatePreference {
    get{return Path.Combine(Environment.GetFolderPath(
     Environment.SpecialFolder.LocalApplicationData),"RDCRelayOwnerPilot","remote-usage-cache.json");}
   }
-  public static int? Read(string path,string account,DateTime nowUtc){return ReadWithin(path,account,nowUtc,60);}
-  public static int? ReadWithin(string path,string account,DateTime nowUtc,int maxMinutes){
-   if(String.IsNullOrWhiteSpace(path)||String.IsNullOrWhiteSpace(account))return null;
+  static RdcOwnerQuotaCacheObservation Empty(string state){
+   return new RdcOwnerQuotaCacheObservation(state,null,DateTime.MinValue);
+  }
+  public static string VaultState(string path){
    try{
-    var f=new FileInfo(path);
-    if(!f.Exists||f.Length<40||f.Length>512||
-       (f.Attributes&FileAttributes.ReparsePoint)!=0)return null;
+    string folder=Path.GetDirectoryName(Path.GetFullPath(path));
+    if((File.GetAttributes(folder)&FileAttributes.ReparsePoint)!=0)return "unknown";
+    var attrs=File.GetAttributes(path);
+    if((attrs&(FileAttributes.Directory|FileAttributes.ReparsePoint))!=0)return "unknown";
+    return "present"; // do not read or decrypt credentials in Host
+   }catch(FileNotFoundException){return "missing";}
+    catch(DirectoryNotFoundException){return "missing";}
+    catch{return "unknown";}
+  }
+  public static RdcOwnerQuotaCacheObservation Inspect(string path,string account,DateTime nowUtc){
+   if(String.IsNullOrWhiteSpace(path)||String.IsNullOrWhiteSpace(account))return Empty("unknown");
+   try{
     string folder=Path.GetDirectoryName(Path.GetFullPath(path));
     if(String.IsNullOrEmpty(folder)||
-       (File.GetAttributes(folder)&FileAttributes.ReparsePoint)!=0)return null;
-    byte[] bytes=File.ReadAllBytes(path);
-    if(bytes.Length<40||bytes.Length>512)return null; // file can change after FileInfo
+       (File.GetAttributes(folder)&FileAttributes.ReparsePoint)!=0)return Empty("unknown");
+    var attrs=File.GetAttributes(path);
+    if((attrs&(FileAttributes.Directory|FileAttributes.ReparsePoint))!=0)return Empty("unknown");
+    byte[] bytes;
+    using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read|FileShare.Delete)){
+     if(stream.Length<40||stream.Length>512)return Empty("unknown");
+     bytes=new byte[(int)stream.Length];
+     int offset=0;
+     while(offset<bytes.Length){int n=stream.Read(bytes,offset,bytes.Length-offset);if(n==0)return Empty("unknown");offset+=n;}
+     if(stream.ReadByte()!=-1)return Empty("unknown");
+    }
     string json=new UTF8Encoding(false,true).GetString(bytes);
-    var values=new System.Web.Script.Serialization.JavaScriptSerializer().
+    var values=new System.Web.Script.Serialization.JavaScriptSerializer{MaxJsonLength=512,RecursionLimit=8}.
       Deserialize<Dictionary<string,object>>(json);
     if(values==null||!values.ContainsKey("source")||
        !String.Equals(Convert.ToString(values["source"]),"official-remote-who-am-i",StringComparison.Ordinal)||
        !values.ContainsKey("accountEmail")||
-       !String.Equals(Convert.ToString(values["accountEmail"]),account.Trim(),StringComparison.OrdinalIgnoreCase)||
-       !values.ContainsKey("remainingPercent")||!values.ContainsKey("observedAtUtc"))return null;
+       !values.ContainsKey("remainingPercent")||!values.ContainsKey("observedAtUtc"))return Empty("unknown");
+    string email=values["accountEmail"] as string;
+    if(!System.Text.RegularExpressions.Regex.IsMatch(email??"",
+       @"\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z"))return Empty("unknown");
     int percent;
     if(!Int32.TryParse(Convert.ToString(values["remainingPercent"],
        System.Globalization.CultureInfo.InvariantCulture),
        System.Globalization.NumberStyles.None,
        System.Globalization.CultureInfo.InvariantCulture,out percent)||
-       percent<0||percent>100)return null;
+       percent<0||percent>100)return Empty("unknown");
     DateTime observed;
     if(!DateTime.TryParseExact(Convert.ToString(values["observedAtUtc"]),
        "yyyy-MM-ddTHH:mm:ssZ",System.Globalization.CultureInfo.InvariantCulture,
        System.Globalization.DateTimeStyles.AssumeUniversal|
-       System.Globalization.DateTimeStyles.AdjustToUniversal,out observed))return null;
-    double age=(nowUtc.ToUniversalTime()-observed).TotalMinutes;
-    if(age < -2 || age >= maxMinutes)return null;
-    return percent;
-   }catch{return null;}
+       System.Globalization.DateTimeStyles.AdjustToUniversal,out observed)||
+       (nowUtc.ToUniversalTime()-observed).TotalMinutes < -2)return Empty("unknown");
+    if(!String.Equals(email,account.Trim(),StringComparison.OrdinalIgnoreCase))return Empty("other");
+    return new RdcOwnerQuotaCacheObservation("match",percent,observed);
+   }catch(FileNotFoundException){return Empty("missing");}
+    catch(DirectoryNotFoundException){return Empty("missing");}
+    catch{return Empty("unknown");}
+  }
+  public static int? Read(string path,string account,DateTime nowUtc){
+   var observation=Inspect(path,account,nowUtc);
+   return observation.Fresh(nowUtc,60)?observation.Percent:null;
   }
  }
 // Hidden top-level (not message-only) Host window: Windows broadcasts
