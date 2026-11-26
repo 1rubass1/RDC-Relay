@@ -46,7 +46,7 @@ public static class TestV161FailedSessionReport {
     foreach(string child in Directory.GetFileSystemEntries(entry)){
      var a=File.GetAttributes(child);
      if((a&(FileAttributes.Directory|FileAttributes.ReparsePoint))!=0||
-        !Regex.IsMatch(Path.GetFileName(child),@"\A(\.rdc-(session|accepted)-v1|\.rdc-failed-report-v1\.tmp|\d{4}-\d{2}-\d{2}_part-\d+\.log)\z"))
+        !Regex.IsMatch(Path.GetFileName(child),@"\A(\.rdc-(session|accepted|unexpected)-v1|\.rdc-failed-report-v1\.tmp|\d{4}-\d{2}-\d{2}_part-\d+\.log)\z"))
       throw new Exception("FIXTURE_FOREIGN_MEMBER");
      File.Delete(child);
     }
@@ -127,6 +127,40 @@ public static class TestV161FailedSessionReport {
     store.RecordPreflightFailure(RdcOwnerPreflightFailure.InspectionFailed,null);
     Check(Text(failed).Contains("preflight_reason=inspection_failed")&&Text(failed).Contains("prerequisite_observations=unknown"),"inspection failure distinct from missing components");
     Check(Directory.GetDirectories(root).Select(Path.GetFileName).SequenceEqual(new[]{"PreviousSession"}),"no failed session directory left");
+    var beforeReady=new RdcOwnerFailedSessionInfo{CmdExit=0,StopRequested=false};
+    Check(RdcOwnerCompletionDiagnostics.Classify(false,beforeReady)=="exit_before_ready","zero exit without Ready or Stop remains unsuccessful");
+    Check(RdcOwnerCompletionDiagnostics.Classify(true,beforeReady)=="unexpected_after_ready","zero exit after Ready without Stop is unexpected");
+    Check(RdcOwnerCompletionDiagnostics.Classify(false,new RdcOwnerFailedSessionInfo{CmdExit=0,StopRequested=true,AuthPendingObserved=true})=="authorization_stop_requested","stop during observed authorization distinguished");
+    Check(RdcOwnerCompletionDiagnostics.Classify(false,new RdcOwnerFailedSessionInfo{CmdExit=0,StopRequested=true})=="startup_stop_requested","stop before Ready without authorization evidence distinguished");
+    Check(RdcOwnerCompletionDiagnostics.Classify(true,new RdcOwnerFailedSessionInfo{CmdExit=0,StopRequested=true})=="stop_requested_after_ready","requested Stop after Ready distinguished");
+    Check(RdcOwnerCompletionDiagnostics.Classify(true,new RdcOwnerFailedSessionInfo{StopRequested=false})=="unknown","unverified completion remains unknown");
+    var goodBeforeUnexpected=Read(Directory.GetFiles(previous,"*.log").Single());
+    Begin(store,new byte[]{44,45},true);
+    store.FinalizeCurrentWithDiagnostics(beforeReady);
+    Check(Text(failed).Contains("completion_kind=unexpected_after_ready")&&Text(failed).Contains("accepted_session=yes")&&Same(Raw(failed),new byte[]{44,45}),"unexpected accepted session retained as failed report");
+    Check(Same(goodBeforeUnexpected,Read(Directory.GetFiles(previous,"*.log").Single())),"unexpected after Ready does not replace last successful session");
+    var lastUnexpected=Read(failed);
+    Begin(store,new byte[]{46,47},true);
+    store.FinalizeCurrentWithDiagnostics(new RdcOwnerFailedSessionInfo{CmdExit=0,StopRequested=true});
+    Check(Same(lastUnexpected,Read(failed))&&Same(Read(Directory.GetFiles(previous,"*.log").Single()),new byte[]{46,47}),"requested Stop retains normal successful rotation");
+    Begin(store,new byte[]{48,49},true);
+    using(var locked=new FileStream(failed,FileMode.Open,FileAccess.Read,FileShare.Read)){
+     Check(Refused(()=>store.FinalizeCurrentWithDiagnostics(beforeReady)),"unexpected report blocked safely by locked destination");
+     Check(File.Exists(Path.Combine(current,".rdc-unexpected-v1"))&&Same(lastUnexpected,Read(failed)),"unexpected decision durable before publication");
+    }
+    // Leave the transaction incomplete, as if Host exited after recording it.
+   }
+   using(var store=new RdcOwnerLogSessions(root)){
+    store.Recover();
+    Check(Text(failed).Contains("completion_kind=unexpected_after_ready")&&Text(failed).Contains("cmd_exit=unknown")&&Same(Raw(failed),new byte[]{48,49}),"recovery retains unexpected category without inventing lost exit code");
+    Check(Same(Read(Directory.GetFiles(previous,"*.log").Single()),new byte[]{46,47}),"recovery does not overwrite successful previous");
+    // Model interruption after publication and accepted marker removal.
+    Directory.CreateDirectory(current);
+    string id=Text(failed).Split('\n')[0].Substring("RDC-LAST-UNSUCCESSFUL-V1:".Length);
+    File.WriteAllText(Path.Combine(current,".rdc-session-v1"),"RDC-LOG-SESSION-V1:"+id,Encoding.ASCII);
+    File.WriteAllText(Path.Combine(current,".rdc-unexpected-v1"),"RDC-LOG-SESSION-V1:"+id,Encoding.ASCII);
+    var saved=Read(failed);store.Recover();
+    Check(Same(saved,Read(failed))&&!Directory.Exists(current),"partial cleanup after unexpected publication is idempotent");
    }
    Console.WriteLine("RDC_V161_FAILED_REPORT_PASS="+pass);
    return 0;
