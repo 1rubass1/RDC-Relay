@@ -19,6 +19,17 @@ public static class TestV160MonitorGeometry {
  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd,out RECT r);
  [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr hwnd);
  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+ [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+ static string PhysicalBounds(IntPtr handle){
+  IntPtr prior=IntPtr.Zero;
+  try{
+   prior=SetThreadDpiAwarenessContext(new IntPtr(-4));
+   RECT r;
+   if(prior==IntPtr.Zero||!GetWindowRect(handle,out r))return "unknown";
+   return (r.R-r.L)+"x"+(r.B-r.T);
+  }catch{return "unknown";}
+  finally{if(prior!=IntPtr.Zero)SetThreadDpiAwarenessContext(prior);}
+ }
  sealed class ProbeForm:Form{
   protected override bool ShowWithoutActivation {get{return true;}}
   protected override CreateParams CreateParams{
@@ -47,6 +58,7 @@ public static class TestV160MonitorGeometry {
  static void Inspect(ProbeForm form,RdcGpuDividerHost host,Screen screen,int height,string label){
   Check(form.Width==1074&&form.Height==Math.Min(height,screen.WorkingArea.Height),label+" window fixed-width and requested height");
   Check(Screen.FromHandle(form.Handle).DeviceName==screen.DeviceName,label+" target monitor");
+  Console.WriteLine("PHYSICAL "+label+" form="+PhysicalBounds(form.Handle)+" logical="+form.Width+"x"+form.Height);
   RECT anchor,popup;
   var hwnd=(IntPtr)Field(host,"particlePopupHwnd");
   if(hwnd==IntPtr.Zero||!GetWindowRect(host.Handle,out anchor)||!GetWindowRect(hwnd,out popup)){
