@@ -82,6 +82,7 @@ public static class TestV161FailedSessionReport {
     }
     store.FinalizeCurrent();
     Check(Same(Raw(failed),new byte[]{0,255,13,10,4}),"retry replaces report with original binary bytes");
+    Check(RdcOwnerLogSessions.FailedRawLimit==1024*1024,"owner-approved 1 MiB raw limit");
     byte[] big=new byte[RdcOwnerLogSessions.FailedRawLimit+31];
     for(int i=0;i<big.Length;i++)big[i]=(byte)(i%251);
     Begin(store,big,false);store.FinalizeCurrent();
@@ -108,6 +109,23 @@ public static class TestV161FailedSessionReport {
     Check(Refused(()=>store.FinalizeCurrent())&&Text(failed)=="foreign"&&Directory.Exists(current),"foreign destination never overwritten");
     File.Delete(failed);store.FinalizeCurrent();
     Check(Same(Raw(failed),new byte[]{11}),"retry succeeds when fixture obstruction removed");
+    var knownGood=Read(Directory.GetFiles(previous,"*.log").Single());
+    store.RecordPreflightFailure(RdcOwnerPreflightFailure.RuntimeUnavailable,new[]{
+     "runtime ProgramFiles: node=missing npm=missing npx=missing",
+     "runtime ProgramFiles: npm-cli=missing npx-cli=missing",
+     "runtime AppDataNpm: node=unsupported(22.11.0.0) npm=present npx=present",
+     "runtime AppDataNpm: npm-cli=present npx-cli=missing",
+     "runtime ProgramFilesX86: check_unknown",
+     "runtime ProgramFiles: node=private_path npm=present npx=present"
+    });
+    string preflight=Text(failed);
+    Check(preflight.Contains("completion=preflight_failed")&&preflight.Contains("preflight_reason=runtime_unavailable")&&
+     preflight.Contains("cmd_exit=unknown stop_requested=unknown")&&Raw(failed).Length==0,"preflight report without creating a process or raw output");
+    Check(preflight.Contains("node=missing npm=missing npx=missing")&&preflight.Contains("node=unsupported(22.11.0.0)")&&
+     preflight.Contains("npx-cli=missing")&&preflight.Contains("ProgramFilesX86: check_unknown"),"missing incompatible and unknown components explicit");
+    Check(!preflight.Contains("private_path")&&Same(knownGood,Read(Directory.GetFiles(previous,"*.log").Single())),"reject arbitrary diagnostic text and preserve previous");
+    store.RecordPreflightFailure(RdcOwnerPreflightFailure.InspectionFailed,null);
+    Check(Text(failed).Contains("preflight_reason=inspection_failed")&&Text(failed).Contains("prerequisite_observations=unknown"),"inspection failure distinct from missing components");
     Check(Directory.GetDirectories(root).Select(Path.GetFileName).SequenceEqual(new[]{"PreviousSession"}),"no failed session directory left");
    }
    Console.WriteLine("RDC_V161_FAILED_REPORT_PASS="+pass);
