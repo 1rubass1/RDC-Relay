@@ -67,10 +67,9 @@ Check ($window.Contains('$quotaAuthItem.CheckOnClick=[bool]$OwnerGui') -and
  $window.Contains('Set-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath $enabled')) 'Account menu persists standard checkbox'
 Check ($gui.Contains('$quotaAuthItem.Checked=[bool](Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath)') -and
  $gui.Contains('$quotaDisplayEnabled=Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath')) 'GUI restores default ON and disables cached display when unchecked'
-Check ($hostCode.Contains("$"+'mode='+ "'-Authorize'") -and
- $hostCode.Contains('$quotaAutoTried.ContainsKey') -and
- $hostCode.Contains('$quotaNextPollUtc=[DateTime]::UtcNow.AddMinutes(30)') -and
- $hostCode.Contains('$quotaTimer.Interval=15000')) 'original owned-account auto OAuth and 30m polling schedule restored'
+Check ($hostCode.Contains('$script:quotaPolicy.Decide') -and
+ $hostCode.Contains('$script:quotaPollProcess=Start-Process') -and
+ $hostCode.Contains('$quotaTimer.Interval=15000')) 'one persistent Host scheduler owns authorization and polling'
 Check ($client.Contains('if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){return $false}') -and
  $client.Contains('Stop-Quota '+"'DISABLED'") -and
  $client.Contains("name='who_am_i'")) 'quota child respects OFF, otherwise original who_am_i remains'
@@ -82,13 +81,21 @@ $tickNodes=@($ast['rc1-tray-host.ps1'].FindAll({param($n)
 Check ($tickNodes.Count -eq 1) 'one real Host quota timer handler'
 if($tickNodes.Count -eq 1){
  $tick=& ([scriptblock]::Create($tickNodes[0].Extent.Text))
+ # Compile the exact production scheduler/cache classes, without Host or Remote.
+ $runtime=[IO.File]::ReadAllText((Join-Path $src 'RdcOwnerRuntime.cs'),[Text.Encoding]::UTF8)
+ $start=$runtime.IndexOf(' public static class RdcOwnerQuotaIdentity {',[StringComparison]::Ordinal)
+ $end=$runtime.IndexOf('// Hidden top-level',$start,[StringComparison]::Ordinal)
+ if($start -lt 0 -or $end -le $start){throw 'MISSING_QUOTA_POLICY_CLASSES'}
+ Add-Type -TypeDefinition ('using System;using System.IO;using System.Text;using System.Collections.Generic;'+$runtime.Substring($start,$end-$start)) -ReferencedAssemblies @('System.dll','System.Core.dll','System.Web.Extensions.dll')
  $hostState=Join-Path ([IO.Path]::GetTempPath()) ('RdcQuotaHostAuto-'+[Guid]::NewGuid().ToString('N'))
- $oldLocal=$env:LOCALAPPDATA
- $env:LOCALAPPDATA=$hostState
- $quotaDisplayPath=Join-Path $hostState 'RDCRelayOwnerPilot\quota-display.opt-in'
- $owner=[pscustomobject]@{ActiveManagedAccount='test@example.org'}
- $quotaPollProcess=$null;$quotaAutoTried=@{};$quotaLastAccount=''
- $quotaNextPollUtc=[DateTime]::MinValue
+ $quotaDisplayPath=Join-Path $hostState 'quota-display.opt-in'
+ $quotaCache=Join-Path $hostState 'remote-usage-cache.json'
+ $quotaVault=Join-Path $hostState 'quota-oauth-user.dpapi'
+ $owner=[pscustomobject]@{ActiveManagedAccount='test@example.org';QuotaManagedAccount='test@example.org';QuotaGuiOpenGeneration=1}
+ $script:quotaPollProcess=$null
+ $script:quotaPolicy=New-Object RdcOwnerQuotaRefreshPolicy
+ $script:quotaClock=[pscustomobject]@{Elapsed=[pscustomobject]@{TotalSeconds=0}}
+ $script:quotaAttemptAccount='';$script:quotaAttemptObserved=[DateTime]::MinValue
  $quotaScript='Z:\fake\quota-client.ps1'
  $script:mockCalls=0;$script:mockMode=''
  function Start-Process {
@@ -96,34 +103,51 @@ if($tickNodes.Count -eq 1){
   param([string]$FilePath,[string[]]$ArgumentList,[string]$WindowStyle,[switch]$PassThru)
   $script:mockCalls++
   $script:mockMode=if($ArgumentList -contains '-Authorize'){'-Authorize'}else{'-Poll'}
-  $fake=[pscustomobject]@{HasExited=$true}
+  $fake=[pscustomobject]@{HasExited=$false}
   Add-Member -InputObject $fake -MemberType ScriptMethod -Name Dispose -Value {}
   return $fake
  }
+ function Write-SyntheticQuota([DateTime]$observed){
+  $json=@{source='official-remote-who-am-i';accountEmail='test@example.org';remainingPercent=73;observedAtUtc=$observed.ToString('yyyy-MM-ddTHH:mm:ssZ')}|ConvertTo-Json -Compress
+  [IO.File]::WriteAllText($quotaCache,$json,(New-Object Text.UTF8Encoding($false)))
+ }
  try {
-  . $tick
-  Check ($script:mockCalls -eq 1 -and $script:mockMode -ceq '-Authorize') 'default ON: original Host initiates OAuth when no token'
-  . $tick
-  Check ($script:mockCalls -eq 1) '30m schedule prevents repeated authorization'
+  [IO.Directory]::CreateDirectory($hostState)|Out-Null
+  & $tick
+  Check ($script:mockCalls -eq 1 -and $script:mockMode -ceq '-Authorize') 'default ON retains initial Ready consent'
+  $script:quotaClock.Elapsed.TotalSeconds=15
+  & $tick
+  Check ($script:mockCalls -eq 1) 'separate timer invocation does not duplicate active worker'
+  [IO.File]::WriteAllText($quotaVault,'synthetic-presence-only')
+  Write-SyntheticQuota ([DateTime]::UtcNow)
+  $script:quotaPollProcess.HasExited=$true
+  & $tick
+  Check ($script:mockCalls -eq 1 -and -not $script:quotaPollProcess) 'finished worker cleared and successful cache observed'
+  Write-SyntheticQuota ([DateTime]::UtcNow.AddMinutes(-10))
+  $owner.ActiveManagedAccount=''
+  $owner.QuotaGuiOpenGeneration=2
+  $script:quotaClock.Elapsed.TotalSeconds=299
+  & $tick
+  Check ($script:mockCalls -eq 1) 'GUI reopen cannot bypass cooldown'
+  $script:quotaClock.Elapsed.TotalSeconds=300
+  & $tick
+  Check ($script:mockCalls -eq 2 -and $script:mockMode -ceq '-Poll') 'quiet owned identity refreshes on reopen without browser'
   Set-Rc1QuotaDisplayEnabled $quotaDisplayPath $false
-  . $tick
-  Check ($script:mockCalls -eq 1 -and $quotaNextPollUtc -eq [DateTime]::MinValue -and
-   $quotaAutoTried.Count -eq 0) 'explicit OFF stops scheduling and re-arms future consent'
+  $script:quotaClock.Elapsed.TotalSeconds=315
+  $script:quotaPollProcess.HasExited=$true
+  & $tick
+  Check ($script:mockCalls -eq 2) 'opt out prevents new work'
   Set-Rc1QuotaDisplayEnabled $quotaDisplayPath $true
-  . $tick
-  Check ($script:mockCalls -eq 2 -and $script:mockMode -ceq '-Authorize') 'recheck resumes original auto authorization if still missing'
-  $pilot=Join-Path $hostState 'RDCRelayOwnerPilot'
-  [IO.Directory]::CreateDirectory($pilot)|Out-Null
-  [IO.File]::WriteAllText((Join-Path $pilot 'quota-oauth-user.dpapi'),'synthetic-credential-present')
-  [IO.File]::WriteAllText((Join-Path $pilot 'remote-usage-cache.json'),
-    '{"source":"official-remote-who-am-i","accountEmail":"other@example.org"}')
-  $owner.ActiveManagedAccount='other@example.org'
-  . $tick
-  Check ($script:mockCalls -eq 3 -and $script:mockMode -ceq '-Poll') 'existing vault and matching account cache use ordinary poll'
+  $script:quotaClock.Elapsed.TotalSeconds=316
+  & $tick
+  Check ($script:mockCalls -eq 2) 'opt in cannot bypass failure backoff'
+  $script:quotaClock.Elapsed.TotalSeconds=1215
+  & $tick
+  Check ($script:mockCalls -eq 3 -and $script:mockMode -ceq '-Poll') 'ordinary poll resumes after backoff with existing grant'
  }finally {
   Remove-Item function:Start-Process -ErrorAction SilentlyContinue
-  $env:LOCALAPPDATA=$oldLocal
-  if([IO.Directory]::Exists($hostState)){[IO.Directory]::Delete($hostState,$true)}
+  foreach($file in @($quotaCache,$quotaVault,$quotaDisplayPath)){if([IO.File]::Exists($file)){[IO.File]::Delete($file)}}
+  if([IO.Directory]::Exists($hostState)){[IO.Directory]::Delete($hostState,$false)}
  }
 }
 # Exercise the actual GUI click handler. No browser double-spawn: the Host
