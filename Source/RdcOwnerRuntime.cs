@@ -838,12 +838,67 @@ public static class RdcOwnerTrayAutoUpdatePreference {
 }
  // Display-only read of the same short-lived official who_am_i cache as Owner GUI.
  // No OAuth, browser or Remote IPC calls. Account changes and invalid input fail closed.
+ // Quota account evidence is independent of transport readiness. Only the exact
+ // idle-lease transition with unchanged identity is permitted for existing grants.
+ public static class RdcOwnerQuotaIdentity {
+  public static string Select(bool owned,bool running,bool ending,bool switching,
+   string state,string detail,string account,string idleAccount,bool freshOnly){
+   if(!owned||!running||ending||switching)return "";
+   if(state!="Ready"&&(freshOnly||state!="Reconnecting"||
+      detail!="Remote channel unconfirmed; awaiting new connectivity evidence"||
+      !String.Equals(account,idleAccount,StringComparison.OrdinalIgnoreCase)))return "";
+   return System.Text.RegularExpressions.Regex.IsMatch(account??"",
+    @"\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z")?account:"";
+  }
+ }
+ // Host-only monotonic scheduler. An open-window hint can accelerate a
+ // normal poll, never an authorization or failure backoff.
+ public sealed class RdcOwnerQuotaRefreshPolicy {
+  public const long MinimumGapSeconds=300,NormalSeconds=1800,FailureSeconds=900;
+  string account="";
+  long nextAllowed=0,nextDue=0,lastOpen=-1;
+  bool enabledBefore=false,openPending=false,attemptOutstanding=false;
+  readonly HashSet<string> consentTried=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+  public string Decide(long now,bool enabled,string eligible,string ready,long openGeneration,
+    string cacheState,bool recent,bool vaultPresent,bool busy){
+   if(!enabled){
+    if(enabledBefore)consentTried.Clear();
+    enabledBefore=false;account="";openPending=false;nextDue=now;
+    lastOpen=openGeneration;return "";
+   }
+   if(!enabledBefore){enabledBefore=true;nextDue=now;}
+   if(!String.Equals(account,eligible,StringComparison.OrdinalIgnoreCase)){
+    account=eligible??"";nextDue=recent?now+NormalSeconds:now;openPending=false;
+   }
+   if(openGeneration!=lastOpen){lastOpen=openGeneration;openPending=true;}
+   if(String.IsNullOrEmpty(account)||busy||attemptOutstanding)return "";
+   if(recent)openPending=false;
+   if(now<nextAllowed||(now<nextDue&&!openPending))return "";
+   if(cacheState!="match"&&cacheState!="missing"&&cacheState!="other")return "";
+   bool canAuthorize=now>=nextDue&&String.Equals(account,ready,StringComparison.OrdinalIgnoreCase)&&
+    !consentTried.Contains(account)&&consentTried.Count<128;
+   string mode="";
+   if(!vaultPresent||cacheState=="other"){
+    if(canAuthorize){consentTried.Add(account);mode="-Authorize";}
+   }else mode="-Poll";
+   if(mode=="")return "";
+   nextAllowed=now+MinimumGapSeconds;nextDue=now+NormalSeconds;openPending=false;attemptOutstanding=true;
+   return mode;
+  }
+  public void Complete(long now,bool success){
+   if(!attemptOutstanding)return;
+   attemptOutstanding=false;
+   nextDue=now+(success?NormalSeconds:FailureSeconds);
+   if(!success){nextAllowed=Math.Max(nextAllowed,now+FailureSeconds);openPending=false;}
+  }
+ }
  public static class RdcOwnerTrayQuotaSnapshot {
   public static string CachePath {
    get{return Path.Combine(Environment.GetFolderPath(
     Environment.SpecialFolder.LocalApplicationData),"RDCRelayOwnerPilot","remote-usage-cache.json");}
   }
-  public static int? Read(string path,string account,DateTime nowUtc){
+  public static int? Read(string path,string account,DateTime nowUtc){return ReadWithin(path,account,nowUtc,60);}
+  public static int? ReadWithin(string path,string account,DateTime nowUtc,int maxMinutes){
    if(String.IsNullOrWhiteSpace(path)||String.IsNullOrWhiteSpace(account))return null;
    try{
     var f=new FileInfo(path);
@@ -874,7 +929,7 @@ public static class RdcOwnerTrayAutoUpdatePreference {
        System.Globalization.DateTimeStyles.AssumeUniversal|
        System.Globalization.DateTimeStyles.AdjustToUniversal,out observed))return null;
     double age=(nowUtc.ToUniversalTime()-observed).TotalMinutes;
-    if(age < -2 || age >= 60)return null;
+    if(age < -2 || age >= maxMinutes)return null;
     return percent;
    }catch{return null;}
   }
@@ -1031,19 +1086,16 @@ public sealed class RdcOwnerRuntime : IDisposable {
  public string Generation { get {return generation;} }
  public string Status { get {lock(gate){return guiState;}} }
  public string LastGuiError {get{lock(gate){return lastGuiError;}}}
- // Only a ready Remote launched into THIS Host's private Job can select
- // the quota OAuth account. External/observed/fake identity never triggers login.
- public string ActiveManagedAccount {
-  get {
-   lock(gate){
-    if(!managedMode||observedMode||trialRoot!=null||managedState!="Ready"||
-       managedProcess==null||!managedProcess.Running)return "";
-    return System.Text.RegularExpressions.Regex.IsMatch(managedAccount??"",
-      @"\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z")?
-      managedAccount:"";
-   }
-  }
+ // Strict Ready is retained for initial OAuth consent.
+ string managedQuotaIdleAccount="";
+ string SelectQuotaAccount(bool freshOnly){
+  return RdcOwnerQuotaIdentity.Select(managedMode&&!observedMode&&trialRoot==null,
+   managedProcess!=null&&managedProcess.Running,disposed||exitRequested||WindowsEnding,
+   accountLogoutProcess!=null||accountSwitchFaultLatched,managedState,managedDetail,managedAccount,managedQuotaIdleAccount,freshOnly);
  }
+ public string ActiveManagedAccount {get{lock(gate){return SelectQuotaAccount(true);}}}
+ public string QuotaManagedAccount {get{lock(gate){return SelectQuotaAccount(false);}}}
+ public int QuotaGuiOpenGeneration {get{lock(gate){return guiStarts;}}}
  public RdcOwnerRuntime(string root,bool fakeOnly):this(root,fakeOnly,null,false,0,false){}
  public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot):this(root,fakeOnly,isolatedTrialRoot,false,30,false){}
  public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot,bool failOnce,int exitSeconds,bool reopenOnce):
@@ -1223,7 +1275,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
      // Reuse the official, account-bound cache; the Host's existing 30m who_am_i
      // poll is the only network source. Read locally at most once every 15s.
      // Identity/opt-out loss immediately removes a formerly shown percentage.
-     string quotaAccount=ActiveManagedAccount;
+     string quotaAccount=QuotaManagedAccount;
      if(!RdcOwnerTrayQuotaPreference.Enabled(RdcOwnerTrayQuotaPreference.CurrentPath))
       quotaAccount="";
      if(!String.Equals(quotaAccount,lastTrayQuotaAccount,StringComparison.OrdinalIgnoreCase)){
@@ -2224,9 +2276,11 @@ void RefreshTrayMenu(){
  }
  void ExpireManagedReadyEvidence(){
   if(managedState=="Ready" &&
-     ManagedReadyEvidenceExpired(DateTime.UtcNow,managedReadyEvidenceUtc))
+     ManagedReadyEvidenceExpired(DateTime.UtcNow,managedReadyEvidenceUtc)){
+   managedQuotaIdleAccount=SelectQuotaAccount(true);
    MarkManagedReadinessUnconfirmed(
     "Remote channel unconfirmed; awaiting new connectivity evidence",false);
+  }
  }
  void RefreshManagedRemote(){
   if(accountLogoutProcess!=null||accountSwitchFaultLatched)return;
@@ -2410,7 +2464,8 @@ void RefreshTrayMenu(){
   return new Dictionary<string,object>{
    {"hostPid",hostPid},{"hostGeneration",generation},{"hostTicks",hostBorn},
    {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":managedMode?"MANAGED_OWNER_RC1":"FAKE_ONLY_RC1"},{"remoteId",remoteSupervisor.SessionId},
-   {"remote",observed},{"remoteConnected",(managedMode||observedMode) && (string)observed["state"]=="Ready"},
+   {"remote",observed},{"quotaAccountEligible",!String.IsNullOrEmpty(SelectQuotaAccount(false))},
+   {"remoteConnected",(managedMode||observedMode) && (string)observed["state"]=="Ready"},
    {"account",observedMode?"Existing Remote / read-only":managedMode?"RC1 Host-owned Remote":"DEMO: disabled"},
    {"remoteBornUtcTicks",managedMode?managedBornUtcTicks:0L},
    {"remoteStartupArt",managedMode?String.Join("\n",managedBannerArt.ToArray()):""},
