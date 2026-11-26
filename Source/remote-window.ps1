@@ -3569,21 +3569,29 @@ public sealed class RdcGpuDividerHost : ElementHost {
     }
 
     private void PositionPopup() {
-        if (!particlePopup.IsOpen || particlePopupHwnd == IntPtr.Zero || !IsHandleCreated) return;
+        if (particlePopup==null || !particlePopup.IsOpen || particlePopupHwnd == IntPtr.Zero || !IsHandleCreated) return;
 
-        RECT rect;
-        if (!GetWindowRect(Handle,out rect)) return;
+        RECT rect,popup;
+        if (!GetWindowRect(Handle,out rect) ||
+            !GetWindowRect(particlePopupHwnd,out popup)) return;
         int w = Math.Max(1,rect.Right-rect.Left);
-        int h = 33;
+        // WPF owns the logical 33-DIP popup height. Use the actual native
+        // height in the SAME caller coordinate space as the anchor HWND.
+        // Never mix a DIP constant with screen coordinates.
+        int h = popup.Bottom-popup.Top;
+        if(h<=0)return;
         int x = rect.Left;
-        int y = rect.Top - 13;
-        if (x==lastPopupX && y==lastPopupY && w==lastPopupW && h==lastPopupH) return;
-        lastPopupX=x; lastPopupY=y; lastPopupW=w; lastPopupH=h;
-        SetWindowPos(
+        int y = rect.Top + (rect.Bottom-rect.Top-h)/2;
+        // WPF may reposition its popup after layout/DPI changes. Compare the
+        // actual HWND, not just the previously requested rectangle.
+        if (popup.Left==x && popup.Top==y && popup.Right-popup.Left==w) return;
+        if(SetWindowPos(
             particlePopupHwnd,
             IntPtr.Zero,
             x,y,w,h,
-            SWP_NOZORDER|SWP_NOACTIVATE|SWP_SHOWWINDOW);
+            SWP_NOZORDER|SWP_NOACTIVATE|SWP_SHOWWINDOW)){
+            lastPopupX=x; lastPopupY=y; lastPopupW=w; lastPopupH=h;
+        }
     }
 
     private void EnsurePopupOpen() {
@@ -3953,18 +3961,8 @@ public sealed class RdcGpuDividerHost : ElementHost {
         };
 
         root.SizeChanged += delegate(object sender,SizeChangedEventArgs e) {
-            double w=Math.Max(1.0,root.ActualWidth);
-            popupCausticEffect.ViewportWidth=w;
-            detailCausticEffect.ViewportWidth=w;
-            particleEffect.ViewportWidth=w;
-            particleEffectB.ViewportWidth=w;
-            particleEffectC.ViewportWidth=w;
-            particleEffectD.ViewportWidth=w;
-            coreEffect.ViewportWidth=w;
-            coreEffectB.ViewportWidth=w;
-            coreEffectC.ViewportWidth=w;
-            coreEffectD.ViewportWidth=w;
-            if (particlePopup.IsOpen) particlePopup.Width=w;
+            SynchronizeLogicalViewport();
+            PositionPopup();
         };
 
         Child=root;
@@ -4228,9 +4226,9 @@ public sealed class RdcGpuDividerHost : ElementHost {
         }
     }
 
-    protected override void OnResize(EventArgs e) {
-        base.OnResize(e);
-        double w=Math.Max(1.0,ClientSize.Width);
+    private void SynchronizeLogicalViewport() {
+        if(root==null||particlePopup==null||root.ActualWidth<=0)return;
+        double w=root.ActualWidth;
         causticEffect.ViewportWidth=w;
         popupCausticEffect.ViewportWidth=w;
         detailCausticEffect.ViewportWidth=w;
@@ -4242,7 +4240,13 @@ public sealed class RdcGpuDividerHost : ElementHost {
         coreEffectB.ViewportWidth=w;
         coreEffectC.ViewportWidth=w;
         coreEffectD.ViewportWidth=w;
-        if (particlePopup.IsOpen) particlePopup.Width=w;
+        if (particlePopup.IsOpen && Math.Abs(particlePopup.Width-w)>0.01) particlePopup.Width=w;
+    }
+
+    protected override void OnResize(EventArgs e) {
+        base.OnResize(e);
+        SynchronizeLogicalViewport();
+        PositionPopup();
     }
 
     protected override void Dispose(bool disposing) {
