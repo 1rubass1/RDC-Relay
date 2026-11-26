@@ -65,13 +65,16 @@ try{
  Check (Wait-State 'Disconnected') 'failed synthetic Job exits and Host notices'
  $timer=[Diagnostics.Stopwatch]::StartNew()
  while($null -ne (Get-Field 'managedLogSessions') -and $timer.ElapsedMilliseconds -lt 4000){[void](Call-Host RefreshManagedRemote @());Start-Sleep -Milliseconds 25}
- Check ($null -eq (Get-Field 'managedLogSessions') -and -not (Test-Path -LiteralPath (Join-Path $logs 'CurrentSession'))) 'failed current discarded after verified Job completion'
+ Check ($null -eq (Get-Field 'managedLogSessions') -and -not (Test-Path -LiteralPath (Join-Path $logs 'CurrentSession'))) 'failed current finalized after verified Job completion'
+ $failed=@(Get-ChildItem -LiteralPath (Join-Path $logs 'LastUnacceptedSession') -File -Filter '*.log')
+ Check ($failed.Count -eq 1 -and [IO.File]::ReadAllText($failed[0].FullName).Contains('Device startup failed: test')) 'failed output retained in independent slot'
  Check ((Read-Previous) -ceq $first) 'failed launch does not replace successful previous'
  [IO.File]::WriteAllText($fake,"@echo off"+[Environment]::NewLine+'echo Desktop Commander Remote is connected'+[Environment]::NewLine+'echo second-session'+[Environment]::NewLine+'ping.exe -n 30 127.0.0.1 > NUL'+[Environment]::NewLine)
  [void](Call-Host StartManagedCapture @($fake,$logs))
  Check (Wait-State 'Ready') 'next valid session can start after failed launch'
  [void](Call-Host StopManagedRemote @())
  Check ((Read-Previous).Contains('second-session') -and -not (Read-Previous).Contains('test-raw-stderr')) 'next valid completion replaces previous only once'
+ Check ([IO.File]::ReadAllText($failed[0].FullName).Contains('Device startup failed: test')) 'successful session does not remove failed output'
  # Deliver real native messages only to our isolated hidden test HWND.
  # No OS shutdown, broadcast, logoff, reboot or real Host process is used.
  [IO.File]::WriteAllText($fake,"@echo off"+[Environment]::NewLine+'echo Desktop Commander Remote is connected'+[Environment]::NewLine+'echo windows-end-session'+[Environment]::NewLine+'ping.exe -n 30 127.0.0.1 > NUL'+[Environment]::NewLine)
@@ -160,7 +163,7 @@ try{
  }
  if([IO.Directory]::Exists($logs)){
   foreach($e in Get-ChildItem -LiteralPath $logs -Force){
-   if(($e.Attributes -band [IO.FileAttributes]::ReparsePoint) -or @('CurrentSession','PreviousSession','RetiredSession','.rdc-session-lock-v1') -cnotcontains $e.Name){throw 'HOST_LOG_FIXTURE_UNKNOWN'}
+   if(($e.Attributes -band [IO.FileAttributes]::ReparsePoint) -or @('CurrentSession','PreviousSession','RetiredSession','LastUnacceptedSession','RetiredUnacceptedSession','.rdc-session-lock-v1') -cnotcontains $e.Name){throw 'HOST_LOG_FIXTURE_UNKNOWN'}
    if($e.PSIsContainer){
     foreach($f in Get-ChildItem -LiteralPath $e.FullName -Force){
      if($f.PSIsContainer -or ($f.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $f.Name -cnotmatch '^(\.rdc-(session|accepted)-v1|\d{4}-\d{2}-\d{2}_part-\d+\.log)$'){throw 'HOST_LOG_FIXTURE_UNKNOWN_PART'}
