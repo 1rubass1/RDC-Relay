@@ -228,9 +228,23 @@ public sealed class RdcOwnerLogPump {
 // before recovery, and must finish the pump before finalization.
 // Fixed-category completion data only; never pass arbitrary exception text or identity.
 public enum RdcOwnerPreflightFailure { None,RuntimeUnavailable,InspectionFailed }
+public static class RdcOwnerCompletionDiagnostics {
+ // Classification uses observations only, not a guess at the upstream cause.
+ public static string Classify(bool accepted,RdcOwnerFailedSessionInfo info){
+  if(info==null)return "unknown";
+  if(info.PreflightFailure!=RdcOwnerPreflightFailure.None)return "preflight_failed";
+  if(info.LaunchFailed)return "launch_failed";
+  if(!info.CmdExit.HasValue||!info.StopRequested.HasValue)return "unknown";
+  if(info.StopRequested.Value){
+   if(accepted)return "stop_requested_after_ready";
+   return info.AuthPendingObserved==true?"authorization_stop_requested":"startup_stop_requested";
+  }
+  return accepted?"unexpected_after_ready":"exit_before_ready";
+ }
+}
 public sealed class RdcOwnerFailedSessionInfo {
  public int? CmdExit;
- public bool? StopRequested,CleanEof,ReadFault,StorageFault,ParserFault;
+ public bool? StopRequested,AuthPendingObserved,CleanEof,ReadFault,StorageFault,ParserFault;
  public long? BytesRead,BytesWriteAcknowledged,RetainedBytes;
  public int? ParserPending;
  public bool LaunchFailed;
@@ -240,6 +254,7 @@ public sealed class RdcOwnerFailedSessionInfo {
 public sealed class RdcOwnerLogSessions : IDisposable {
  const string IdentityName=".rdc-session-v1";
  const string AcceptedName=".rdc-accepted-v1";
+ const string UnexpectedName=".rdc-unexpected-v1";
  const string MarkerPrefix="RDC-LOG-SESSION-V1:";
  const int MaxEntries=10000;
  public const int FailedRawLimit=1024*1024;
@@ -251,7 +266,7 @@ public sealed class RdcOwnerLogSessions : IDisposable {
  FileStream lease;
  bool disposed;
  string activeId;
- bool finalizing,finalizingAccepted;
+ bool finalizing,finalizingAccepted,finalizingUnexpected;
  RdcOwnerFailedSessionInfo finalizingInfo;
  public string FailedPath {get{return failed;}}
  public string CurrentPath {get{return current;}}
@@ -305,7 +320,7 @@ public sealed class RdcOwnerLogSessions : IDisposable {
  }
  sealed class Session {
   internal string Id;
-  internal bool Accepted,FailedStage;
+  internal bool Accepted,Unexpected,FailedStage;
   internal List<string> Files=new List<string>();
  }
  // No recursive deletion, wildcard cleanup, or following of unowned paths.
@@ -325,6 +340,10 @@ public sealed class RdcOwnerLogSessions : IDisposable {
     if(ReadFailedId(entry)!=result.Id)throw new IOException("RDC_FAILED_STAGE_ID");
     result.FailedStage=true;continue;
    }
+   if(name==UnexpectedName){
+    if(ReadMarker(entry)!=result.Id)throw new IOException("RDC_FAILED_UNEXPECTED_ID");
+    result.Unexpected=true;continue;
+   }
    if(name==AcceptedName){
     if(ReadMarker(entry)!=result.Id)throw new IOException("RDC_LOG_SESSION_ACCEPTED_MISMATCH");
     result.Accepted=true;continue;
@@ -336,17 +355,18 @@ public sealed class RdcOwnerLogSessions : IDisposable {
     throw new IOException("RDC_LOG_SESSION_SIZE");
    total+=size;result.Files.Add(entry);
   }
-  if(result.Accepted&&result.FailedStage)throw new IOException("RDC_FAILED_STAGE_ACCEPTED");
+  if(result.Accepted&&result.FailedStage&&!result.Unexpected)throw new IOException("RDC_FAILED_STAGE_ACCEPTED");
   return result;
  }
  static void DeleteOwned(string path,Session expected){
   if(expected==null)throw new IOException("RDC_LOG_SESSION_DELETE_PROOF");
   var actual=Inspect(path);
-  if(actual==null||actual.Id!=expected.Id||actual.Accepted!=expected.Accepted)
+  if(actual==null||actual.Id!=expected.Id||actual.Accepted!=expected.Accepted||actual.Unexpected!=expected.Unexpected)
    throw new IOException("RDC_LOG_SESSION_DELETE_CHANGED");
   foreach(string file in actual.Files){Safe(file);File.Delete(file);}
   if(actual.FailedStage)File.Delete(Path.Combine(path,FailedStageName));
   if(actual.Accepted)File.Delete(Path.Combine(path,AcceptedName));
+  if(actual.Unexpected)File.Delete(Path.Combine(path,UnexpectedName));
   File.Delete(Path.Combine(path,IdentityName));
   Directory.Delete(path,false);
  }
@@ -378,11 +398,11 @@ public sealed class RdcOwnerLogSessions : IDisposable {
   var c=Inspect(current);var p=Inspect(previous);
   if(c==null&&p!=null&&p.Accepted)RemoveReservedEmpty(retired);
   var r=Inspect(retired);
-  if((p!=null&&!p.Accepted)||(r!=null&&!r.Accepted&&(c!=null||p==null||r.Files.Count!=0))||
+  if((p!=null&&(!p.Accepted||p.Unexpected))||(r!=null&&r.Unexpected)||(r!=null&&!r.Accepted&&(c!=null||p==null||r.Files.Count!=0))||
     (c!=null&&p!=null&&c.Id==p.Id)||(c!=null&&r!=null&&c.Id==r.Id)||(p!=null&&r!=null&&p.Id==r.Id))
    throw new IOException("RDC_LOG_SESSION_STATE");
   if(r!=null){
-   if(c!=null&&c.Accepted&&p==null){
+   if(c!=null&&c.Accepted&&!c.Unexpected&&p==null){
     MoveOwned(current,previous,c);p=Inspect(previous);c=null;
    }else if(c!=null||p==null){
     // No destructive guess in an impossible or interrupted state.
@@ -391,11 +411,13 @@ public sealed class RdcOwnerLogSessions : IDisposable {
    DeleteOwned(retired,r);
   }
   if(c==null)return;
-  if(!c.Accepted){PublishFailed(c,info);DeleteOwned(current,c);return;}
+  if(c.Unexpected&&!c.Accepted&&ReadFailedId(failed)!=c.Id)
+   throw new IOException("RDC_FAILED_UNEXPECTED_PROOF");
+  if(!c.Accepted||c.Unexpected){PublishFailed(c,info);DeleteOwned(current,c);return;}
   Publish(c,p);
  }
  void Publish(Session c,Session p){
-  if(!c.Accepted||Present(retired))throw new IOException("RDC_LOG_SESSION_PUBLISH_STATE");
+  if(!c.Accepted||c.Unexpected||Present(retired))throw new IOException("RDC_LOG_SESSION_PUBLISH_STATE");
   if(p!=null){
    if(!p.Accepted||p.Id==c.Id)throw new IOException("RDC_LOG_SESSION_PREVIOUS_STATE");
    MoveOwned(previous,retired,p);
@@ -469,7 +491,9 @@ public sealed class RdcOwnerLogSessions : IDisposable {
   long skip=Math.Max(0,total-FailedRawLimit),remaining=Math.Min(total,FailedRawLimit);
   string header=FailedPrefix+c.Id+"\n"+
    "recorded_utc="+DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture)+"\n"+
-   "outcome=not_accepted (not proof of crash)\n"+
+   "outcome="+(c.Unexpected?"unexpected_after_ready":"not_accepted")+" (not proof of crash)\n"+
+   "completion_kind="+(c.Unexpected?"unexpected_after_ready":RdcOwnerCompletionDiagnostics.Classify(c.Accepted,info))+"\n"+
+   "accepted_session="+Flag(c.Accepted||c.Unexpected)+" auth_pending_observed="+Flag(info.AuthPendingObserved)+"\n"+
    "completion="+(info.PreflightFailure!=RdcOwnerPreflightFailure.None?"preflight_failed":info.LaunchFailed?"launch_failed":info.CmdExit.HasValue?"verified_cmd_root_exit":"unknown")+"\n"+
    "preflight_reason="+PreflightReason(info.PreflightFailure)+"\n"+
    PrerequisiteHeader(info.PrerequisiteObservations)+
@@ -531,7 +555,7 @@ public sealed class RdcOwnerLogSessions : IDisposable {
   if(activeId!=null||Present(current)||Present(retired))
    throw new IOException("RDC_LOG_SESSION_NOT_RECOVERED");
   var p=Inspect(previous);
-  if(p!=null&&!p.Accepted)throw new IOException("RDC_LOG_SESSION_PREVIOUS_STATE");
+  if(p!=null&&(!p.Accepted||p.Unexpected))throw new IOException("RDC_LOG_SESSION_PREVIOUS_STATE");
   Directory.CreateDirectory(current);
   Safe(current);
   // The sink requires an initially empty directory. Register its owner
@@ -562,21 +586,27 @@ public sealed class RdcOwnerLogSessions : IDisposable {
   if(!finalizing){
    var c=Inspect(current);
    if(c==null||c.Id!=activeId)throw new IOException("RDC_LOG_SESSION_ACTIVE_CHANGED");
-   finalizingAccepted=c.Accepted;finalizingInfo=info;finalizing=true;
+   // Persist the observed abnormal-after-Ready decision before modifying any
+   // logs. On restart it remains distinct from an ordinary accepted session.
+   if(c.Accepted&&!c.Unexpected&&RdcOwnerCompletionDiagnostics.Classify(true,info)=="unexpected_after_ready"){
+    WriteMarker(Path.Combine(current,UnexpectedName),c.Id);c=Inspect(current);
+   }
+   finalizingAccepted=c.Accepted;finalizingUnexpected=c.Unexpected;finalizingInfo=info;finalizing=true;
   }else{
    // A retry must still refer to our exact session, either before the move
    // or already published. A failed-start cleanup may have removed current.
    RemoveReservedEmpty(current);
    var c=Inspect(current);var p=Inspect(previous);
-   if(c!=null&&(c.Id!=activeId||c.Accepted!=finalizingAccepted))
+   bool failedPublished=finalizingUnexpected&&ReadFailedId(failed)==activeId;
+   if(c!=null&&(c.Id!=activeId||((c.Accepted!=finalizingAccepted||c.Unexpected!=finalizingUnexpected)&&!failedPublished)))
     throw new IOException("RDC_LOG_SESSION_ACTIVE_CHANGED");
-   if(c==null&&finalizingAccepted&&(p==null||p.Id!=activeId||!p.Accepted))
+   if(c==null&&finalizingAccepted&&!finalizingUnexpected&&(p==null||p.Id!=activeId||!p.Accepted))
     throw new IOException("RDC_LOG_SESSION_PUBLISH_PROOF");
-   if(c==null&&!finalizingAccepted&&ReadFailedId(failed)!=activeId)
+   if(c==null&&(!finalizingAccepted||finalizingUnexpected)&&ReadFailedId(failed)!=activeId)
     throw new IOException("RDC_FAILED_REPORT_PUBLISH_PROOF");
   }
   RecoverCore(finalizingInfo);
-  activeId=null;finalizing=false;finalizingAccepted=false;finalizingInfo=null;
+  activeId=null;finalizing=false;finalizingAccepted=false;finalizingUnexpected=false;finalizingInfo=null;
  }
  // Release only the lease. Never infer process exit, delete a session, or
  // publish anything from Dispose; the next verified start can recover.
