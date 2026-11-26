@@ -272,7 +272,7 @@ function Get-Rc1OwnerConnectionText([string]$state,[string]$detail,[bool]$observ
     switch -CaseSensitive ($detail) {
      'Remote channel unavailable' {(Get-RdcOwnerUiText 'owner.connection.detail.fault.channel' 'Канал недоступен');break}
      'Remote start failed' {(Get-RdcOwnerUiText 'owner.connection.detail.fault.start' 'Не удалось запустить Remote');break}
-     'Required Node.js runtime is missing; run RDC Relay Setup' {(Get-RdcOwnerUiText 'owner.connection.detail.fault.nodeMissing' 'Требуется повторная установка RDC Relay');break}
+     'Required Node.js runtime is missing; run RDC Relay Setup' {(Get-RdcOwnerUiText 'owner.connection.detail.fault.nodeMissing' 'Нужен Node.js: Setup или выход из трея и запуск Portable');break}
      'Remote startup failed; inspect Host status and retry manually' {
       (Get-RdcOwnerUiText 'owner.connection.detail.fault.autoStart' 'Запустите Remote вручную');break
      }
