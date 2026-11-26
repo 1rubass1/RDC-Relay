@@ -84,6 +84,7 @@ exit 0
   Start-Sleep -Milliseconds 10
  }
  Check ($completed -and $eof -and $code -eq 23 -and $seen -eq 0 -and -not $owner.StopRequested) 'silent nonzero cmd wrapper exit without stop request'
+ Check ($owner.StopOwnedOnly(1000) -and -not $owner.StopRequested) 'late Stop on empty Job does not change observed completion'
 }finally{
  if($sink){$sink.Dispose()}
  $safe=$true
