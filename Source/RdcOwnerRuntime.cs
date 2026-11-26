@@ -950,6 +950,64 @@ public static class RdcOwnerTrayConfirmation {
  }
 }
 
+// Read-only environment observations. No process launch, PATH probe, npm cache
+// scan or registry enumeration; package metadata is not proof of execution.
+public static class RdcOwnerEnvironmentDiagnostics {
+ [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential,CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+ struct OsVersion {
+  public uint Size,Major,Minor,Build,Platform;
+  [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValTStr,SizeConst=128)]
+  public string ServicePack;
+ }
+ [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+ struct NativeSystemInfo {
+  public ushort Architecture,Reserved;
+  public uint PageSize;
+  public IntPtr MinAddress,MaxAddress,ProcessorMask;
+  public uint ProcessorCount,ProcessorType,AllocationGranularity;
+  public ushort ProcessorLevel,ProcessorRevision;
+ }
+ [System.Runtime.InteropServices.DllImport("ntdll.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+ static extern int RtlGetVersion(ref OsVersion version);
+ [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+ static extern void GetNativeSystemInfo(out NativeSystemInfo info);
+ public static string[] ObserveSystem(){
+  string version="unknown",arch="unknown";
+  try{
+   var v=new OsVersion{Size=(uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(OsVersion))};
+   if(RtlGetVersion(ref v)==0)version=String.Format(System.Globalization.CultureInfo.InvariantCulture,"{0}.{1}.{2}",v.Major,v.Minor,v.Build);
+  }catch{}
+  try{
+   NativeSystemInfo n;GetNativeSystemInfo(out n);
+   switch(n.Architecture){case 0:arch="x86";break;case 9:arch="x64";break;case 12:arch="arm64";break;case 5:arch="arm";break;}
+  }catch{}
+  return new[]{"windows_version="+version+" native_arch="+arch+" host_bits="+(Environment.Is64BitProcess?"64":"32"),
+   "remote_requested=0.2.52 remote_actual_version=unknown"};
+ }
+ public static string NpmPackageState(string root,Action<string> checkPath){
+  try{
+   string path=Path.Combine(root,"node_modules","npm","package.json");
+   string state=RdcOwnerPrerequisiteDiagnostics.FileState(path,checkPath);
+   if(state!="present")return state;
+   checkPath(path);
+   using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read)){
+    if(stream.Length==0||stream.Length>65536)return "present(version_unknown)";
+    using(var reader=new StreamReader(stream,new UTF8Encoding(false,true),true)){
+     string raw=reader.ReadToEnd();
+     var serializer=new System.Web.Script.Serialization.JavaScriptSerializer{MaxJsonLength=65536,RecursionLimit=16};
+     var obj=serializer.DeserializeObject(raw) as Dictionary<string,object>;
+     object name,version;
+     if(obj==null||!obj.TryGetValue("name",out name)||!Object.Equals(name,"npm")||
+        !obj.TryGetValue("version",out version)||!(version is string))return "present(version_unknown)";
+     string v=(string)version;
+     if(v.Length>48||!System.Text.RegularExpressions.Regex.IsMatch(v,@"\A[0-9]{1,9}(\.[0-9]{1,9}){2}(-[0-9A-Za-z.-]{1,24})?(\+[0-9A-Za-z.-]{1,16})?\z"))
+      return "present(version_unknown)";
+     return "present("+v+")";
+    }
+   }
+  }catch{return "unknown";}
+ }
+}
 // Read-only prerequisite observations. No PATH execution or private paths in exported events.
 // This helper never changes the launch resolver's acceptance or fallback policy.
 public static class RdcOwnerPrerequisiteDiagnostics {
@@ -1805,6 +1863,10 @@ void RefreshTrayMenu(){
      if(observations!=null)observations.Add(line);
      Append("remote",line);
     }
+    if(observations!=null){
+     string metadata="runtime "+locations[i]+": npm_package="+RdcOwnerEnvironmentDiagnostics.NpmPackageState(Path.GetDirectoryName(file),CheckPath);
+     observations.Add(metadata);Append("remote",metadata);
+    }
    }catch{
     string line="runtime "+locations[i]+": check_unknown";
     if(observations!=null)observations.Add(line);
@@ -1871,7 +1933,7 @@ void RefreshTrayMenu(){
   if(AnotherDesktopCommanderRemote())
    throw new InvalidOperationException("RC1_EXISTING_REMOTE_ADOPTED_NO_DUPLICATE");
   string logRoot=Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(stateRoot)),"Logs");
-  var observations=new List<string>();
+  var observations=new List<string>(RdcOwnerEnvironmentDiagnostics.ObserveSystem());
   string npx;
   try{npx=ResolvePinnedNpxWithDiagnostics(observations);}
   catch(Exception problem){
