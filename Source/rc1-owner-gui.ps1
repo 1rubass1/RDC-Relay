@@ -227,7 +227,7 @@ function Get-Rc1OwnerCompletionKind([string]$value) {
 function Get-Rc1OwnerConnectionText([string]$state,[string]$detail,[bool]$observed,[string]$activity='idle',[string]$completion='unknown') {
  # Presentation only: Host retains its technical state and permissions.
  if(-not $observed -and $state -ceq 'Disconnected'){
-  switch -CaseSensitive (Get-Rc1OwnerCompletionKind $completion){
+  switch -CaseSensitive ($completion){
    'exit_before_ready' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.fault' 'Ошибка связи');Detail=(Get-RdcOwnerUiText 'owner.completion.beforeReady' 'Remote завершился до подключения');CompletionFault=$true}}
    'unexpected_after_ready' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.fault' 'Ошибка связи');Detail=(Get-RdcOwnerUiText 'owner.completion.unexpected' 'Remote неожиданно завершился');CompletionFault=$true}}
    'launch_failed' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.fault' 'Ошибка связи');Detail=(Get-RdcOwnerUiText 'owner.connection.detail.fault.start' 'Не удалось запустить Remote');CompletionFault=$true}}
