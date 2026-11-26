@@ -142,17 +142,34 @@ if($clickNodes.Count -eq 1){
  $quotaAuthItem=New-Object Windows.Forms.ToolStripMenuItem('Quota display')
  $quotaAuthItem.CheckOnClick=$true
  $quotaLabel=New-Object Windows.Forms.Label
+ $localizer=$ast['remote-window.ps1'].Find({param($n)
+  $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-RdcOwnerDialogText'
+ },$true)
+ if(-not $localizer){throw 'MISSING_QUOTA_LOCALIZER'}
+ . ([scriptblock]::Create($localizer.Extent.Text))
+ $script:testQuotaCatalog=$null
+ function Get-RdcOwnerUiText([string]$key,[string]$fallback){
+  $property=$script:testQuotaCatalog.strings.PSObject.Properties[$key]
+  if($property){return [string]$property.Value}
+  return $fallback
+ }
  try{
   $quotaAuthItem.Checked=Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath
   Check ($quotaAuthItem.Checked) 'new GUI first shows checkbox checked'
   $quotaAuthItem.Add_Click($click)
+  $script:testQuotaCatalog=[IO.File]::ReadAllText((Join-Path $src 'lang\en-US.json'))|ConvertFrom-Json
   $quotaAuthItem.PerformClick()
   Check (-not $quotaAuthItem.Checked -and
    -not (Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath) -and
-   $quotaLabel.Text.EndsWith('--%')) 'click OFF persists opt-out, hides old percent'
+   $quotaLabel.Text -ceq 'Remaining calls: --%') 'English click OFF persists opt-out without Russian flash'
   $quotaAuthItem.PerformClick()
   Check ($quotaAuthItem.Checked -and
-   (Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath)) 'click ON removes opt-out; no duplicate GUI OAuth launcher'
+   (Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath) -and $quotaLabel.Text -ceq 'Remaining calls: --%') 'English click ON preserves locale and removes opt-out'
+  $script:testQuotaCatalog=[IO.File]::ReadAllText((Join-Path $src 'lang\ru-RU.json'))|ConvertFrom-Json
+  $quotaAuthItem.PerformClick()
+  Check (-not $quotaAuthItem.Checked -and $quotaLabel.Text -ceq [string]$script:testQuotaCatalog.strings.'gui.quota.unknown') 'Russian click OFF preserves locale'
+  $quotaAuthItem.PerformClick()
+  Check ($quotaAuthItem.Checked -and $quotaLabel.Text -ceq [string]$script:testQuotaCatalog.strings.'gui.quota.unknown') 'Russian click ON preserves locale'
  }finally{
   $quotaAuthItem.Dispose();$quotaLabel.Dispose()
   if([IO.Directory]::Exists($uiRoot)){[IO.Directory]::Delete($uiRoot,$true)}
