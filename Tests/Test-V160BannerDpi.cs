@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 public static class TestV160BannerDpi {
  [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr h);
+ [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
  sealed class ProbeForm:Form {
   protected override bool ShowWithoutActivation {get{return true;}}
   protected override CreateParams CreateParams {get{var p=base.CreateParams;p.ExStyle|=0x08000000;return p;}}
@@ -17,7 +18,8 @@ public static class TestV160BannerDpi {
   return s.ToString().Substring(0,columns-1)+"\u2588";
  }
  static void Pump(){for(int i=0;i<15;i++){Application.DoEvents();Thread.Sleep(10);}}
- [STAThread] public static int Main(){
+ [STAThread] public static int Main(string[] args){
+  if(args.Length==1&&args[0]=="system-aware")Console.WriteLine("SYSTEM_AWARE="+SetProcessDPIAware());
   Application.EnableVisualStyles();
   using(var f=new ProbeForm())using(var box=new RdcLogBox())using(var font=new Font("Consolas",9)){
    f.ShowInTaskbar=false;f.Opacity=0;f.StartPosition=FormStartPosition.Manual;
