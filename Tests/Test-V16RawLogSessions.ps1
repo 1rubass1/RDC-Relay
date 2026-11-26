@@ -25,6 +25,7 @@ try{
  $store=New-Object RdcOwnerLogSessions -ArgumentList $root
  $store.Recover()
  $c=$store.CurrentPath;$p=$store.PreviousPath;$r=Join-Path $root 'RetiredSession'
+ $f=$store.UnacceptedPath;$rf=Join-Path $root 'RetiredUnacceptedSession'
  $denied=$false
  try{$other=New-Object RdcOwnerLogSessions -ArgumentList $root;$other.Dispose()}catch{$denied=$true}
  Check $denied 'exclusive per-user session lease'
@@ -35,12 +36,37 @@ try{
  Begin-Data ([byte[]](4,5)) $false
  $store.FinalizeCurrent()
  Check ((Read-Parts $p) -ceq 'AQID' -and -not (Test-Path -LiteralPath $c)) 'failed launch leaves previous byte-exact'
+ Check ((Read-Parts $f) -ceq 'BAU=') 'unaccepted session preserved independently'
  Begin-Data ([byte[]](6,7)) $false
  Reopen
  Check ((Read-Parts $p) -ceq 'AQID' -and -not (Test-Path -LiteralPath $c)) 'interrupted unaccepted session leaves previous'
+ Check ((Read-Parts $f) -ceq 'Bgc=') 'interrupted unaccepted session replaces previous unaccepted'
  Begin-Data ([byte[]](8,9)) $true
  Reopen
  Check ((Read-Parts $p) -ceq 'CAk=' -and -not (Test-Path -LiteralPath $c)) 'accepted interrupted session recovered as previous'
+ Check ((Read-Parts $f) -ceq 'Bgc=') 'accepted session does not change unaccepted slot'
+ Begin-Data ([byte[]](21,22)) $false
+ $store.Dispose()
+ [IO.Directory]::Move($f,$rf)
+ $store=New-Object RdcOwnerLogSessions -ArgumentList $root
+ $store.Recover()
+ Check ((Read-Parts $f) -ceq 'FRY=' -and (Read-Parts $p) -ceq 'CAk=' -and -not (Test-Path -LiteralPath $rf)) 'recover unaccepted first rename independently'
+ Begin-Data ([byte[]](23,24)) $false
+ $store.Dispose()
+ [IO.Directory]::Move($f,$rf)
+ [IO.Directory]::Move($c,$f)
+ $store=New-Object RdcOwnerLogSessions -ArgumentList $root
+ $store.Recover()
+ Check ((Read-Parts $f) -ceq 'Fxg=' -and (Read-Parts $p) -ceq 'CAk=' -and -not (Test-Path -LiteralPath $rf)) 'recover unaccepted second rename independently'
+ Begin-Data ([byte[]](25,26)) $false
+ $foreign=Join-Path $f 'foreign.txt'
+ [IO.File]::WriteAllText($foreign,'leave me')
+ $denied=$false
+ try{$store.FinalizeCurrent()}catch{$denied=$true}
+ Check ($denied -and (Test-Path -LiteralPath $foreign) -and (Read-Parts $f) -ceq 'Fxg=' -and (Read-Parts $c) -ceq 'GRo=') 'foreign entry in unaccepted slot blocks replacement'
+ [IO.File]::Delete($foreign)
+ $store.FinalizeCurrent()
+ Check ((Read-Parts $f) -ceq 'GRo=' -and (Read-Parts $p) -ceq 'CAk=') 'unaccepted replacement retry preserves successful slot'
  Begin-Data ([byte[]](10,11)) $true
  $store.Dispose()
  [IO.Directory]::Move($p,$r)
@@ -70,7 +96,7 @@ try{
  foreach($e in Get-ChildItem -LiteralPath $root -Force){
   if($e.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'SESSION_TEST_CLEANUP_REPARSE'}
   if($e.PSIsContainer){
-   if(@('CurrentSession','PreviousSession','RetiredSession') -cnotcontains $e.Name){throw 'SESSION_TEST_CLEANUP_UNKNOWN'}
+   if(@('CurrentSession','PreviousSession','RetiredSession','LastUnacceptedSession','RetiredUnacceptedSession') -cnotcontains $e.Name){throw 'SESSION_TEST_CLEANUP_UNKNOWN'}
    foreach($f in Get-ChildItem -LiteralPath $e.FullName -Force){
     if($f.PSIsContainer -or ($f.Attributes -band [IO.FileAttributes]::ReparsePoint) -or ($f.Name -cnotmatch '^(\.rdc-(session|accepted)-v1|\d{4}-\d{2}-\d{2}_part-\d+\.log|foreign\.txt)$')){throw 'SESSION_TEST_CLEANUP_UNKNOWN'}
    }
