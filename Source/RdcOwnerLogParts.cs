@@ -135,6 +135,7 @@ public sealed class RdcOwnerLogPump {
  readonly byte[] pending;
  readonly System.Threading.Thread worker;
  int head,count;
+ long bytesRead,bytesWriteAcknowledged;
  bool cleanEof,complete,parserFault,storageFault,readFault,cancelRequested;
  public RdcOwnerLogPump(RdcOwnerLogReader reader,RdcOwnerLogParts destination):this(reader,destination,4*1024*1024){}
  public RdcOwnerLogPump(RdcOwnerLogReader reader,RdcOwnerLogParts destination,int parserCapacity){
@@ -151,6 +152,12 @@ public sealed class RdcOwnerLogPump {
  public bool StorageFault {get{lock(gate){return storageFault;}}}
  public bool ReadFault {get{lock(gate){return readFault;}}}
  public int PendingBytes {get{lock(gate){return count;}}}
+ // Total bytes returned by the reader versus complete successful sink.Write
+ // calls. Not a guarantee of durable bytes; flush/partial writes can fail.
+ public long BytesRead {get{lock(gate){return bytesRead;}}}
+ public long BytesWriteAcknowledged {get{lock(gate){return bytesWriteAcknowledged;}}}
+ public long RetainedBytes {get{return sink.RetainedBytes;}}
+ static long AddSaturating(long current,int n){return current>Int64.MaxValue-n?Int64.MaxValue:current+n;}
  public string[] RetainedPaths {get{return sink.RetainedPaths;}}
  void Queue(byte[] data,int length){
   lock(gate){
@@ -190,8 +197,9 @@ public sealed class RdcOwnerLogPump {
     int n=read(buffer,out eof);
     if(n<0||n>buffer.Length||(eof&&n!=0))throw new IOException("RDC_LOG_PUMP_READ_CONTRACT");
     if(n>0){
+     lock(gate){bytesRead=AddSaturating(bytesRead,n);}
      if(!StorageFault){
-      try{sink.Write(buffer,0,n);dirty=true;}catch{StorageFailed();}
+      try{sink.Write(buffer,0,n);lock(gate){bytesWriteAcknowledged=AddSaturating(bytesWriteAcknowledged,n);}dirty=true;}catch{StorageFailed();}
      }
      Queue(buffer,n);
     }
