@@ -41,9 +41,7 @@ if($Full){
 $owner=$null
 $observerTimer=$null
 $quotaTimer=$null
-$quotaPollProcess=$null
-$quotaLastAccount=''
-$quotaAutoTried=@{}
+$script:quotaPollProcess=$null
 function Test-Rc1QuotaDisplayEnabled([string]$path) {
  try {
   if([string]::IsNullOrWhiteSpace($path)){return $false}
@@ -145,70 +143,64 @@ try{
  # The device-agent session is never reused, logged out or inspected.
  if($Full -and -not $TrialRoot){
   $quotaScript=Join-Path $root 'rc1-quota-client.ps1'
-  $quotaNextPollUtc=[DateTime]::MinValue
+  $script:quotaPolicy=New-Object RdcOwnerQuotaRefreshPolicy
+  $script:quotaClock=[Diagnostics.Stopwatch]::StartNew()
+  $script:quotaPollProcess=$null
+  $script:quotaAttemptAccount=''
+  $script:quotaAttemptObserved=[DateTime]::MinValue
+  $quotaCache=[RdcOwnerTrayQuotaSnapshot]::CachePath
+  $quotaVault=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'quota-oauth-user.dpapi'
   $quotaTimer=New-Object Windows.Forms.Timer
   $quotaTimer.Interval=15000
   $quotaTimer.Add_Tick({
-   # Automatic quota sync and consent remain ON unless explicitly disabled
-   # from the Account menu. Opt-out vetoes both network and browser activity.
-   if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){
-    $quotaLastAccount=''
-    $quotaNextPollUtc=[DateTime]::MinValue
-    # When the owner re-enables, the original one-shot account consent can
-    # start again if no usable quota grant was established.
-    $quotaAutoTried=@{}
-    return
-   }
-   # Only a confirmed Host-owned Ready account may request who_am_i.
-   $activeAccount=[string]$owner.ActiveManagedAccount
-   if(-not $activeAccount){
-    $quotaLastAccount=''
-    $quotaNextPollUtc=[DateTime]::MinValue
-    return
-   }
-   if(-not [string]::Equals($activeAccount,$quotaLastAccount,[StringComparison]::OrdinalIgnoreCase)){
-    $quotaLastAccount=$activeAccount
-    $quotaNextPollUtc=[DateTime]::MinValue
-   }
-   if([DateTime]::UtcNow -lt $quotaNextPollUtc){return}
-   if($quotaPollProcess -and -not $quotaPollProcess.HasExited){return}
-   if($quotaPollProcess){$quotaPollProcess.Dispose();$quotaPollProcess=$null}
-   # Preserve original background behavior: once the owned account is Ready,
-   # reuse a valid grant or open the provider's browser for consent once per
-   # account per Host run. The checkbox only vetoes this entire workflow.
-   $quotaCache=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'remote-usage-cache.json'
-   $quotaVault=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'quota-oauth-user.dpapi'
-   $quotaCachedAccount=''
-   if([IO.File]::Exists($quotaCache)){
-    try{
-     $quotaData=[IO.File]::ReadAllText($quotaCache,[Text.Encoding]::UTF8)|ConvertFrom-Json
-     if([string]$quotaData.source -cne 'official-remote-who-am-i'){return}
-     $quotaCachedAccount=[string]$quotaData.accountEmail
-    }catch{return} # transient read error must not trigger browser consent
-   }
-   $mode='-Poll'
-   if(( -not [IO.File]::Exists($quotaVault) -or
-        -not [string]::Equals($quotaCachedAccount,$activeAccount,[StringComparison]::OrdinalIgnoreCase)) -and
-      -not $quotaAutoTried.ContainsKey($activeAccount.ToLowerInvariant())){
-    # Same original one-time browser authorization for a confirmed account.
-    $quotaAutoTried[$activeAccount.ToLowerInvariant()]=$true
-    $mode='-Authorize'
-   }
-   $quotaNextPollUtc=[DateTime]::UtcNow.AddMinutes(30)
+   # Persistent script-scoped scheduler state survives WinForms event scopes.
+   # GUI-open hints never start another worker or bypass failure backoff.
    try{
-    $quotaPollProcess=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
-     '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),$mode
-    ) -WindowStyle Hidden -PassThru -ErrorAction Stop
-   }catch{} # Host and Remote remain usable if quota authorization fails.
+    $now=[DateTime]::UtcNow
+    $elapsed=[long][Math]::Floor($script:quotaClock.Elapsed.TotalSeconds)
+    if($script:quotaPollProcess -and $script:quotaPollProcess.HasExited){
+     $completed=[RdcOwnerTrayQuotaSnapshot]::Inspect($quotaCache,$script:quotaAttemptAccount,$now)
+     $success=$completed.Fresh($now,5) -and $completed.ObservedUtc -gt $script:quotaAttemptObserved
+     $script:quotaPolicy.Complete($elapsed,$success)
+     $script:quotaPollProcess.Dispose();$script:quotaPollProcess=$null
+     $script:quotaAttemptAccount='';$script:quotaAttemptObserved=[DateTime]::MinValue
+    }
+    $enabled=Test-Rc1QuotaDisplayEnabled $quotaDisplayPath
+    $activeAccount=[string]$owner.ActiveManagedAccount
+    $eligibleAccount=[string]$owner.QuotaManagedAccount
+    $generation=[long]$owner.QuotaGuiOpenGeneration
+    if(-not $enabled -or -not $eligibleAccount){
+     [void]$script:quotaPolicy.Decide($elapsed,$enabled,'','',$generation,'unknown',$false,$false,[bool]$script:quotaPollProcess)
+     return
+    }
+    $observation=[RdcOwnerTrayQuotaSnapshot]::Inspect($quotaCache,$eligibleAccount,$now)
+    $vaultState=[RdcOwnerTrayQuotaSnapshot]::VaultState($quotaVault)
+    $cacheState=if($vaultState -ceq 'unknown'){'unknown'}else{$observation.State}
+    $mode=$script:quotaPolicy.Decide($elapsed,$enabled,$eligibleAccount,$activeAccount,$generation,
+     $cacheState,$observation.Fresh($now,5),($vaultState -ceq 'present'),[bool]$script:quotaPollProcess)
+    if(-not $mode){return}
+    # Recheck the current preference and account immediately before spawn.
+    if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath) -or
+       -not [string]::Equals($eligibleAccount,[string]$owner.QuotaManagedAccount,[StringComparison]::OrdinalIgnoreCase) -or
+       ($mode -ceq '-Authorize' -and -not [string]::Equals($eligibleAccount,[string]$owner.ActiveManagedAccount,[StringComparison]::OrdinalIgnoreCase))){
+     $script:quotaPolicy.Complete($elapsed,$false);return
+    }
+    $script:quotaAttemptAccount=$eligibleAccount
+    $script:quotaAttemptObserved=$observation.ObservedUtc
+    try{
+     $script:quotaPollProcess=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
+      '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$quotaScript+'"'),$mode
+     ) -WindowStyle Hidden -PassThru -ErrorAction Stop
+    }catch{$script:quotaPolicy.Complete($elapsed,$false)}
+   }catch{} # Host and Remote remain usable if quota state is unavailable.
   })
-  # A confirmed owned account triggers its initial quota request on the next
-  # timer pulse, then every 30m. GUI independently reads the cache every 15s.
+  # Initial/periodic refresh, plus a bounded hint from each GUI generation.
   $quotaTimer.Start()
  }
  $owner.Run()
 }finally{
  if($quotaTimer){$quotaTimer.Stop();$quotaTimer.Dispose()}
- if($quotaPollProcess){$quotaPollProcess.Dispose()}
+ if($script:quotaPollProcess){$script:quotaPollProcess.Dispose()}
  if($observerTimer){$observerTimer.Stop();$observerTimer.Dispose()}
  if($owner){$owner.Dispose()}
 }
