@@ -68,11 +68,11 @@ internal static class RdcNodePrerequisite {
     bool hasCli=PresentFile(cli),hasNpmCli=PresentFile(npmCli);
     if(hasShim||hasNode||hasNpm||hasCli||hasNpmCli)foundAny=true;
     if(!hasShim)continue;
-    if(!hasNode||!hasNpm||!hasCli||!hasNpmCli)return "EXISTING_UNSUPPORTED";
+    if(!hasNode||!hasNpm||!hasCli||!hasNpmCli)return "INCOMPLETE";
     var version=FileVersionInfo.GetVersionInfo(node);
     return SupportedNodeVersion(version.FileMajorPart,version.FileMinorPart)?"READY":"EXISTING_UNSUPPORTED";
    }
-   return foundAny?"EXISTING_UNSUPPORTED":"MISSING";
+   return foundAny?"INCOMPLETE":"MISSING";
   }catch{return "UNKNOWN";}
  }
  static bool OtherNodeOnPath(){
@@ -225,10 +225,14 @@ internal static class RdcNodePrerequisite {
     "RDC Relay",System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Warning);
    return false;
   }
-  if(state!="MISSING"||OtherNodeOnPath()||OtherNodeRegistered()){
+  bool detectedElsewhere=false;
+  if(state=="MISSING")detectedElsewhere=OtherNodeOnPath()||OtherNodeRegistered();
+  if(state!="MISSING"||detectedElsewhere){
    System.Windows.Forms.MessageBox.Show(en?
-    "An existing Node.js installation is incomplete, unsupported or outside the standard location. Repair it (Node.js 22.12 or newer, with npm/npx), then reopen RDC Relay. RDC Relay will not replace a shared runtime automatically.":
-    "Обнаружена неполная, неподдерживаемая или нестандартная установка Node.js. Восстановите Node.js 22.12 или новее с npm/npx и повторите запуск RDC Relay. RDC Relay не заменяет общую среду автоматически.",
+    (state=="INCOMPLETE"?"Node.js installation is incomplete.":state=="EXISTING_UNSUPPORTED"?"Node.js installation is unsupported.":"Another Node.js installation may exist outside the supported locations.")+
+     "\n\nRepair or install Node.js 22.12 or newer with npm/npx in a supported location, then reopen RDC Relay. RDC Relay will not replace a shared runtime automatically.":
+    (state=="INCOMPLETE"?"Установка Node.js неполная.":state=="EXISTING_UNSUPPORTED"?"Обнаружена неподдерживаемая установка Node.js.":"Возможно, Node.js установлен вне поддерживаемых каталогов.")+
+     "\n\nВосстановите или установите Node.js 22.12 или новее с npm/npx в поддерживаемом каталоге, затем снова откройте RDC Relay. Общая среда автоматически не заменяется.",
     "RDC Relay",System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Warning);
    return false;
   }
@@ -247,7 +251,7 @@ internal static class RdcNodePrerequisite {
   if(answer!=System.Windows.Forms.DialogResult.Yes)return false;
   string temp=Path.Combine(Path.GetTempPath(),"RDC-NodePrerequisite-"+Guid.NewGuid().ToString("N"));
   PathSafe(temp);
-  if(Directory.Exists(temp)||File.Exists(temp))throw new InvalidOperationException("RC1_NODE_TEMP_COLLISION");
+  if(Attributes(temp).HasValue)throw new InvalidOperationException("RC1_NODE_TEMP_COLLISION");
   Directory.CreateDirectory(temp);
   string msi=Path.Combine(temp,"node-v24.22.3-x64.msi");
   try{
@@ -257,6 +261,7 @@ internal static class RdcNodePrerequisite {
    state=ClassifyNodePrerequisite(roots);
    if(state=="READY")return true;
    if(state!="MISSING"||OtherNodeOnPath()||OtherNodeRegistered())throw new InvalidOperationException("RC1_NODE_STATE_CHANGED");
+   PathSafe(msi);
    if(Hash(msi)!=NodeMsiSha256)throw new InvalidOperationException("RC1_NODE_MSI_HASH_MISMATCH");
    string msiexec=Path.Combine(Environment.SystemDirectory,"msiexec.exe");
    PathSafe(msiexec);
