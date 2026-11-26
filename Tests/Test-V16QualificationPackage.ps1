@@ -67,7 +67,7 @@ $OwnerGui=$true;$appVersion='1.6.0'
 function FullFeed($v){[ordered]@{schema=1;architecture='full-host-gui';ready=$true;version=$v;tag=('v'+$v);asset=('RDC.Relay.Setup.v'+$v+'.exe');sha256=('a'*64);bytes=1500000}}
 function Available($v){Get-RdcAvailableVersionFromManifest ((FullFeed $v)|ConvertTo-Json)}
 Check ($null -eq (Available '1.5.18') -and $null -eq (Available '1.6.0') -and (Available '1.6.1') -ceq '1.6.1') 'numeric passive notice never advertises same or older version'
-Check ($script:rdcFullHostOffer.Uri.AbsoluteUri -ceq 'https://github.com/1rubass1/RDC-Relay/releases/download/v1.6.1/RDC.Relay.Setup.v1.6.1.exe') 'exact new architecture installer asset'
+Check ($script:rdcFullHostOffer.Uri.AbsoluteUri -ceq 'https://github.com/Rubo-Facility/RDC-Relay/releases/download/v1.6.1/RDC.Relay.Setup.v1.6.1.exe') 'exact new architecture installer asset'
 Check ($null -eq (Get-RdcAvailableVersionFromManifest '{"version":"1.7.0","files":[{"name":"remote-window.ps1"},{"name":"update.ps1"}]}')) 'legacy flat manifest never accepted by full Host'
 foreach($field in @('architecture','tag','asset','sha256')){
  $m=FullFeed '1.6.1';$m[$field]='invalid'
