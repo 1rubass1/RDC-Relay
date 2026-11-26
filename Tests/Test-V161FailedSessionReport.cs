@@ -162,6 +162,17 @@ public static class TestV161FailedSessionReport {
     var saved=Read(failed);store.Recover();
     Check(Same(saved,Read(failed))&&!Directory.Exists(current),"partial cleanup after unexpected publication is idempotent");
    }
+   var summary=RdcOwnerLogSessions.AttemptDiagnostics("completed",true,new RdcOwnerFailedSessionInfo{
+    CmdExit=0,StopRequested=false,BytesRead=0,PrerequisiteObservations=new[]{
+     "runtime ProgramFiles: node=missing npm=missing npx=missing",
+     "runtime AppDataNpm: node=secret_path npm=present npx=present"}});
+   Check(summary.Contains("completion_kind=unexpected_after_ready")&&summary.Contains("cmd_exit=0")&&
+    summary.Contains("capture_read=0")&&summary.Contains("write_ack=unknown"),"snapshot distinguishes known zero from unknown");
+   Check(summary.Contains("runtime ProgramFiles: node=missing npm=missing npx=missing")&&
+    !String.Join("\n",summary).Contains("secret_path")&&summary.Length<=22&&summary.All(x=>x.Length<=120),
+    "snapshot contains only bounded allowlisted metadata");
+   Check(RdcOwnerLogSessions.AttemptDiagnostics("startup_observation",false,null).Contains("completion_kind=unknown"),
+    "startup observation cannot claim completion");
    Console.WriteLine("RDC_V161_FAILED_REPORT_PASS="+pass);
    return 0;
   }catch(Exception e){Console.WriteLine(e.GetType().Name+": "+e.Message);return 1;}
