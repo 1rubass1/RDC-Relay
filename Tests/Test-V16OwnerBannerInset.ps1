@@ -80,8 +80,8 @@ foreach($owner in @($false,$true)){
  try{
   $box.ForeColor=[Drawing.Color]::Gainsboro
   $box.OwnerBannerLeadingColumn=$owner
-  $left=if($owner){'  '+('D'*61)}else{('D'*61)}
-  $line=$left+('C'*12)
+  $left=if($owner){'  '+('█'*61)}else{('D'*61)}
+  $line=$left+$(if($owner){'╗'*12}else{'C'*12})
   $sourceText=(($line+[Environment]::NewLine)*6)+'Remote Connection'
   $box.Text=$sourceText
   Check ($box.StyleStartupBanner($orange,$purple)) ('production banner style executes Owner='+$owner)
