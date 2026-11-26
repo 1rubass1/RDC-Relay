@@ -26,9 +26,6 @@ The latest version of RDC Relay is available in [Releases](https://github.com/Ru
 - **Setup** — standard installer. If the required Node.js, npm and npx environment is missing, Setup offers to install Node.js 24 LTS.
 - **Portable** — no installation required. Extract the entire ZIP archive to a local folder and launch `RDC Relay.exe`.
 
-> [!IMPORTANT]
-> **Updating from version 1.6.0:** due to the repository address change, upgrading from version 1.6.0 to a newer version must be performed manually. Download the latest version from [Releases](https://github.com/Rubo-Facility/RDC-Relay/releases).
-
 > [!CAUTION]
 > The installer is not digitally signed. Windows SmartScreen may display a warning, and Smart App Control may block execution.
 
