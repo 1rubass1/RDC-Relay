@@ -43,7 +43,7 @@ foreach($row in $m.files){
 }
 $installer=Join-Path $full 'Installer'
 [void][IO.Directory]::CreateDirectory($installer)
-foreach($name in @('AssemblyInfo.cs','Rc1CandidateSetup.cs','Rc1CandidateLauncher.cs','Rc1ManualUpgrade.cs','RdcReleaseLegacyMigrationLease.cs','RdcV16MetadataTransaction.cs','RdcV16IntegratedMaintenance.cs')){
+foreach($name in @('AssemblyInfo.cs','Rc1CandidateSetup.cs','Rc1CandidateLauncher.cs','Rc1ManualUpgrade.cs','RdcNodePrerequisite.cs','RdcReleaseLegacyMigrationLease.cs','RdcV16MetadataTransaction.cs','RdcV16IntegratedMaintenance.cs')){
  [IO.File]::Copy((Join-Path $PublicStage ('build-source/'+$name)),(Join-Path $installer $name),$false)
 }
 # Store the intended package identity separately from the inactive feed.
@@ -66,8 +66,9 @@ request administrator permission. Windows can warn about unsigned software
 or prevent its execution under Smart App Control.
 
 For portable use, extract the complete Portable ZIP into a local folder
-and open RDC Relay.exe. Do not move the executable away from its supporting
-files. Installed copies have Desktop/Start Menu shortcuts and an entry in
+and open RDC Relay.exe. Portable also checks Node.js with npm/npx and offers
+an explicitly approved runtime installation when missing; it does not install
+RDC Relay itself. Do not move the executable away from its supporting files. Installed copies have Desktop/Start Menu shortcuts and an entry in
 Windows Installed apps. Stop Remote and exit RDC Relay before uninstalling.
 
 RDC Relay pins @wonderwhy-er/desktop-commander to 0.2.52. Pairing uses the
