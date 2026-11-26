@@ -88,27 +88,28 @@ Check ($code.Contains("scope='mcp:tools'") -and $code.Contains("code_challenge_m
 Check ($code.Contains('[Security.Cryptography.ProtectedData]::Protect') -and $code.Contains('[Security.Cryptography.DataProtectionScope]::CurrentUser')) 'tokens encrypted with user-scoped DPAPI'
 Check ($code.Contains("method='tools/call'") -and $code.Contains("name='who_am_i'") -and -not $code.Contains('Get-Content -LiteralPath $env:USERPROFILE')) 'only who_am_i and no device credentials'
 Check ($code.Contains('Validate-OfficialEndpoint') -and $code.Contains('mcp.desktopcommander.app')) 'fixed official endpoints enforced'
-Check ($hostCode.Contains('$quotaNextPollUtc=[DateTime]::UtcNow.AddMinutes(30)') -and
- $hostCode.Contains('$quotaTimer.Interval=15000') -and
- $hostCode.Contains('quotaPollProcess=Start-Process') -and
- $hostCode.Contains('if($Full -and -not $TrialRoot)')) 'Host schedules quota at 30min after verified managed account appears'
 $runtime=[IO.File]::ReadAllText((Join-Path $src 'RdcOwnerRuntime.cs'),[Text.Encoding]::UTF8)
+Check ($hostCode.Contains('$script:quotaPolicy.Decide') -and
+ $hostCode.Contains('$quotaTimer.Interval=15000') -and
+ $hostCode.Contains('$script:quotaPollProcess=Start-Process') -and
+ $hostCode.Contains('if($Full -and -not $TrialRoot)') -and
+ $runtime.Contains('MinimumGapSeconds=300,NormalSeconds=1800,FailureSeconds=900')) 'persistent Host scheduler retains 30-minute polling with bounded reopen and failure retry'
 Check ($runtime.Contains('public string ActiveManagedAccount') -and
- $runtime.Contains('managedState!="Ready"') -and
- $runtime.Contains('!managedProcess.Running') -and
- $hostCode.Contains('$activeAccount=[string]$owner.ActiveManagedAccount')) 'automatic quota polling gated by actual ready Host-owned identity'
-Check ($hostCode.Contains('if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath))') -and
- $hostCode.Contains("$"+'mode='+ "'-Poll'") -and
- $hostCode.Contains("$"+'mode='+ "'-Authorize'") -and
- $hostCode.Contains('$quotaAutoTried.ContainsKey') -and
- $hostCode.Contains('$activeAccount=[string]$owner.ActiveManagedAccount')) 'default ON restores original one-shot managed-account OAuth and 30-minute polls; explicit OFF blocks both'
+ $runtime.Contains('public string QuotaManagedAccount') -and
+ $runtime.Contains('SelectQuotaAccount(true)') -and
+ $hostCode.Contains('$activeAccount=[string]$owner.ActiveManagedAccount') -and
+ $hostCode.Contains('$eligibleAccount=[string]$owner.QuotaManagedAccount')) 'strict Ready for consent; only unchanged owned idle identity may reuse existing grant'
+Check ($hostCode.Contains('if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)') -and
+ $runtime.Contains('consentTried.Contains(account)') -and
+ $runtime.Contains('now>=nextDue') -and
+ $code.Contains('if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){throw ''RC1_QUOTA_DISABLED''}')) 'opt-out and bounded initial consent preserved at Host and network boundaries'
 Check (-not $hostCode.Contains("'remote --logout'") -and
  -not $hostCode.Contains('StopManagedRemote(')) 'automatic quota never logs out or controls Remote'
 Check ($window.Contains('$quotaAuthItem.CheckOnClick=[bool]$OwnerGui') -and
  $window.Contains("$"+'quotaAuthItem.Text='+"'Выводить остаток вызовов'") -and
  $gui.Contains('$quotaAuthItem.Enabled=$script:ownerManagedMode') -and
  $gui.Contains('$quotaAuthItem.Checked=[bool](Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath)')) 'Account checkbox restores default automatic behavior and persists explicit opt-out'
-Check ($gui.Contains('Остаток вызовов: 0%') -and $gui.Contains('[Drawing.Color]::LightCoral')) '0% rendered red'
+Check ($gui.Contains('$quotaPercent -eq 0') -and $gui.Contains('[Drawing.Color]::LightCoral')) 'validated numeric 0% rendered red'
 Write-Output ('RC1_QUOTA_OAUTH_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}
 exit 0
