@@ -258,7 +258,7 @@ public sealed class RdcOwnerLogSessions : IDisposable {
  const string MarkerPrefix="RDC-LOG-SESSION-V1:";
  const int MaxEntries=10000;
  public const int FailedRawLimit=1024*1024;
- const int FailedHeaderLimit=2048;
+ const int FailedHeaderLimit=3072;
  const string FailedName="Last unsuccessful sessions.log";
  const string FailedStageName=".rdc-failed-report-v1.tmp";
  const string FailedPrefix="RDC-LAST-UNSUCCESSFUL-V1:";
@@ -469,10 +469,15 @@ public sealed class RdcOwnerLogSessions : IDisposable {
   const string file=@"(missing|unknown|not_file|present)";
   const string node=@"(missing|unknown|not_file|present\(version_unknown\)|(present|unsupported)\([0-9]{1,10}(\.[0-9]{1,10}){3}\))";
   string pattern=@"\A"+loc+@"(check_unknown|node="+node+" npm="+file+" npx="+file+"|npm-cli="+file+" npx-cli="+file+@")\z";
+  string package=@"\A"+loc+@"npm_package=(missing|unknown|not_file|present\(version_unknown\)|present\([0-9]{1,9}(\.[0-9]{1,9}){2}(-[0-9A-Za-z.-]{1,24})?(\+[0-9A-Za-z.-]{1,16})?\))\z";
+  const string system=@"\A(windows_version=(unknown|[0-9]{1,10}(\.[0-9]{1,10}){2}) native_arch=(unknown|x86|x64|arm64|arm) host_bits=(32|64)|remote_requested=0\.2\.52 remote_actual_version=unknown)\z";
   var lines=new List<string>();
-  for(int i=0;i<Math.Min(6,observations.Length);i++){
+  for(int i=0;i<Math.Min(12,observations.Length);i++){
    string line=observations[i];
-   if(line!=null&&line.Length<=120&&System.Text.RegularExpressions.Regex.IsMatch(line,pattern))lines.Add(line+"\n");
+   if(line!=null&&line.Length<=120&&
+      (System.Text.RegularExpressions.Regex.IsMatch(line,pattern)||
+       System.Text.RegularExpressions.Regex.IsMatch(line,package)||
+       System.Text.RegularExpressions.Regex.IsMatch(line,system)))lines.Add(line+"\n");
   }
   return lines.Count==0?"prerequisite_observations=unknown\n":String.Concat(lines);
  }
