@@ -130,7 +130,7 @@ try{
         -not $productionGui.Contains('$form.Add_Shown({Start-RdcUpdateNoticePreview') -and
         -not $productionNotice.Contains('Invoke-RdcUpdateLoopVisualTick') -and
         -not $buildSource.Contains('updateAnimationLoopTest')) 'no synthetic cyclic demo in Owner GUI or packaged marker'
- Check ($productionNotice.Contains('https://api.github.com/repos/1rubass1/RDC-Relay/git/ref/heads/stable') -and
+ Check ($productionNotice.Contains('https://api.github.com/repos/Rubo-Facility/RDC-Relay/git/ref/heads/stable') -and
         $productionNotice.Contains('function Update-RdcUpdateNoticePolling') -and
         $productionGui.Contains('if($script:ownerUpdateDemoMode){$script:enableUpdateNotice=$true}')) 'genuine stable-only update notice route retained'
  Check (-not $script:rdcNoticeControl.ButtonReady -and
