@@ -195,8 +195,11 @@ function Get-Rc1QuotaStatus([string]$path,[string]$expectedEmail,[DateTime]$nowU
  if(-not $path -or -not $expectedEmail -or -not [IO.File]::Exists($path)){return $missing}
  try {
   $file=Get-Item -LiteralPath $path -ErrorAction Stop
-  if($file.Length -lt 40 -or $file.Length -gt 512){return $missing}
+  if($file.Length -lt 40 -or $file.Length -gt 512 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $missing}
+  $folder=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($path))
+  if(([IO.File]::GetAttributes($folder) -band [IO.FileAttributes]::ReparsePoint) -ne 0){return $missing}
   $raw=[IO.File]::ReadAllText($path,[Text.Encoding]::UTF8)
+  if($raw.Length -gt 512){return $missing}
   $data=ConvertFrom-Json -InputObject $raw -ErrorAction Stop
   if([string]$data.source -cne 'official-remote-who-am-i'){return $missing}
   if(-not [string]::Equals([string]$data.accountEmail,$expectedEmail.Trim(),
@@ -520,6 +523,7 @@ function Start-RdcOwnerGui {
  $script:ownerLastSnapshotUtcTicks=0
  $script:ownerRemotePid=0
  $script:ownerLastUptimeText=''
+ $script:ownerQuotaAccount=''
  $script:ownerQuotaPath=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'remote-usage-cache.json'
  $script:ownerQuotaEnabledPath=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'quota-display.opt-in'
  $quotaAuthItem.Checked=[bool](Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath)
@@ -595,6 +599,17 @@ function Start-RdcOwnerGui {
      if(-not $remoteSnapshot -or
         [bool]$remoteSnapshot.isActualRemote -ne $script:ownerRealMode){
       throw 'RC1_REMOTE_MODE_MISMATCH'
+     }
+     # Quota eligibility comes from Host-owned identity, not the visual
+     # connection caption. Clear on loss/change, without waiting 15 seconds.
+     $quotaAccount=''
+     if($script:ownerManagedMode -and $snapshot.quotaAccountEligible -eq $true -and
+        [string]$snapshot.remoteIdentity.user -cmatch '\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z'){
+      $quotaAccount=[string]$snapshot.remoteIdentity.user
+     }
+     if(-not [string]::Equals($quotaAccount,$script:ownerQuotaAccount,[StringComparison]::OrdinalIgnoreCase)){
+      $script:ownerQuotaAccount=$quotaAccount
+      $script:ownerQuotaNextCheckUtc=[DateTime]::MinValue
      }
      # Unlike old monolithic GUI, live Remote output is owned by Host.
      # Authenticated snapshots carry only fixed tool activity categories.
@@ -822,6 +837,8 @@ function Start-RdcOwnerGui {
      $script:ownerNextVerb='GET_SNAPSHOT'
     }else{throw ('RC1_BAD_OR_DENIED_REPLY_'+[string]$reply.code)}
    }catch{
+    $script:ownerQuotaAccount=''
+    $script:ownerQuotaNextCheckUtc=[DateTime]::MinValue
     $script:ownerNextVerb='GET_SNAPSHOT'
     $script:ownerLastSafePresentation=$null
     if($script:ownerRequestedNavigation){
@@ -867,14 +884,21 @@ function Start-RdcOwnerGui {
   if($script:enableUpdateNotice){Update-RdcUpdateNoticePolling}
   # Poll only the private, short-lived official snapshot (no credential IO,
   # no network requests on the WinForms UI thread). Expired means unknown.
-  if([DateTime]::UtcNow -ge $script:ownerQuotaNextCheckUtc){
+  $quotaNow=[DateTime]::UtcNow
+  if($script:ownerQuotaAccount -and ($script:ownerLastSnapshotUtcTicks -le 0 -or
+     $quotaNow.Ticks -lt $script:ownerLastSnapshotUtcTicks -or
+     ($quotaNow.Ticks-$script:ownerLastSnapshotUtcTicks) -gt 50000000)){
+   $script:ownerQuotaAccount=''
+   $script:ownerQuotaNextCheckUtc=[DateTime]::MinValue
+  }
+  if($quotaNow -ge $script:ownerQuotaNextCheckUtc){
    $script:ownerQuotaNextCheckUtc=[DateTime]::UtcNow.AddSeconds(15)
    $quotaDisplayEnabled=Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath
    if($quotaAuthItem.Checked -ne $quotaDisplayEnabled){$quotaAuthItem.Checked=$quotaDisplayEnabled}
    $quotaPercent=$null
    # The quota validator remains invariant; only its verified numeric result is formatted.
    $quotaText=if($quotaDisplayEnabled){
-    [void](Get-Rc1QuotaStatus $script:ownerQuotaPath ([string]$script:accountEmail) ([DateTime]::UtcNow) -percentOut ([ref]$quotaPercent))
+    [void](Get-Rc1QuotaStatus $script:ownerQuotaPath ([string]$script:ownerQuotaAccount) $quotaNow -percentOut ([ref]$quotaPercent))
     if($null -ne $quotaPercent){
      (Get-RdcOwnerUiText 'gui.quota.value' 'Остаток вызовов: {percent}%').Replace(
       '{percent}',[string]$quotaPercent)
