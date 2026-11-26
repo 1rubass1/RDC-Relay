@@ -4,7 +4,7 @@
 
 ## Immediate release cycle — replacement 1.6.0 as clean distribution baseline
 
-Owner decision 2026-11-27: retire automatic 1.5.18 migration and its individual-file update channel; complete the previously planned 1.6.1 fixes under public version 1.6.0. Keep the accepted Host/GUI architecture and existing security boundaries. Architecture retirement confirmation and release GO remain gates before public changes.
+Owner and Architect decision (explicitly confirmed) 2026-11-27: retire automatic 1.5.18 migration and its individual-file update channel; complete the previously planned 1.6.1 fixes under public version 1.6.0. Keep the accepted Host/GUI architecture and existing security boundaries. Architecture retirement GO is confirmed; qualification and final release GO remain gates before public changes.
 
 Sequence: complete diagnostics and quota refresh, Portable prerequisites, confirmed monitor/DPI and shortcut issues; retire obsolete distribution routes and integrate canonical GitHub owner; qualify exact Setup/Portable and single full-Host feed (including clean install, same-version repair, safe handling of legacy installations, future updates); then replace public 1.6.0 and clean old releases with preserved rollback artifacts. Existing 1.6.0 users are informed of manual replacement. No broad runtime rewrite in this cycle. The authoritative task scope, statuses and release gates are in [COORDINATION/BOARD.md](../../../COORDINATION/BOARD.md). Earlier roadmap phases below retain historical context and do not supersede this cycle.
 
