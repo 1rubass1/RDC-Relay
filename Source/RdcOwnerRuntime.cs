@@ -1897,7 +1897,7 @@ void RefreshTrayMenu(){
   }catch{
    // A failure after spawn must never abandon an untracked private Job.
    if(!child.HasStarted){
-    try{if(sink!=null)sink.Dispose();if(sessions!=null&&began)sessions.FinalizeCurrent();}
+    try{if(sink!=null)sink.Dispose();if(sessions!=null&&began)sessions.FinalizeCurrentWithDiagnostics(new RdcOwnerFailedSessionInfo{LaunchFailed=true});}
     finally{if(sessions!=null)sessions.Dispose();child.Dispose();}
     throw;
    }
@@ -1954,7 +1954,18 @@ void RefreshTrayMenu(){
    }
    managedCaptureSummaryReported=true;
   }
-  managedLogSessions.FinalizeCurrent();managedLogSessions.Dispose();
+  var failureInfo=new RdcOwnerFailedSessionInfo{CmdExit=exitCode,StopRequested=managedProcess.StopRequested};
+  if(managedLogPump!=null){
+   failureInfo.BytesRead=managedLogPump.BytesRead;
+   failureInfo.BytesWriteAcknowledged=managedLogPump.BytesWriteAcknowledged;
+   failureInfo.RetainedBytes=managedLogPump.RetainedBytes;
+   failureInfo.ParserPending=managedLogPump.PendingBytes;
+   failureInfo.CleanEof=managedLogPump.CleanEof;
+   failureInfo.ReadFault=managedLogPump.ReadFault;
+   failureInfo.StorageFault=managedLogPump.StorageFault;
+   failureInfo.ParserFault=managedLogPump.ParserFault||managedParserFault;
+  }
+  managedLogSessions.FinalizeCurrentWithDiagnostics(failureInfo);managedLogSessions.Dispose();
   managedLogSessions=null;managedLogPump=null;managedSessionAccepted=false;
  }
  // Only Host-owned Remote can be switched. The old Job must be fully
