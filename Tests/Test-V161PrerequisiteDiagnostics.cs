@@ -20,6 +20,7 @@ public static class TestV161PrerequisiteDiagnostics {
   string node=Path.Combine(root,"node.exe"),npm=Path.Combine(root,"npm.cmd"),npx=Path.Combine(root,"npx.cmd");
   string modules=Path.Combine(root,"node_modules"),package=Path.Combine(modules,"npm"),bin=Path.Combine(package,"bin");
   string npmCli=Path.Combine(bin,"npm-cli.js"),npxCli=Path.Combine(bin,"npx-cli.js");
+  string metadata=Path.Combine(package,"package.json");
   Action<string> allow=p=>{};
   Action<string> deny=p=>{throw new UnauthorizedAccessException();};
   try{
@@ -43,11 +44,29 @@ public static class TestV161PrerequisiteDiagnostics {
    Check(!String.Join(" ",lines).Contains(root)&&lines[0].Length<=120&&lines[1].Length<=120,"no private path in diagnostics");
    File.WriteAllText(npxCli,"DO NOT EXECUTE");
    Check(RdcOwnerPrerequisiteDiagnostics.Observe(root,"ProgramFiles",allow)[1]=="runtime ProgramFiles: npm-cli=present npx-cli=present","both entrypoints present");
+   Check(RdcOwnerEnvironmentDiagnostics.NpmPackageState(root,allow)=="missing","npm metadata explicitly missing");
+   File.WriteAllText(metadata,"{\"name\":\"npm\",\"version\":\"10.9.4\"}");
+   Check(RdcOwnerEnvironmentDiagnostics.NpmPackageState(root,allow)=="present(10.9.4)","numeric npm package version");
+   Check(RdcOwnerEnvironmentDiagnostics.NpmPackageState(root,deny)=="unknown","inaccessible metadata not reported missing");
+   File.WriteAllText(metadata,"{\"name\":\"wrong\",\"version\":\"10.9.4\"}");
+   Check(RdcOwnerEnvironmentDiagnostics.NpmPackageState(root,allow)=="present(version_unknown)","wrong package name not trusted");
+   File.WriteAllText(metadata,"{\"name\":\"npm\",\"version\":\"10.9.4-secret_value\"}");
+   Check(RdcOwnerEnvironmentDiagnostics.NpmPackageState(root,allow)=="present(version_unknown)","arbitrary version suffix not exported");
+   File.WriteAllText(metadata,new string('x',65537));
+   Check(RdcOwnerEnvironmentDiagnostics.NpmPackageState(root,allow)=="present(version_unknown)","oversized metadata rejected");
+   File.WriteAllText(metadata,"{");
+   Check(RdcOwnerEnvironmentDiagnostics.NpmPackageState(root,allow)=="unknown","malformed metadata check unknown");
+   var system=RdcOwnerEnvironmentDiagnostics.ObserveSystem();
+   Check(Regex.IsMatch(system[0],@"\Awindows_version=[0-9]+\.[0-9]+\.[0-9]+ native_arch=(x86|x64|arm64|arm) host_bits=(32|64)\z"),"Windows build and native architecture actually observed");
+   Check(system[1]=="remote_requested=0.2.52 remote_actual_version=unknown","pinned request not mistaken for installed version");
+   var summary=RdcOwnerLogSessions.AttemptDiagnostics("startup_observation",false,new RdcOwnerFailedSessionInfo{
+    PrerequisiteObservations=new[]{system[0],system[1],"runtime ProgramFiles: npm_package=present(10.9.4)","runtime AppDataNpm: npm_package=present(10.9.4-secret)" }});
+   Check(Array.IndexOf(summary,system[0])>=0&&Array.IndexOf(summary,system[1])>=0&&Array.IndexOf(summary,"runtime ProgramFiles: npm_package=present(10.9.4)")>=0&&!String.Join("\n",summary).Contains("secret"),"environment data exported through strict summary allowlist");
    Console.WriteLine("RDC_V161_PREREQUISITE_CS_PASS="+pass);return 0;
   }catch(Exception e){Console.WriteLine(e.GetType().Name+": "+e.Message);return 1;}
   finally{
    if(!Regex.IsMatch(Path.GetFileName(root),@"\ARDC-V161-PREQ-CS-[0-9a-f]{32}\z"))throw new Exception("FIXTURE_SCOPE");
-   foreach(string file in new[]{npmCli,npxCli,node,npm,npx})
+   foreach(string file in new[]{metadata,npmCli,npxCli,node,npm,npx})
     if(File.Exists(file)){if((File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0)throw new Exception("FIXTURE_REPARSE");File.Delete(file);}
    foreach(string dir in new[]{npx,bin,package,modules,root})
     if(Directory.Exists(dir)){
