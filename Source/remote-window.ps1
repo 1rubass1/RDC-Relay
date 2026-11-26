@@ -6887,7 +6887,7 @@ $quotaAuthItem.Add_Click({
     }
     $script:ownerQuotaNextCheckUtc=[DateTime]::MinValue
     $script:ownerLastQuotaText=''
-    $quotaLabel.Text='Остаток вызовов: --%'
+    $quotaLabel.Text=(Get-RdcOwnerDialogText 'gui.quota.unknown' 'Остаток вызовов: --%')
     $quotaLabel.ForeColor=[Drawing.Color]::Silver
     # The Tray Host retains its original automatic per-account OAuth and
     # 30-minute quota poll. Do not launch a second browser client from GUI:
