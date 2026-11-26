@@ -14,7 +14,7 @@ function Get-RdcMigrationOffer($manifest,[string]$installed){
    [string]$m.mode -cne 'installer-handoff' -or
    [string]$m.asset -cne 'RDC.Relay.Setup.v1.6.0.exe' -or
    [string]$m.setupSha256 -cnotmatch '^[0-9a-fA-F]{64}$'){return $null}
-  return [pscustomobject]@{Digest=([string]$m.setupSha256).ToUpperInvariant();Uri=[Uri]'https://github.com/1rubass1/RDC-Relay/releases/download/v1.6.0/RDC.Relay.Setup.v1.6.0.exe'}
+  return [pscustomobject]@{Digest=([string]$m.setupSha256).ToUpperInvariant();Uri=[Uri]'https://github.com/Rubo-Facility/RDC-Relay/releases/download/v1.6.0/RDC.Relay.Setup.v1.6.0.exe'}
  }catch{return $null}
 }
 function Test-RdcMigrationUri([Uri]$uri){
