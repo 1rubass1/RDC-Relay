@@ -55,7 +55,7 @@ public static class TestV160MonitorGeometry {
   uint anchorDpi=0,popupDpi=0;
   try{anchorDpi=GetDpiForWindow(host.Handle);popupDpi=GetDpiForWindow(hwnd);}catch{}
   var root=(System.Windows.FrameworkElement)Field(host,"root");
-  var source=PresentationSource.FromVisual(root) as HwndSource;
+  var source=System.Windows.PresentationSource.FromVisual(root) as HwndSource;
   double scale=source!=null&&source.CompositionTarget!=null?source.CompositionTarget.TransformToDevice.M11:0;
   double width=root.ActualWidth;
   var shader=(RdcDividerGlowEffect)Field(host,"particleEffect");
