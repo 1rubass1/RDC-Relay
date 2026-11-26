@@ -950,6 +950,45 @@ public static class RdcOwnerTrayConfirmation {
  }
 }
 
+// Read-only prerequisite observations. No PATH execution or private paths in exported events.
+// This helper never changes the launch resolver's acceptance or fallback policy.
+public static class RdcOwnerPrerequisiteDiagnostics {
+ public static string FileState(string path,Action<string> checkPath){
+  try{
+   checkPath(path);
+   var attributes=File.GetAttributes(path);
+   if((attributes&FileAttributes.ReparsePoint)!=0)return "unknown";
+   return (attributes&FileAttributes.Directory)!=0?"not_file":"present";
+  }catch(FileNotFoundException){return "missing";}
+   catch(DirectoryNotFoundException){return "missing";}
+   catch{ return "unknown"; }
+ }
+ public static string NodeState(string path,Action<string> checkPath){
+  string state=FileState(path,checkPath);
+  if(state!="present")return state;
+  try{
+   checkPath(path);
+   var v=FileVersionInfo.GetVersionInfo(path);
+   if(v.FileMajorPart<=0)return "present(version_unknown)";
+   string version=String.Format(System.Globalization.CultureInfo.InvariantCulture,
+    "{0}.{1}.{2}.{3}",v.FileMajorPart,v.FileMinorPart,v.FileBuildPart,v.FilePrivatePart);
+   bool supported=v.FileMajorPart>22||(v.FileMajorPart==22&&v.FileMinorPart>=12);
+   return (supported?"present(":"unsupported(")+version+")";
+  }catch{return "present(version_unknown)";}
+ }
+ public static string[] Observe(string root,string location,Action<string> checkPath){
+  string node=NodeState(Path.Combine(root,"node.exe"),checkPath);
+  string npm=FileState(Path.Combine(root,"npm.cmd"),checkPath);
+  string npx=FileState(Path.Combine(root,"npx.cmd"),checkPath);
+  string bin=Path.Combine(root,"node_modules","npm","bin");
+  return new[]{
+   "runtime "+location+": node="+node+" npm="+npm+" npx="+npx,
+   "runtime "+location+": npm-cli="+FileState(Path.Combine(bin,"npm-cli.js"),checkPath)+
+    " npx-cli="+FileState(Path.Combine(bin,"npx-cli.js"),checkPath)
+  };
+ }
+}
+
 public sealed class RdcOwnerRuntime : IDisposable {
  readonly object gate=new object();
  readonly string sourceRoot, guiScript, stateRoot, ticketFile, instance, generation, trialRoot;
@@ -1745,13 +1784,18 @@ void RefreshTrayMenu(){
    return true;
   }
  }
- static string ResolvePinnedNpx(){
+ string ResolvePinnedNpx(){
   string[] candidates=new string[]{
    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"nodejs","npx.cmd"),
    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"npm","npx.cmd"),
    Path.Combine(Environment.GetEnvironmentVariable("ProgramFiles(x86)")??@"C:\Program Files (x86)","nodejs","npx.cmd")
   };
-  foreach(string file in candidates){
+  string[] locations={"ProgramFiles","AppDataNpm","ProgramFilesX86"};
+  for(int i=0;i<candidates.Length;i++){
+   string file=candidates[i];
+   // Diagnostic failures cannot change the established launch decision.
+   try{foreach(string line in RdcOwnerPrerequisiteDiagnostics.Observe(Path.GetDirectoryName(file),locations[i],CheckPath))Append("remote",line);}
+   catch{Append("remote","runtime "+locations[i]+": check_unknown");}
    CheckPath(file);
    if(!File.Exists(file))continue;
    string dir=Path.GetDirectoryName(file);
