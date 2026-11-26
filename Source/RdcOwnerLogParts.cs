@@ -231,13 +231,14 @@ public sealed class RdcOwnerLogSessions : IDisposable {
  const string AcceptedName=".rdc-accepted-v1";
  const string MarkerPrefix="RDC-LOG-SESSION-V1:";
  const int MaxEntries=10000;
- readonly string root,current,previous,retired;
+ readonly string root,current,previous,retired,unaccepted,retiredUnaccepted;
  FileStream lease;
  bool disposed;
  string activeId;
  bool finalizing,finalizingAccepted;
  public string CurrentPath {get{return current;}}
  public string PreviousPath {get{return previous;}}
+ public string UnacceptedPath {get{return unaccepted;}}
  public RdcOwnerLogSessions(string directory){
   if(String.IsNullOrWhiteSpace(directory)||!Path.IsPathRooted(directory))
    throw new ArgumentException("RDC_LOG_ROOT");
@@ -247,6 +248,8 @@ public sealed class RdcOwnerLogSessions : IDisposable {
   current=Path.Combine(root,"CurrentSession");
   previous=Path.Combine(root,"PreviousSession");
   retired=Path.Combine(root,"RetiredSession");
+  unaccepted=Path.Combine(root,"LastUnacceptedSession");
+  retiredUnaccepted=Path.Combine(root,"RetiredUnacceptedSession");
   string lockPath=Path.Combine(root,".rdc-session-lock-v1");
   Safe(lockPath);
   lease=new FileStream(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
@@ -347,43 +350,58 @@ public sealed class RdcOwnerLogSessions : IDisposable {
   Directory.Delete(path,false);return true;
  }
  void RecoverCore(){
-  // An empty current may result from interruption before its first marker
-  // or after removal of its last owned file. Never remove nonempty unknown data.
+  // A session without an accepted Ready marker is diagnostic evidence, not
+  // necessarily a crash. Retain one such session independently of Previous.
   RemoveReservedEmpty(current);
-  var c=Inspect(current);var p=Inspect(previous);
+  var c=Inspect(current);var p=Inspect(previous);var f=Inspect(unaccepted);
   if(c==null&&p!=null&&p.Accepted)RemoveReservedEmpty(retired);
-  var r=Inspect(retired);
-  if((p!=null&&!p.Accepted)||(r!=null&&!r.Accepted&&(c!=null||p==null||r.Files.Count!=0))||
-    (c!=null&&p!=null&&c.Id==p.Id)||(c!=null&&r!=null&&c.Id==r.Id)||(p!=null&&r!=null&&p.Id==r.Id))
+  if(c==null&&f!=null&&!f.Accepted)RemoveReservedEmpty(retiredUnaccepted);
+  var r=Inspect(retired);var rf=Inspect(retiredUnaccepted);
+  var ids=new HashSet<string>(StringComparer.Ordinal);
+  foreach(var item in new[]{c,p,f,r,rf})
+   if(item!=null&&!ids.Add(item.Id))throw new IOException("RDC_LOG_SESSION_DUPLICATE_ID");
+  if((p!=null&&!p.Accepted)||(f!=null&&f.Accepted)||(rf!=null&&rf.Accepted)||
+     (r!=null&&rf!=null)||
+     (r!=null&&!r.Accepted&&(c!=null||p==null||r.Files.Count!=0)))
    throw new IOException("RDC_LOG_SESSION_STATE");
+  // Recover either rename transaction, never overwrite an occupied slot.
   if(r!=null){
    if(c!=null&&c.Accepted&&p==null){
     MoveOwned(current,previous,c);p=Inspect(previous);c=null;
    }else if(c!=null||p==null){
-    // No destructive guess in an impossible or interrupted state.
     throw new IOException("RDC_LOG_SESSION_TRANSACTION_UNKNOWN");
    }
    DeleteOwned(retired,r);
   }
-  if(c==null)return;
-  if(!c.Accepted){DeleteOwned(current,c);return;}
-  Publish(c,p);
- }
- void Publish(Session c,Session p){
-  if(!c.Accepted||Present(retired))throw new IOException("RDC_LOG_SESSION_PUBLISH_STATE");
-  if(p!=null){
-   if(!p.Accepted||p.Id==c.Id)throw new IOException("RDC_LOG_SESSION_PREVIOUS_STATE");
-   MoveOwned(previous,retired,p);
+  if(rf!=null){
+   if(c!=null&&!c.Accepted&&f==null){
+    MoveOwned(current,unaccepted,c);f=Inspect(unaccepted);c=null;
+   }else if(c!=null||f==null){
+    throw new IOException("RDC_LOG_UNACCEPTED_TRANSACTION_UNKNOWN");
+   }
+   DeleteOwned(retiredUnaccepted,rf);
   }
-  MoveOwned(current,previous,c);
-  if(p!=null)DeleteOwned(retired,p);
+  if(c==null)return;
+  if(c.Accepted)Publish(c,p,previous,retired,true);
+  else Publish(c,f,unaccepted,retiredUnaccepted,false);
+ }
+ void Publish(Session c,Session old,string destination,string retirement,bool accepted){
+  if(c.Accepted!=accepted||Present(retirement))throw new IOException("RDC_LOG_SESSION_PUBLISH_STATE");
+  if(old!=null){
+   if(old.Accepted!=accepted||old.Id==c.Id)throw new IOException("RDC_LOG_SESSION_PREVIOUS_STATE");
+   MoveOwned(destination,retirement,old);
+  }
+  MoveOwned(current,destination,c);
+  if(old!=null)DeleteOwned(retirement,old);
  }
  public RdcOwnerLogParts Begin(){
   Ready();
-  if(activeId!=null||Present(current)||Present(retired))
+  if(activeId!=null||Present(current)||Present(retired)||Present(retiredUnaccepted))
    throw new IOException("RDC_LOG_SESSION_NOT_RECOVERED");
   var p=Inspect(previous);
   if(p!=null&&!p.Accepted)throw new IOException("RDC_LOG_SESSION_PREVIOUS_STATE");
+  var f=Inspect(unaccepted);
+  if(f!=null&&f.Accepted)throw new IOException("RDC_LOG_UNACCEPTED_STATE");
   Directory.CreateDirectory(current);
   Safe(current);
   // The sink requires an initially empty directory. Register its owner
@@ -416,12 +434,12 @@ public sealed class RdcOwnerLogSessions : IDisposable {
    finalizingAccepted=c.Accepted;finalizing=true;
   }else{
    // A retry must still refer to our exact session, either before the move
-   // or already published. A failed-start cleanup may have removed current.
+   // or already published to the correct independent destination.
    RemoveReservedEmpty(current);
-   var c=Inspect(current);var p=Inspect(previous);
+   var c=Inspect(current);var p=Inspect(finalizingAccepted?previous:unaccepted);
    if(c!=null&&(c.Id!=activeId||c.Accepted!=finalizingAccepted))
     throw new IOException("RDC_LOG_SESSION_ACTIVE_CHANGED");
-   if(c==null&&finalizingAccepted&&(p==null||p.Id!=activeId||!p.Accepted))
+   if(c==null&&(p==null||p.Id!=activeId||p.Accepted!=finalizingAccepted))
     throw new IOException("RDC_LOG_SESSION_PUBLISH_PROOF");
   }
   RecoverCore();
