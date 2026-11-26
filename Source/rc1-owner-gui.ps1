@@ -639,7 +639,7 @@ function Start-RdcOwnerGui {
      $script:ownerJournalToolActivity=[string]$remoteSnapshot.toolActivity
      $script:ownerJournalLastSnapshotUtc=[DateTime]::UtcNow
      $completion=Get-Rc1OwnerCompletionKind ([string]$snapshot.remoteCompletionKind)
-     $script:ownerAttemptDiagnostics=if($script:ownerManagedMode){@($snapshot.remoteAttemptDiagnostics | Select-Object -First 22)}else{@()}
+     $script:ownerAttemptDiagnostics=if($script:ownerManagedMode){@($snapshot.remoteAttemptDiagnostics | Select-Object -First 28)}else{@()}
      $script:ownerRecentDiagnostics=@($remoteSnapshot.diagnostics |
        Where-Object{
         $v=[string]$_
