@@ -62,12 +62,18 @@ public static class TestV160MonitorGeometry {
   Console.WriteLine("OBS "+label+" anchor="+(anchor.R-anchor.L)+"x"+(anchor.B-anchor.T)+
    " popup="+(popup.R-popup.L)+"x"+(popup.B-popup.T)+" offset="+(popup.L-anchor.L)+","+(popup.T-anchor.T)+
    " dpi="+anchorDpi+"/"+popupDpi+" wpfScale="+scale.ToString(System.Globalization.CultureInfo.InvariantCulture));
-  if(anchorDpi!=96||popupDpi!=96||Math.Abs(scale-1)>0.001){
-   Console.WriteLine("NOT_CHECKED "+label+" 96-DPI expectations not applicable");skip++;return;
+  if(anchorDpi==0||popupDpi==0||scale<=0||width<=0){
+   Console.WriteLine("NOT_CHECKED "+label+" DPI/layout evidence unavailable");skip++;return;
   }
-  Check(popup.L==anchor.L&&popup.T==anchor.T-13&&popup.R-popup.L==anchor.R-anchor.L&&popup.B-popup.T==33,
-   label+" native popup aligned to divider at 96 DPI");
-  Check(width>0&&Math.Abs(shader.ViewportWidth-width)<1.01,label+" shader viewport matches WPF layout width");
+  // Compare both HWNDs in the SAME caller coordinate space. Centering
+  // requires at most one pixel of rounding, irrespective of WPF DPI.
+  Check(popup.L==anchor.L&&popup.R-popup.L==anchor.R-anchor.L,
+   label+" native popup width and horizontal anchor");
+  Check(Math.Abs((long)popup.T+popup.B-anchor.T-anchor.B)<=1,
+   label+" native popup vertically centered within one half-pixel");
+  Check(Math.Abs(shader.ViewportWidth-width)<1.01,label+" particle viewport matches WPF layout width");
+  var caustic=(RdcDividerGlowEffect)Field(host,"causticEffect");
+  Check(Math.Abs(caustic.ViewportWidth-width)<1.01,label+" inline viewport matches WPF layout width");
  }
  [STAThread] public static int Main(string[] args){
   if(args.Length!=4)throw new ArgumentException("FOUR_SHADER_PATHS_REQUIRED");
