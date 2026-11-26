@@ -187,7 +187,9 @@ internal static class RdcNodePrerequisite {
    timer.Start();
    dialog.ShowDialog();
    timer.Stop();
-   task.GetAwaiter().GetResult();
+   try{task.GetAwaiter().GetResult();}
+   catch{if(cancel.IsCancellationRequested)throw new OperationCanceledException("RC1_NODE_DOWNLOAD_CANCELLED");throw;}
+   if(cancel.IsCancellationRequested)throw new OperationCanceledException("RC1_NODE_DOWNLOAD_CANCELLED");
   }
  }
  internal static bool EnsureNodePrerequisite(bool existing,bool portable){
@@ -256,7 +258,8 @@ internal static class RdcNodePrerequisite {
   string msi=Path.Combine(temp,"node-v24.22.3-x64.msi");
   try{
    Console.WriteLine("RC1_NODE_DOWNLOAD_START");
-   DownloadPinnedNodeWithProgress(msi,en);
+   try{DownloadPinnedNodeWithProgress(msi,en);}
+   catch(OperationCanceledException){Console.WriteLine("RC1_NODE_DOWNLOAD_CANCELLED");return false;}
    // Recheck after the download, before asking Windows Installer to run.
    state=ClassifyNodePrerequisite(roots);
    if(state=="READY")return true;
@@ -268,12 +271,24 @@ internal static class RdcNodePrerequisite {
    var start=new ProcessStartInfo(msiexec,"/i \""+msi+"\" /passive /norestart");
    start.UseShellExecute=true;start.Verb="runas";start.WorkingDirectory=temp;
    Console.WriteLine("RC1_NODE_INSTALL_START");
-   using(Process child=Process.Start(start)){
-    if(child==null)throw new InvalidOperationException("RC1_NODE_MSI_NOT_STARTED");
-    child.WaitForExit();
-    Console.WriteLine("RC1_NODE_MSI_EXIT="+child.ExitCode);
-    if(child.ExitCode==3010)throw new InvalidOperationException("RC1_NODE_RESTART_REQUIRED");
-    if(child.ExitCode!=0)throw new InvalidOperationException("RC1_NODE_MSI_FAILED_"+child.ExitCode);
+   try{
+    using(Process child=Process.Start(start)){
+     if(child==null)throw new InvalidOperationException("RC1_NODE_MSI_NOT_STARTED");
+     child.WaitForExit();
+     Console.WriteLine("RC1_NODE_MSI_EXIT="+child.ExitCode);
+     if(child.ExitCode==1602)return false; // user cancelled Windows Installer
+     if(child.ExitCode==3010){
+      System.Windows.Forms.MessageBox.Show(en?
+       "Node.js requires a Windows restart. Restart Windows and reopen RDC Relay.":
+       "Для завершения установки Node.js требуется перезагрузка Windows. Перезагрузите Windows и снова откройте RDC Relay.",
+       "RDC Relay",System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Information);
+      return false;
+     }
+     if(child.ExitCode!=0)throw new InvalidOperationException("RC1_NODE_MSI_FAILED_"+child.ExitCode);
+    }
+   }catch(System.ComponentModel.Win32Exception denied){
+    if(denied.NativeErrorCode==1223){Console.WriteLine("RC1_NODE_UAC_CANCELLED");return false;}
+    throw;
    }
    if(ClassifyNodePrerequisite(roots)!="READY")
     throw new InvalidOperationException("RC1_NODE_POSTINSTALL_NOT_READY");
