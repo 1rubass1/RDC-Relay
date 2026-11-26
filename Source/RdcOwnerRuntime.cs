@@ -1127,9 +1127,10 @@ public sealed class RdcOwnerRuntime : IDisposable {
  // Strict Ready is retained for initial OAuth consent.
  string managedQuotaIdleAccount="";
  string SelectQuotaAccount(bool freshOnly){
-  return RdcOwnerQuotaIdentity.Select(managedMode&&!observedMode&&trialRoot==null,
-   managedProcess!=null&&managedProcess.Running,disposed||exitRequested||WindowsEnding,
-   accountLogoutProcess!=null||accountSwitchFaultLatched,managedState,managedDetail,managedAccount,managedQuotaIdleAccount,freshOnly);
+  if(!managedMode||observedMode||trialRoot!=null||disposed||exitRequested||WindowsEnding||
+     accountLogoutProcess!=null||accountSwitchFaultLatched||managedProcess==null)return "";
+  return RdcOwnerQuotaIdentity.Select(true,managedProcess.Running,false,false,
+   managedState,managedDetail,managedAccount,managedQuotaIdleAccount,freshOnly);
  }
  public string ActiveManagedAccount {get{lock(gate){return SelectQuotaAccount(true);}}}
  public string QuotaManagedAccount {get{lock(gate){return SelectQuotaAccount(false);}}}
@@ -1931,7 +1932,7 @@ void RefreshTrayMenu(){
    managedLogPath="";managedLogOffset=0;
    accountSwitchFaultLatched=false;
    toolJournal.Reset();
-   managedLogStream.Reset();managedAccount="";managedDeviceName="";managedDeviceId="";
+   managedLogStream.Reset();managedAccount="";managedQuotaIdleAccount="";managedDeviceName="";managedDeviceId="";
    managedBornUtcTicks=child.BornUtcTicks;managedBannerArt.Clear();managedBannerScanned=0;
    managedStartupHeader.Clear();managedStartupComplete=false;managedStartupScanned=0;
    managedState="Connecting";managedDetail="Starting pinned Desktop Commander Remote";
@@ -2216,7 +2217,10 @@ void RefreshTrayMenu(){
   string field,value;
   if(!TrySafeIdentityLine(line,out field,out value))return;
   bool changed=false;
-  if(field=="user" && managedAccount!=value){managedAccount=value;changed=true;}
+  if(field=="user" && managedAccount!=value){
+   if(!String.Equals(managedAccount,value,StringComparison.OrdinalIgnoreCase))managedQuotaIdleAccount="";
+   managedAccount=value;changed=true;
+  }
   else if(field=="deviceName" && managedDeviceName!=value){managedDeviceName=value;changed=true;}
   else if(field=="deviceId" && managedDeviceId!=value){managedDeviceId=value;changed=true;}
   if(changed)remoteSupervisor.NoteHostEvent("Owned Remote identity metadata received: "+field);
