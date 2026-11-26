@@ -69,6 +69,21 @@ exit 0
  $referenceLines=$reference.Feed($expected,0,$expected.Length)
  Check ($parsed.Count -eq $referenceLines.Length -and [string]::Join([char]0,$parsed.ToArray()) -ceq [string]::Join([char]0,$referenceLines)) 'actual Host UTF8 parser equivalent to contiguous original stream'
  $actual.Dispose()
+ Check ($pump.BytesRead -eq $expected.Length -and $pump.BytesWriteAcknowledged -eq $expected.Length) 'captured and acknowledged byte totals agree on successful drain'
+ $owner.Dispose();$owner=$null;$pump=$null
+ # A silent synthetic child returns a known nonzero wrapper code.
+ # Delay only to keep the disposable root alive during identity acquisition.
+ [IO.File]::WriteAllText($actor,'Start-Sleep -Milliseconds 700; exit 23')
+ $owner=New-Object RdcOwnerManagedProcess
+ $owner.StartCaptured($fake,'--yes @wonderwhy-er/desktop-commander@0.2.52 remote',$root)
+ $eof=$false;$code=0;$completed=$false;$seen=0;$watch.Restart()
+ while($watch.ElapsedMilliseconds -lt 10000){
+  if(-not $eof){$seen+=$owner.ReadCaptured($buf,[ref]$eof)}
+  $completed=$owner.TryGetCompletedExitCode([ref]$code)
+  if($eof -and $completed){break}
+  Start-Sleep -Milliseconds 10
+ }
+ Check ($completed -and $eof -and $code -eq 23 -and $seen -eq 0 -and -not $owner.StopRequested) 'silent nonzero cmd wrapper exit without stop request'
 }finally{
  if($sink){$sink.Dispose()}
  $safe=$true
