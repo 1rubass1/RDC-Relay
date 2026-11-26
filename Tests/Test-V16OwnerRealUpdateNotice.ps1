@@ -22,7 +22,7 @@ Check ($source.Contains('$script:ownerUpdateDemoMode=[bool]($OwnerGui -and -not 
  -not $source.Contains("Start-RdcUpdateNoticePreview '1.6.0 RC2'") -and
  $owner.Contains('if($script:enableUpdateNotice){Update-RdcUpdateNoticePolling}')) 'Owner starts idle; no fake RC2; Host-bound GUI polls passive stable manifest'
 Check ($notice.Contains('if ($SelfTest -or ($Preview -and -not $OwnerGui) -or') -and
- $notice.Contains('https://api.github.com/repos/1rubass1/RDC-Relay/git/ref/heads/stable') -and
+ $notice.Contains('https://api.github.com/repos/Rubo-Facility/RDC-Relay/git/ref/heads/stable') -and
  $notice.Contains('/Source/update-manifest.json')) 'Owner only reads official stable commit and pinned release manifest'
 Check ($notice.Contains('if ($SelfTest -or $Preview -or $script:ownerUpdateDemoMode -or') -and
  $notice.Contains('public bool ButtonReady { get { return !visualPreviewOnly') -and
@@ -68,7 +68,7 @@ $script:rdcNoticeHttp=[pscustomobject]@{}
 $script:rdcNoticeHttp|Add-Member ScriptMethod GetStringAsync {
  param([string]$url)
  [void]$script:mockCalls.Add($url)
- $raw=if($url -like 'https://api.github.com/repos/1rubass1/RDC-Relay/git/ref/heads/stable'){
+ $raw=if($url -like 'https://api.github.com/repos/Rubo-Facility/RDC-Relay/git/ref/heads/stable'){
   '{"ref":"refs/heads/stable","object":{"type":"commit","sha":"'+('b'*40)+'"}}'
  }else{
   if($script:mockFiles){
