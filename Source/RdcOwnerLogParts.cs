@@ -476,6 +476,32 @@ public sealed class RdcOwnerLogSessions : IDisposable {
   }
   return lines.Count==0?"prerequisite_observations=unknown\n":String.Concat(lines);
  }
+ // A separate bounded snapshot of typed metadata survives GUI detach/reopen.
+ // No report file, raw output, private path or identity is read for IPC.
+ public static string[] AttemptDiagnostics(string phase,bool accepted,RdcOwnerFailedSessionInfo info){
+  if(phase!="starting"&&phase!="completed"&&phase!="preflight_failed"&&phase!="launch_failed")
+   throw new ArgumentException("RDC_ATTEMPT_PHASE");
+  if(info==null)info=new RdcOwnerFailedSessionInfo();
+  var lines=new List<string>{
+   "attempt_phase="+phase,
+   "completion_kind="+RdcOwnerCompletionDiagnostics.Classify(accepted,info),
+   "preflight_reason="+PreflightReason(info.PreflightFailure),
+   "cmd_exit="+Number(info.CmdExit),
+   "stop_requested="+Flag(info.StopRequested),
+   "accepted_session="+Flag(accepted),
+   "auth_pending_observed="+Flag(info.AuthPendingObserved),
+   "capture_read="+Number(info.BytesRead),
+   "write_ack="+Number(info.BytesWriteAcknowledged),
+   "retained="+Number(info.RetainedBytes),
+   "parser_pending="+Number(info.ParserPending),
+   "eof="+Flag(info.CleanEof),
+   "read_fault="+Flag(info.ReadFault),
+   "storage_fault="+Flag(info.StorageFault),
+   "parser_fault="+Flag(info.ParserFault)
+  };
+  lines.AddRange(PrerequisiteHeader(info.PrerequisiteObservations).Split(new[]{'\n'},StringSplitOptions.RemoveEmptyEntries));
+  return lines.ToArray();
+ }
  void PublishFailed(Session c,RdcOwnerFailedSessionInfo info){
   // Retry after atomic rename must not replace the good report with a
   // partially deleted current session. Recovery has no proof of exit code.
