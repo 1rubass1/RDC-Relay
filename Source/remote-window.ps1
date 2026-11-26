@@ -2183,6 +2183,7 @@ public class RdcLogBox : RichTextBox {
 
     protected override void OnTextChanged(EventArgs e) {
         horizontalExtentDirty = true;
+        ownerBannerStart=ownerBannerEnd=-1;
         base.OnTextChanged(e);
     }
 
@@ -2221,6 +2222,9 @@ public class RdcLogBox : RichTextBox {
     }
 
     private void ApplyExactLineSpacing(int start,int length,float subtractPixels) {
+        ApplyExactLineSpacing(start,length,subtractPixels,Font);
+    }
+    private void ApplyExactLineSpacing(int start,int length,float subtractPixels,Font metricsFont) {
         if (length <= 0 || !IsHandleCreated) return;
 
         int oldStart = SelectionStart;
@@ -2230,7 +2234,7 @@ public class RdcLogBox : RichTextBox {
             float linePx;
             using (Graphics g = CreateGraphics()) {
                 dpiY = g.DpiY;
-                linePx = Math.Max(1f,Font.GetHeight(g)-Math.Max(0f,subtractPixels));
+                linePx = Math.Max(1f,metricsFont.GetHeight(g)-Math.Max(0f,subtractPixels));
             }
 
             PARAFORMAT2 pf = new PARAFORMAT2();
@@ -2273,7 +2277,8 @@ public class RdcLogBox : RichTextBox {
             if (contentStart < eol) {
                 char c = all[contentStart];
                 if (c >= '\u2500' && c <= '\u259F')
-                    ApplyExactLineSpacing(start,eol-start,1.0f);
+                    if(start<ownerBannerStart||start>=ownerBannerEnd)
+                        ApplyExactLineSpacing(start,eol-start,1.0f);
             }
             if (eol == all.Length) break;
             start = eol + 1;
@@ -2330,6 +2335,13 @@ public class RdcLogBox : RichTextBox {
     // columns. Shift the DESKTOP/COMMANDER color split with them, leaving
     // the legacy 61-character boundary byte-for-byte unchanged.
     public bool OwnerBannerLeadingColumn { get; set; }
+    private int ownerBannerStart=-1,ownerBannerEnd=-1;
+    public string BannerLayoutKey {
+        get {
+            if(!IsHandleCreated)return String.Empty;
+            using(Graphics g=CreateGraphics())return ClientSize.Width.ToString()+":"+g.DpiX.ToString(System.Globalization.CultureInfo.InvariantCulture)+":"+g.DpiY.ToString(System.Globalization.CultureInfo.InvariantCulture)+":"+Font.Name+":"+Font.SizeInPoints.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
 
     public bool StyleStartupBanner(Color leftColor, Color rightColor) {
         const string marker = "Remote Connection";
@@ -2337,7 +2349,10 @@ public class RdcLogBox : RichTextBox {
         int markerIndex = all.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
         if (markerIndex <= 0) return false;
 
-        string prefix = all.Substring(0, markerIndex);
+        // In Owner mode the marker may have an emoji prefix on its own
+        // paragraph. It is not a seventh row of the six-row artwork.
+        int prefixEnd=OwnerBannerLeadingColumn?all.LastIndexOf('\n',markerIndex)+1:markerIndex;
+        string prefix = all.Substring(0, prefixEnd);
         string[] lines = prefix.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
         System.Collections.Generic.List<string> banner = new System.Collections.Generic.List<string>();
         for (int i = 0; i < lines.Length; i++) {
@@ -2346,6 +2361,15 @@ public class RdcLogBox : RichTextBox {
         if (banner.Count < 6) return false;
 
         string[] target = banner.GetRange(banner.Count - 6, 6).ToArray();
+        if(OwnerBannerLeadingColumn){
+            ownerBannerStart=ownerBannerEnd=-1;
+            // Only actual pseudographic rows are fitted; no arbitrary log text.
+            foreach(string row in target){
+                if(!System.Text.RegularExpressions.Regex.IsMatch(row,@"\A[ \t\u00A0\u2500-\u259F/\\_|.]+\z")||
+                   !System.Text.RegularExpressions.Regex.IsMatch(row,@"[\u2500-\u259F]"))return false;
+            }
+        }
+        var rowStarts=new System.Collections.Generic.List<int>();
         SendMessage(Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
         try {
             int searchFrom = 0;
@@ -2354,6 +2378,7 @@ public class RdcLogBox : RichTextBox {
             foreach (string line in target) {
                 int start = all.IndexOf(line, searchFrom, StringComparison.Ordinal);
                 if (start < 0) continue;
+                rowStarts.Add(start);
                 if (bannerStart < 0) bannerStart = start;
                 bannerEnd = Math.Max(bannerEnd,start + line.Length);
 
@@ -2369,8 +2394,31 @@ public class RdcLogBox : RichTextBox {
                 searchFrom = start + line.Length;
             }
 
-            if (bannerStart >= 0 && bannerEnd > bannerStart)
-                ApplyExactLineSpacing(bannerStart,bannerEnd-bannerStart,1.0f);
+            if (bannerStart >= 0 && bannerEnd > bannerStart) {
+                if(OwnerBannerLeadingColumn&&rowStarts.Count==6){
+                    ownerBannerStart=bannerStart;ownerBannerEnd=bannerEnd;
+                    // Keep the approved 9pt font whenever it fits. Measure
+                    // actual RichEdit layout after each bounded adjustment.
+                    // Do not change the body's font or WordWrap policy.
+                    float original=Font.SizeInPoints;
+                    float minimum=Math.Min(original,6.0f);
+                    for(float size=original;;size=Math.Max(minimum,size-0.25f)){
+                        using(var fitted=new Font(Font.FontFamily,size,Font.Style,GraphicsUnit.Point)){
+                            for(int i=0;i<rowStarts.Count;i++){
+                                Select(rowStarts[i],target[i].Length);
+                                SelectionFont=fitted;
+                            }
+                            ApplyExactLineSpacing(bannerStart,bannerEnd-bannerStart,1.0f,fitted);
+                            bool fits=true;
+                            for(int i=0;i<rowStarts.Count;i++){
+                                int start=rowStarts[i],last=target[i].TrimEnd().Length-1;
+                                if(last>=0&&GetPositionFromCharIndex(start).Y!=GetPositionFromCharIndex(start+last).Y){fits=false;break;}
+                            }
+                            if(fits||size<=minimum)break;
+                        }
+                    }
+                }else ApplyExactLineSpacing(bannerStart,bannerEnd-bannerStart,1.0f);
+            }
 
             Select(TextLength, 0);
             SelectionColor = ForeColor;
@@ -5845,7 +5893,8 @@ function Render-CompactLog {
         $headerDisplay=Convert-Rc1OwnerStartupInstructions $headerDisplay
         $headerDisplay=Add-Rc1OwnerBannerLeadingColumn $headerDisplay
     }
-    if ($script:lastRenderedHeader -cne $headerDisplay) {
+    $headerLayoutKey=if($OwnerGui -and $headerDisplay){$headerLog.BannerLayoutKey}else{''}
+    if ($script:lastRenderedHeader -cne $headerDisplay -or $script:lastHeaderLayoutKey -cne $headerLayoutKey) {
         $headerView = $null
         try { $headerView = $headerLog.GetViewPosition() } catch {}
         $headerSelectionStart = $headerLog.SelectionStart
@@ -5897,6 +5946,7 @@ function Render-CompactLog {
 
             try { $headerLog.SetViewPosition($headerX,$headerY) } catch {}
             $script:lastRenderedHeader = $headerDisplay
+            $script:lastHeaderLayoutKey = $headerLayoutKey
         } finally {
             $headerLog.EndUpdate()
             try { $headerLog.SetSelectionHidden($false) } catch {}
@@ -8064,6 +8114,7 @@ $form.Add_ResizeBegin({
 })
 $form.Add_ResizeEnd({
     $script:uiInteracting = $false
+    if($OwnerGui -and $script:startupBlock -and $script:lastHeaderLayoutKey -cne $headerLog.BannerLayoutKey){Render-CompactLog}
     Layout-LogScrollbars
     if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
     try { $log.RefreshViewport() } catch {}
