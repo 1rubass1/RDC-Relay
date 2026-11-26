@@ -7,16 +7,28 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Win32;
 internal static class RdcNodePrerequisite {
+ // Strict local path observation; inaccessible is not evidence of absence.
+ static FileAttributes? Attributes(string path){
+  try{return File.GetAttributes(path);}
+  catch(FileNotFoundException){return null;}
+  catch(DirectoryNotFoundException){return null;}
+ }
  static void PathSafe(string path){
   string full=Path.GetFullPath(path),p=full;
   while(!String.IsNullOrEmpty(p)){
-   if(File.Exists(p)||Directory.Exists(p)){
-    if((File.GetAttributes(p)&FileAttributes.ReparsePoint)!=0)
-      throw new InvalidOperationException("RC1_REPARSE_REFUSED");
-   }
+   var attrs=Attributes(p);
+   if(attrs.HasValue&&(attrs.Value&FileAttributes.ReparsePoint)!=0)
+    throw new InvalidOperationException("RC1_REPARSE_REFUSED");
    string parent=Path.GetDirectoryName(p);
    if(String.IsNullOrEmpty(parent)||parent==p)break;p=parent;
   }
+ }
+ static bool PresentFile(string path){
+  PathSafe(path);
+  var attrs=Attributes(path);
+  if(!attrs.HasValue)return false;
+  if((attrs.Value&FileAttributes.Directory)!=0)throw new IOException("RC1_NODE_PATH_NOT_FILE");
+  return true;
  }
  static string Hash(string file){
   using(var sha=SHA256.Create())
@@ -27,8 +39,8 @@ internal static class RdcNodePrerequisite {
  // interactive, explicitly accepted prerequisite install can change it.
  // The pinned upstream release is the LTS major used by the vendor's
  // Windows launcher. Never run a downloaded script or resolve "latest".
- const string NodeMsiUrl="https://nodejs.org/dist/v24.22.3/node-v24.22.3-x64.msi";
- const string NodeMsiSha256="4A1AB5BDEC5434BAE58EFAE6C3E5077A011F6F1E76D2B47B7B10AF043F7DB545";
+ internal const string NodeMsiUrl="https://nodejs.org/dist/v24.22.3/node-v24.22.3-x64.msi";
+ internal const string NodeMsiSha256="4A1AB5BDEC5434BAE58EFAE6C3E5077A011F6F1E76D2B47B7B10AF043F7DB545";
  internal static bool SupportedNodeVersion(int major,int minor){
   return major>22||(major==22&&minor>=12);
  }
@@ -42,25 +54,26 @@ internal static class RdcNodePrerequisite {
  // Same shim search order as the private Host. An already present but
  // incomplete/custom runtime is not permission to replace shared Node.
  internal static string ClassifyNodePrerequisite(string[] roots){
+  if(roots==null||roots.Length==0)return "UNKNOWN";
   bool foundAny=false;
-  foreach(string root in roots){
-   PathSafe(root);
-   string shim=Path.Combine(root,"npx.cmd");
-   string node=Path.Combine(root,"node.exe");
-   string npm=Path.Combine(root,"npm.cmd");
-   foreach(string file in new[]{shim,node,npm})PathSafe(file);
-   if(File.Exists(shim)||File.Exists(node)||File.Exists(npm))foundAny=true;
-   if(!File.Exists(shim))continue;
-   string cli=Path.Combine(root,"node_modules","npm","bin","npx-cli.js");
-   string npmCli=Path.Combine(root,"node_modules","npm","bin","npm-cli.js");
-   PathSafe(cli);PathSafe(npmCli);
-   if(!File.Exists(node)||!File.Exists(npm)||!File.Exists(cli)||!File.Exists(npmCli))
-    return "EXISTING_UNSUPPORTED";
-   var version=FileVersionInfo.GetVersionInfo(node);
-   return SupportedNodeVersion(version.FileMajorPart,version.FileMinorPart)?
-    "READY":"EXISTING_UNSUPPORTED";
-  }
-  return foundAny?"EXISTING_UNSUPPORTED":"MISSING";
+  try{
+   foreach(string root in roots){
+    PathSafe(root);
+    var attrs=Attributes(root);
+    if(attrs.HasValue&&(attrs.Value&FileAttributes.Directory)==0)return "EXISTING_UNSUPPORTED";
+    string shim=Path.Combine(root,"npx.cmd"),node=Path.Combine(root,"node.exe"),npm=Path.Combine(root,"npm.cmd");
+    string cli=Path.Combine(root,"node_modules","npm","bin","npx-cli.js");
+    string npmCli=Path.Combine(root,"node_modules","npm","bin","npm-cli.js");
+    bool hasShim=PresentFile(shim),hasNode=PresentFile(node),hasNpm=PresentFile(npm);
+    bool hasCli=PresentFile(cli),hasNpmCli=PresentFile(npmCli);
+    if(hasShim||hasNode||hasNpm||hasCli||hasNpmCli)foundAny=true;
+    if(!hasShim)continue;
+    if(!hasNode||!hasNpm||!hasCli||!hasNpmCli)return "EXISTING_UNSUPPORTED";
+    var version=FileVersionInfo.GetVersionInfo(node);
+    return SupportedNodeVersion(version.FileMajorPart,version.FileMinorPart)?"READY":"EXISTING_UNSUPPORTED";
+   }
+   return foundAny?"EXISTING_UNSUPPORTED":"MISSING";
+  }catch{return "UNKNOWN";}
  }
  static bool OtherNodeOnPath(){
   foreach(string entry in (Environment.GetEnvironmentVariable("PATH")??"").Split(';')){
@@ -68,10 +81,11 @@ internal static class RdcNodePrerequisite {
    // Never consult a relative/network PATH entry or execute PATH programs.
    if(dir.Length<3||dir[1]!=':'||dir[2]!='\\')continue;
    try{
-    if(File.Exists(Path.Combine(dir,"node.exe"))||
-       File.Exists(Path.Combine(dir,"npm.cmd"))||
-       File.Exists(Path.Combine(dir,"npx.cmd")))return true;
-   }catch{}
+    if(new DriveInfo(Path.GetPathRoot(dir)).DriveType!=DriveType.Fixed)continue;
+    if(PresentFile(Path.Combine(dir,"node.exe"))||
+       PresentFile(Path.Combine(dir,"npm.cmd"))||
+       PresentFile(Path.Combine(dir,"npx.cmd")))return true;
+   }catch{return true;}
   }
   return false;
  }
@@ -185,11 +199,32 @@ internal static class RdcNodePrerequisite {
    }finally{if(held)mutex.ReleaseMutex();}
   }
  }
+ [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+ struct SystemInfo {
+  public ushort Architecture,Reserved;
+  public uint PageSize;
+  public IntPtr MinAddress,MaxAddress,ProcessorMask;
+  public uint ProcessorCount,ProcessorType,AllocationGranularity;
+  public ushort ProcessorLevel,ProcessorRevision;
+ }
+ [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+ static extern void GetNativeSystemInfo(out SystemInfo info);
+ internal static bool NativeX64(){
+  try{SystemInfo info;GetNativeSystemInfo(out info);return Environment.Is64BitOperatingSystem&&info.Architecture==9;}
+  catch{return false;}
+ }
  static bool EnsureCore(bool existing,bool portable){
   string[] roots=NodeRuntimeRoots();
   string state=ClassifyNodePrerequisite(roots);
   if(state=="READY")return true;
   bool en=NodeEnglish(existing);
+  if(state=="UNKNOWN"){
+   System.Windows.Forms.MessageBox.Show(en?
+    "Node.js prerequisites could not be verified safely. Check access and the installation, then reopen RDC Relay. Nothing was installed.":
+    "Не удалось безопасно проверить зависимости Node.js. Проверьте доступ и установку, затем повторите запуск RDC Relay. Установка не выполнялась.",
+    "RDC Relay",System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Warning);
+   return false;
+  }
   if(state!="MISSING"||OtherNodeOnPath()||OtherNodeRegistered()){
    System.Windows.Forms.MessageBox.Show(en?
     "An existing Node.js installation is incomplete, unsupported or outside the standard location. Repair it (Node.js 22.12 or newer, with npm/npx), then reopen RDC Relay. RDC Relay will not replace a shared runtime automatically.":
@@ -197,9 +232,7 @@ internal static class RdcNodePrerequisite {
     "RDC Relay",System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Warning);
    return false;
   }
-  string arch=Environment.GetEnvironmentVariable("PROCESSOR_ARCHITEW6432")??
-   Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE")??"";
-  if(!Environment.Is64BitOperatingSystem||!String.Equals(arch,"AMD64",StringComparison.OrdinalIgnoreCase)){
+  if(!NativeX64()){
    System.Windows.Forms.MessageBox.Show(en?
     "Automatic Node.js installation is available for x64 Windows only. Install a supported Node.js with npm/npx and reopen RDC Relay.":
     "Автоматическая установка Node.js пока доступна только для Windows x64. Установите поддерживаемый Node.js с npm/npx и повторите запуск RDC Relay.",
