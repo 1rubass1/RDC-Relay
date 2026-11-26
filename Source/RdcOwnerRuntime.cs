@@ -1913,7 +1913,7 @@ void RefreshTrayMenu(){
   managedAuthPendingObserved=false;managedLaunchRollback=false;
   managedPrerequisiteObservations=observations;
   managedCompletionKind="unknown";
-  managedAttemptSummary=RdcOwnerLogSessions.AttemptDiagnostics("starting",false,
+  managedAttemptSummary=RdcOwnerLogSessions.AttemptDiagnostics("startup_observation",false,
    new RdcOwnerFailedSessionInfo{PrerequisiteObservations=observations});
   RdcOwnerLogSessions sessions=null;
   RdcOwnerLogParts sink=null;
