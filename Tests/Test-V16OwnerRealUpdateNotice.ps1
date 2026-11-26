@@ -68,15 +68,15 @@ $script:rdcNoticeHttp=[pscustomobject]@{}
 $script:rdcNoticeHttp|Add-Member ScriptMethod GetStringAsync {
  param([string]$url)
  [void]$script:mockCalls.Add($url)
- $raw=if($url -like 'https://api.github.com/repos/Rubo-Facility/RDC-Relay/git/ref/heads/stable'){
+ $raw=if($url -ceq 'https://api.github.com/repos/Rubo-Facility/RDC-Relay/git/ref/heads/stable'){
   '{"ref":"refs/heads/stable","object":{"type":"commit","sha":"'+('b'*40)+'"}}'
- }else{
+ }elseif($url -ceq ('https://raw.githubusercontent.com/Rubo-Facility/RDC-Relay/'+('b'*40)+'/Source/update-manifest.json')){
   if($script:mockFiles){
    '{"version":"'+$script:mockVersion+'","files":[{"name":"remote-window.ps1","sha256":"TEST"},{"name":"update.ps1","sha256":"TEST"}]}'
   }else{
    '{"version":"'+$script:mockVersion+'"}'
   }
- }
+ }else{throw 'UNEXPECTED_UPDATE_ENDPOINT'}
  return [Threading.Tasks.Task]::FromResult([string]$raw)
 }
 $script:rdcNoticeCheckTask=$null
@@ -92,7 +92,8 @@ Complete-Poll
 Check (-not $script:rdcNoticeActive -and $script:rdcNoticeControl.BeginCount -eq 0 -and
  $column.Width -eq 115) 'actual published stable 1.5.18 is older: Owner button NEVER appears'
 Check ($script:mockCalls.Count -eq 2 -and
- $script:mockCalls[1] -like '*bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Source/update-manifest.json') 'manifest request pinned to SHA returned by real stable commit endpoint'
+ $script:mockCalls[0] -ceq 'https://api.github.com/repos/Rubo-Facility/RDC-Relay/git/ref/heads/stable' -and
+ $script:mockCalls[1] -ceq ('https://raw.githubusercontent.com/Rubo-Facility/RDC-Relay/'+('b'*40)+'/Source/update-manifest.json')) 'manifest request pinned to SHA returned by real stable commit endpoint'
 # A private future candidate RC2 cannot be fabricated: a stable manifest
 # lacking required stable-install payload is not a real release.
 $script:mockVersion='1.6.0'
