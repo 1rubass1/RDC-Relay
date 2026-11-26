@@ -211,6 +211,7 @@ internal static class RdcRc1CandidateSetup {
    throw new InvalidOperationException("RC1_DISPLAY_VERSION_INVALID");
   return version;
  }
+#if !RDC_RC1_BLOCKED
  // Keep the Setup entrypoints for staged identity and existing fixture callers.
  const string NodeMsiUrl=RdcNodePrerequisite.NodeMsiUrl;
  const string NodeMsiSha256=RdcNodePrerequisite.NodeMsiSha256;
@@ -218,6 +219,7 @@ internal static class RdcRc1CandidateSetup {
  internal static string ClassifyNodePrerequisite(string[] roots){return RdcNodePrerequisite.ClassifyNodePrerequisite(roots);}
  static bool NodeEnglish(bool existing){return RdcNodePrerequisite.NodeEnglish(existing);}
  static bool EnsureNodePrerequisite(bool existing){return RdcNodePrerequisite.EnsureNodePrerequisite(existing,false);}
+#endif
  static void StartPrivateFull(string release){
   // Open only our pinned read-only GUI launcher. The launcher returns after
   // spawning the private Host; never wait for or signal persistent descendants.
