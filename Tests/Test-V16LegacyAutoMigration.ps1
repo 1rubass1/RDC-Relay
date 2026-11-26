@@ -10,7 +10,7 @@ Check (!$m.migration.ready -and !$m.migration.setupSha256 -and $m.files.Count -e
 foreach($row in $m.files){Check ((Get-FileHash -LiteralPath (Join-Path $src $row.name)).Hash -ceq $row.sha256) ('flat payload hash '+$row.name)}
 $m.migration.ready=$true;$m.migration.setupSha256='a'*64
 $offer=Get-RdcMigrationOffer $m '1.5.18'
-Check ($offer.Uri.AbsoluteUri -ceq 'https://github.com/1rubass1/RDC-Relay/releases/download/v1.6.0/RDC.Relay.Setup.v1.6.0.exe') 'one fixed release asset'
+Check ($offer.Uri.AbsoluteUri -ceq 'https://github.com/Rubo-Facility/RDC-Relay/releases/download/v1.6.0/RDC.Relay.Setup.v1.6.0.exe') 'one fixed release asset'
 $m.migration.asset='other.exe'
 Check ($null -eq (Get-RdcMigrationOffer $m '1.5.18')) 'different asset rejected'
 $m.migration.asset='RDC.Relay.Setup.v1.6.0.exe'
