@@ -55,6 +55,9 @@ internal static class RdcRc1CandidateLauncher {
  // Extracted Portable is a user-facing executable: Windows Explorer invokes
  // its Main with zero arguments. Setup's existing --full route remains valid.
  // Neither mode is allowed to bypass the private candidate or package checks.
+ internal static bool RequiresPortablePreflight(string[] args,bool installed){
+  return args!=null&&args.Length==0&&!installed;
+ }
  static bool FullLaunchRequested(string[] args){
   return args!=null && (args.Length==0 ||
     (args.Length==1 && String.Equals(args[0],"--full",StringComparison.Ordinal)));
@@ -237,7 +240,7 @@ internal static class RdcRc1CandidateLauncher {
    }
    // Explicit Explorer double-click only, after package validation and existing
    // Host activation. Installed --full and background routes never install.
-   if(args.Length==0&&!RdcOwnerStartup.IsActiveSource(source)){
+   if(RequiresPortablePreflight(args,RdcOwnerStartup.IsActiveSource(source))){
     bool en=RdcNodePrerequisite.NodeEnglish(false);
     try{
      if(!RdcNodePrerequisite.EnsureNodePrerequisite(false,true))return 1;
