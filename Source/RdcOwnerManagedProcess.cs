@@ -315,7 +315,8 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
    throw new InvalidOperationException("RC1_OWNED_STOP_BOUNDARY");
   JOB_ACCOUNTING a;
   if(!Accounting(out a))throw new InvalidOperationException("RC1_OWNED_JOB_QUERY_FAILED");
-  if(a.active==0){stopRequested=true;return true;}
+  // A late Stop on an already empty Job is not a termination request.
+  if(a.active==0)return true;
   bool member;
   if(process==IntPtr.Zero||!IsProcessInJob(process,job,out member)||!member)
    throw new InvalidOperationException("RC1_OWNED_ROOT_MEMBERSHIP_UNVERIFIED");
