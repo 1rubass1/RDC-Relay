@@ -3,8 +3,8 @@
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 $source=Join-Path $root 'Installer\Rc1CandidateLauncher.cs'
-$types=@(Add-Type -Path @($source,(Join-Path $root 'Source\RdcOwnerStartup.cs')) -ReferencedAssemblies @('System.Core.dll',
- 'System.Web.Extensions.dll','System.Security.dll') -PassThru)
+$types=@(Add-Type -Path @($source,(Join-Path $root 'Installer\RdcNodePrerequisite.cs'),(Join-Path $root 'Source\RdcOwnerStartup.cs')) -ReferencedAssemblies @('System.Core.dll',
+ 'System.Web.Extensions.dll','System.Security.dll','System.Windows.Forms.dll','System.Drawing.dll') -PassThru)
 $type=$types|Where-Object{$_.Name -ceq 'RdcRc1CandidateLauncher'}|Select-Object -First 1
 if(-not $type){throw 'COMPILED_LAUNCHER_TYPE_ABSENT'}
 $flags=[Reflection.BindingFlags]'Static,NonPublic'
