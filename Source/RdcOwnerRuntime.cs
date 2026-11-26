@@ -1000,7 +1000,7 @@ public static class RdcOwnerEnvironmentDiagnostics {
      if(obj==null||!obj.TryGetValue("name",out name)||!Object.Equals(name,"npm")||
         !obj.TryGetValue("version",out version)||!(version is string))return "present(version_unknown)";
      string v=(string)version;
-     if(v.Length>48||!System.Text.RegularExpressions.Regex.IsMatch(v,@"\A[0-9]{1,9}(\.[0-9]{1,9}){2}(-[0-9A-Za-z.-]{1,24})?(\+[0-9A-Za-z.-]{1,16})?\z"))
+     if(v.Length>48||!System.Text.RegularExpressions.Regex.IsMatch(v,@"\A[0-9]{1,9}(\.[0-9]{1,9}){2}\z"))
       return "present(version_unknown)";
      return "present("+v+")";
     }
