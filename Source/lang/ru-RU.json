@@ -184,7 +184,7 @@
     "owner.connection.detail.fault.observed": "Сессия недоступна",
     "owner.connection.detail.fault.channel": "Канал недоступен",
     "owner.connection.detail.fault.start": "Не удалось запустить Remote",
-    "owner.connection.detail.fault.nodeMissing": "Требуется повторная установка RDC Relay",
+    "owner.connection.detail.fault.nodeMissing": "Нужен Node.js: Setup или выход из трея и запуск Portable",
     "owner.connection.detail.fault.autoStart": "Запустите Remote вручную",
     "owner.connection.detail.fault.switchRefused": "Смена аккаунта отклонена; Remote остановлен",
     "owner.connection.detail.fault.authRevoked": "Авторизация отозвана; запуск не удался",
