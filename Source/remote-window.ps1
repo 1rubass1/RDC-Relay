@@ -5909,6 +5909,7 @@ function Render-CompactLog {
             $headerLog.Text = $headerDisplay
             if ($headerLog.TextLength -gt 0) {
                 $headerLog.Select(0,$headerLog.TextLength)
+                if($OwnerGui){$headerLog.SelectionFont=$headerLog.Font}
                 $headerLog.SelectionColor = [Drawing.Color]::Gainsboro
             }
             if ($headerDisplay -like '*Remote Connection*') {
