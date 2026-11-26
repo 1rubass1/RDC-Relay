@@ -1014,6 +1014,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
  RdcOwnerLogPump managedLogPump=null;
  bool managedSessionAccepted=false,managedLogFaultReported=false,managedLogFinishFaultReported=false,managedParserFault=false;
  bool managedExitReported=false,managedCaptureSummaryReported=false;
+ string[] managedPrerequisiteObservations;
  // Logout is a separate, bounded private Job; never execute in the GUI or
  // borrow the running Remote's process tree or credential files.
  RdcOwnerManagedProcess accountLogoutProcess=null;
@@ -1785,7 +1786,8 @@ void RefreshTrayMenu(){
    return true;
   }
  }
- string ResolvePinnedNpx(){
+ string ResolvePinnedNpx(){return ResolvePinnedNpxWithDiagnostics(null);}
+ string ResolvePinnedNpxWithDiagnostics(List<string> observations){
   string[] candidates=new string[]{
    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"nodejs","npx.cmd"),
    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"npm","npx.cmd"),
@@ -1795,8 +1797,16 @@ void RefreshTrayMenu(){
   for(int i=0;i<candidates.Length;i++){
    string file=candidates[i];
    // Diagnostic failures cannot change the established launch decision.
-   try{foreach(string line in RdcOwnerPrerequisiteDiagnostics.Observe(Path.GetDirectoryName(file),locations[i],CheckPath))Append("remote",line);}
-   catch{Append("remote","runtime "+locations[i]+": check_unknown");}
+   try{
+    foreach(string line in RdcOwnerPrerequisiteDiagnostics.Observe(Path.GetDirectoryName(file),locations[i],CheckPath)){
+     if(observations!=null)observations.Add(line);
+     Append("remote",line);
+    }
+   }catch{
+    string line="runtime "+locations[i]+": check_unknown";
+    if(observations!=null)observations.Add(line);
+    Append("remote",line);
+   }
    CheckPath(file);
    if(!File.Exists(file))continue;
    string dir=Path.GetDirectoryName(file);
@@ -1857,12 +1867,34 @@ void RefreshTrayMenu(){
    throw new InvalidOperationException("RC1_LEGACY_GUI_STILL_ACTIVE");
   if(AnotherDesktopCommanderRemote())
    throw new InvalidOperationException("RC1_EXISTING_REMOTE_ADOPTED_NO_DUPLICATE");
-  string npx=ResolvePinnedNpx();
-  StartManagedCapture(npx,Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(stateRoot)),"Logs"));
+  string logRoot=Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(stateRoot)),"Logs");
+  var observations=new List<string>();
+  string npx;
+  try{npx=ResolvePinnedNpxWithDiagnostics(observations);}
+  catch(Exception problem){
+   // Do not replace or recover a log while any old capture still owns it.
+   // Preserve the actual launch exception even if diagnostics fail.
+   try{
+    int oldExit;
+    if(WindowsEnding||managedLogSessions!=null||managedLogPump!=null||
+       (managedProcess!=null&&!managedProcess.TryGetCompletedExitCode(out oldExit))){
+     Append("remote","preflight report deferred: owned capture not finalized");
+    }else{
+     var reason=problem.Message=="RC1_PINNED_NPX_MISSING"?
+      RdcOwnerPreflightFailure.RuntimeUnavailable:RdcOwnerPreflightFailure.InspectionFailed;
+     using(var store=new RdcOwnerLogSessions(logRoot))
+      store.RecordPreflightFailure(reason,observations.ToArray());
+     Append("remote","preflight failure report saved");
+    }
+   }catch{Append("remote","preflight failure report unavailable");}
+   throw;
+  }
+  StartManagedCaptureWithDiagnostics(npx,logRoot,observations.ToArray());
  }
  // The production caller has already verified the no-external-Remote gate.
  // The explicit root argument also permits a disposable, fake-only fixture.
- void StartManagedCapture(string npx,string logRoot){
+ void StartManagedCapture(string npx,string logRoot){StartManagedCaptureWithDiagnostics(npx,logRoot,null);}
+ void StartManagedCaptureWithDiagnostics(string npx,string logRoot,string[] observations){
   if(WindowsEnding)throw new InvalidOperationException("RC1_WINDOWS_ENDING");
   if(managedProcess!=null){
    int oldExit;
@@ -1872,6 +1904,7 @@ void RefreshTrayMenu(){
   }
   var child=new RdcOwnerManagedProcess();
   managedExitReported=false;managedCaptureSummaryReported=false;
+  managedPrerequisiteObservations=observations;
   RdcOwnerLogSessions sessions=null;
   RdcOwnerLogParts sink=null;
   bool began=false;
@@ -1897,7 +1930,7 @@ void RefreshTrayMenu(){
   }catch{
    // A failure after spawn must never abandon an untracked private Job.
    if(!child.HasStarted){
-    try{if(sink!=null)sink.Dispose();if(sessions!=null&&began)sessions.FinalizeCurrentWithDiagnostics(new RdcOwnerFailedSessionInfo{LaunchFailed=true});}
+    try{if(sink!=null)sink.Dispose();if(sessions!=null&&began)sessions.FinalizeCurrentWithDiagnostics(new RdcOwnerFailedSessionInfo{LaunchFailed=true,PrerequisiteObservations=managedPrerequisiteObservations});}
     finally{if(sessions!=null)sessions.Dispose();child.Dispose();}
     throw;
    }
@@ -1954,7 +1987,7 @@ void RefreshTrayMenu(){
    }
    managedCaptureSummaryReported=true;
   }
-  var failureInfo=new RdcOwnerFailedSessionInfo{CmdExit=exitCode,StopRequested=managedProcess.StopRequested};
+  var failureInfo=new RdcOwnerFailedSessionInfo{CmdExit=exitCode,StopRequested=managedProcess.StopRequested,PrerequisiteObservations=managedPrerequisiteObservations};
   if(managedLogPump!=null){
    failureInfo.BytesRead=managedLogPump.BytesRead;
    failureInfo.BytesWriteAcknowledged=managedLogPump.BytesWriteAcknowledged;
