@@ -1013,6 +1013,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
  RdcOwnerLogSessions managedLogSessions=null;
  RdcOwnerLogPump managedLogPump=null;
  bool managedSessionAccepted=false,managedLogFaultReported=false,managedLogFinishFaultReported=false,managedParserFault=false;
+ bool managedExitReported=false,managedCaptureSummaryReported=false;
  // Logout is a separate, bounded private Job; never execute in the GUI or
  // borrow the running Remote's process tree or credential files.
  RdcOwnerManagedProcess accountLogoutProcess=null;
@@ -1870,6 +1871,7 @@ void RefreshTrayMenu(){
    managedProcess.Dispose();managedProcess=null;
   }
   var child=new RdcOwnerManagedProcess();
+  managedExitReported=false;managedCaptureSummaryReported=false;
   RdcOwnerLogSessions sessions=null;
   RdcOwnerLogParts sink=null;
   bool began=false;
@@ -1929,9 +1931,29 @@ void RefreshTrayMenu(){
    if(wait.ElapsedMilliseconds>=timeoutMs)throw new InvalidOperationException("RC1_LOG_JOB_NOT_COMPLETE");
    Thread.Sleep(10);
   }
+  if(!managedExitReported){
+   // Exit code belongs to the cmd.exe root, not necessarily the Node child.
+   // A stop request is an observation, not proof of why the process exited.
+   Append("remote","completion: cmd_exit="+exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)+
+    " stop_requested="+(managedProcess.StopRequested?"yes":"no")+" accepted_session="+(managedSessionAccepted?"yes":"no"));
+   managedExitReported=true;
+  }
   int remaining=(int)Math.Max(0,timeoutMs-wait.ElapsedMilliseconds);
   if(managedLogPump!=null&&!managedLogPump.WaitForCompletion(remaining))
    throw new IOException("RC1_LOG_DRAIN_PENDING");
+  if(!managedCaptureSummaryReported){
+   var pump=managedLogPump;
+   if(pump==null)Append("remote","capture summary: unavailable");
+   else{
+    Append("remote","capture bytes: read="+pump.BytesRead.ToString(System.Globalization.CultureInfo.InvariantCulture)+
+     " write_ack="+pump.BytesWriteAcknowledged.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    Append("remote","capture retained_bytes="+pump.RetainedBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)+
+     " parser_pending="+pump.PendingBytes.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    Append("remote","capture flags: eof="+(pump.CleanEof?"yes":"no")+" read_fault="+(pump.ReadFault?"yes":"no")+
+     " storage_fault="+(pump.StorageFault?"yes":"no")+" parser_fault="+((pump.ParserFault||managedParserFault)?"yes":"no"));
+   }
+   managedCaptureSummaryReported=true;
+  }
   managedLogSessions.FinalizeCurrent();managedLogSessions.Dispose();
   managedLogSessions=null;managedLogPump=null;managedSessionAccepted=false;
  }
@@ -2283,6 +2305,7 @@ void RefreshTrayMenu(){
     catch(Exception error){if(!managedLogFinishFaultReported){managedLogFinishFaultReported=true;Append("remote","managed log finalization pending: "+error.GetType().Name);}}
    }
    if(managedState!="Disconnected"){
+    if(!managedExitReported)Append("remote","completion: cmd_exit=unknown (finalization pending or unavailable)");
     managedAccount="";managedDeviceName="";managedDeviceId="";managedBornUtcTicks=0;
     managedBannerArt.Clear();managedBannerScanned=0;
    managedStartupHeader.Clear();managedStartupComplete=false;managedStartupScanned=0;
