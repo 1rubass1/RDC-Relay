@@ -184,7 +184,7 @@
     "owner.connection.detail.fault.observed": "Session unavailable",
     "owner.connection.detail.fault.channel": "Channel unavailable",
     "owner.connection.detail.fault.start": "Could not start Remote",
-    "owner.connection.detail.fault.nodeMissing": "Run RDC Relay Setup again",
+    "owner.connection.detail.fault.nodeMissing": "Node.js required: run Setup or exit and reopen Portable",
     "owner.connection.detail.fault.autoStart": "Start Remote manually",
     "owner.connection.detail.fault.switchRefused": "Account switch refused; Remote stopped",
     "owner.connection.detail.fault.authRevoked": "Authorization revoked; startup failed",
