@@ -33,6 +33,7 @@ public static class TestV160BannerDpi {
     foreach(int cols in new[]{110,120,125,130,140}){
      string row=Art(cols);
      box.Text=String.Join("\n",new[]{row,row,row,row,row,row,"","\U0001f310 Remote Connection","Ordinary text"});
+     box.Select(0,box.TextLength);box.SelectionFont=box.Font;box.SelectionColor=Color.Gainsboro;
      string original=box.Text;
      var orange=Color.FromArgb(191,118,67);var purple=Color.FromArgb(123,95,162);
      Check(box.StyleStartupBanner(orange,purple),"six art rows recognized before emoji marker "+cols);
