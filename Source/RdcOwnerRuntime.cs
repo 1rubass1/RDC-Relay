@@ -1014,6 +1014,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
  RdcOwnerLogPump managedLogPump=null;
  bool managedSessionAccepted=false,managedLogFaultReported=false,managedLogFinishFaultReported=false,managedParserFault=false;
  bool managedExitReported=false,managedCaptureSummaryReported=false;
+ bool managedAuthPendingObserved=false,managedLaunchRollback=false;
  string[] managedPrerequisiteObservations;
  // Logout is a separate, bounded private Job; never execute in the GUI or
  // borrow the running Remote's process tree or credential files.
@@ -1904,6 +1905,7 @@ void RefreshTrayMenu(){
   }
   var child=new RdcOwnerManagedProcess();
   managedExitReported=false;managedCaptureSummaryReported=false;
+  managedAuthPendingObserved=false;managedLaunchRollback=false;
   managedPrerequisiteObservations=observations;
   RdcOwnerLogSessions sessions=null;
   RdcOwnerLogParts sink=null;
@@ -1934,6 +1936,7 @@ void RefreshTrayMenu(){
     finally{if(sessions!=null)sessions.Dispose();child.Dispose();}
     throw;
    }
+   managedLaunchRollback=true;
    bool stopped=false;
    try{stopped=child.StopOwnedOnly(10000);}catch{}
    if(sink!=null)sink.Dispose();
@@ -1969,6 +1972,9 @@ void RefreshTrayMenu(){
    // A stop request is an observation, not proof of why the process exited.
    Append("remote","completion: cmd_exit="+exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)+
     " stop_requested="+(managedProcess.StopRequested?"yes":"no")+" accepted_session="+(managedSessionAccepted?"yes":"no"));
+   var completionInfo=new RdcOwnerFailedSessionInfo{CmdExit=exitCode,StopRequested=managedProcess.StopRequested,
+    AuthPendingObserved=managedAuthPendingObserved,LaunchFailed=managedLaunchRollback};
+   Append("remote","completion_kind="+RdcOwnerCompletionDiagnostics.Classify(managedSessionAccepted,completionInfo));
    managedExitReported=true;
   }
   int remaining=(int)Math.Max(0,timeoutMs-wait.ElapsedMilliseconds);
@@ -1987,7 +1993,7 @@ void RefreshTrayMenu(){
    }
    managedCaptureSummaryReported=true;
   }
-  var failureInfo=new RdcOwnerFailedSessionInfo{CmdExit=exitCode,StopRequested=managedProcess.StopRequested,PrerequisiteObservations=managedPrerequisiteObservations};
+  var failureInfo=new RdcOwnerFailedSessionInfo{CmdExit=exitCode,StopRequested=managedProcess.StopRequested,AuthPendingObserved=managedAuthPendingObserved,LaunchFailed=managedLaunchRollback,PrerequisiteObservations=managedPrerequisiteObservations};
   if(managedLogPump!=null){
    failureInfo.BytesRead=managedLogPump.BytesRead;
    failureInfo.BytesWriteAcknowledged=managedLogPump.BytesWriteAcknowledged;
@@ -2449,6 +2455,7 @@ void RefreshTrayMenu(){
        try{managedLogSessions.Accept();managedSessionAccepted=true;}
        catch(Exception error){if(!managedLogFaultReported){managedLogFaultReported=true;Append("remote","log session acceptance failed: "+error.GetType().Name);}}
       }
+      if(next=="AuthPending")managedAuthPendingObserved=true;
       managedReadyEvidenceUtc=next=="Ready"?DateTime.UtcNow:DateTime.MinValue;
       managedState=next;
       managedDetail=marker;
