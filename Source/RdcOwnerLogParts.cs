@@ -479,7 +479,7 @@ public sealed class RdcOwnerLogSessions : IDisposable {
  // A separate bounded snapshot of typed metadata survives GUI detach/reopen.
  // No report file, raw output, private path or identity is read for IPC.
  public static string[] AttemptDiagnostics(string phase,bool accepted,RdcOwnerFailedSessionInfo info){
-  if(phase!="starting"&&phase!="completed"&&phase!="preflight_failed"&&phase!="launch_failed")
+  if(phase!="startup_observation"&&phase!="completed"&&phase!="preflight_failed"&&phase!="launch_failed")
    throw new ArgumentException("RDC_ATTEMPT_PHASE");
   if(info==null)info=new RdcOwnerFailedSessionInfo();
   var lines=new List<string>{
