@@ -227,19 +227,22 @@ public sealed class RdcOwnerLogPump {
 // must hold the private Job / prove that no external Remote is running
 // before recovery, and must finish the pump before finalization.
 // Fixed-category completion data only; never pass arbitrary exception text or identity.
+public enum RdcOwnerPreflightFailure { None,RuntimeUnavailable,InspectionFailed }
 public sealed class RdcOwnerFailedSessionInfo {
  public int? CmdExit;
  public bool? StopRequested,CleanEof,ReadFault,StorageFault,ParserFault;
  public long? BytesRead,BytesWriteAcknowledged,RetainedBytes;
  public int? ParserPending;
  public bool LaunchFailed;
+ public RdcOwnerPreflightFailure PreflightFailure;
+ public string[] PrerequisiteObservations;
 }
 public sealed class RdcOwnerLogSessions : IDisposable {
  const string IdentityName=".rdc-session-v1";
  const string AcceptedName=".rdc-accepted-v1";
  const string MarkerPrefix="RDC-LOG-SESSION-V1:";
  const int MaxEntries=10000;
- public const int FailedRawLimit=256*1024;
+ public const int FailedRawLimit=1024*1024;
  const int FailedHeaderLimit=2048;
  const string FailedName="Last unsuccessful sessions.log";
  const string FailedStageName=".rdc-failed-report-v1.tmp";
@@ -429,6 +432,28 @@ public sealed class RdcOwnerLogSessions : IDisposable {
   return value.HasValue?value.Value.ToString(null,CultureInfo.InvariantCulture):"unknown";
  }
  static string Flag(bool? value){return value.HasValue?(value.Value?"yes":"no"):"unknown";}
+ static string PreflightReason(RdcOwnerPreflightFailure reason){
+  switch(reason){
+   case RdcOwnerPreflightFailure.RuntimeUnavailable:return "runtime_unavailable";
+   case RdcOwnerPreflightFailure.InspectionFailed:return "inspection_failed";
+   default:return "none";
+  }
+ }
+ // The report contains only known location categories and file/version states.
+ // In particular no paths, user names or arbitrary exception strings.
+ static string PrerequisiteHeader(string[] observations){
+  if(observations==null||observations.Length==0)return "prerequisite_observations=unknown\n";
+  const string loc=@"runtime (ProgramFiles|AppDataNpm|ProgramFilesX86): ";
+  const string file=@"(missing|unknown|not_file|present)";
+  const string node=@"(missing|unknown|not_file|present\(version_unknown\)|(present|unsupported)\([0-9]{1,10}(\.[0-9]{1,10}){3}\))";
+  string pattern=@"\A"+loc+@"(check_unknown|node="+node+" npm="+file+" npx="+file+"|npm-cli="+file+" npx-cli="+file+@")\z";
+  var lines=new List<string>();
+  for(int i=0;i<Math.Min(6,observations.Length);i++){
+   string line=observations[i];
+   if(line!=null&&line.Length<=120&&System.Text.RegularExpressions.Regex.IsMatch(line,pattern))lines.Add(line+"\n");
+  }
+  return lines.Count==0?"prerequisite_observations=unknown\n":String.Concat(lines);
+ }
  void PublishFailed(Session c,RdcOwnerFailedSessionInfo info){
   // Retry after atomic rename must not replace the good report with a
   // partially deleted current session. Recovery has no proof of exit code.
@@ -445,7 +470,9 @@ public sealed class RdcOwnerLogSessions : IDisposable {
   string header=FailedPrefix+c.Id+"\n"+
    "recorded_utc="+DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture)+"\n"+
    "outcome=not_accepted (not proof of crash)\n"+
-   "completion="+(info.LaunchFailed?"launch_failed":info.CmdExit.HasValue?"verified_cmd_root_exit":"unknown")+"\n"+
+   "completion="+(info.PreflightFailure!=RdcOwnerPreflightFailure.None?"preflight_failed":info.LaunchFailed?"launch_failed":info.CmdExit.HasValue?"verified_cmd_root_exit":"unknown")+"\n"+
+   "preflight_reason="+PreflightReason(info.PreflightFailure)+"\n"+
+   PrerequisiteHeader(info.PrerequisiteObservations)+
    "cmd_exit="+Number(info.CmdExit)+" stop_requested="+Flag(info.StopRequested)+"\n"+
    "capture_read="+Number(info.BytesRead)+" write_ack="+Number(info.BytesWriteAcknowledged)+
    " retained="+Number(info.RetainedBytes)+" parser_pending="+Number(info.ParserPending)+"\n"+
@@ -488,6 +515,16 @@ public sealed class RdcOwnerLogSessions : IDisposable {
    // Only this invocation's CreateNew file, never a wildcard cleanup.
    if(created){Safe(stage);if(File.Exists(stage))File.Delete(stage);}
   }
+ }
+ // Caller must already have passed the external/owned Remote exclusion gate
+ // and hold no unfinished Host capture. No process or pipe is created here.
+ public void RecordPreflightFailure(RdcOwnerPreflightFailure reason,string[] observations){
+  if(reason!=RdcOwnerPreflightFailure.RuntimeUnavailable&&reason!=RdcOwnerPreflightFailure.InspectionFailed)
+   throw new ArgumentException("RDC_PREFLIGHT_FAILURE_REASON");
+  Recover();
+  using(var sink=Begin()){}
+  FinalizeCurrentWithDiagnostics(new RdcOwnerFailedSessionInfo{
+   PreflightFailure=reason,PrerequisiteObservations=observations});
  }
  public RdcOwnerLogParts Begin(){
   Ready();
