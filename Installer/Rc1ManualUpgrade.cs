@@ -101,6 +101,73 @@ internal static class RdcRc1ManualUpgrade {
   shortcut.GetType().InvokeMember("Save",BindingFlags.InvokeMethod,
    null,shortcut,new object[0]);
  }
+ // Public Setup creates the shell link in memory: no intermediate .lnk on
+ // Desktop or on disk, including when Setup is interrupted before publication.
+ // MS-SHLLINK 1.3: ShellLink supports IShellLink + IPersistStream.
+ [ComImport,Guid("000214F9-0000-0000-C000-000000000046"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ interface IShellLinkW {
+  void GetPath([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder path,int count,IntPtr findData,uint flags);
+  void GetIDList(out IntPtr list);
+  void SetIDList(IntPtr list);
+  void GetDescription([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder text,int count);
+  void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string text);
+  void GetWorkingDirectory([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder dir,int count);
+  void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string dir);
+  void GetArguments([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder args,int count);
+  void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string args);
+  void GetHotkey(out short hotkey);
+  void SetHotkey(short hotkey);
+  void GetShowCmd(out int show);
+  void SetShowCmd(int show);
+  void GetIconLocation([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder path,int count,out int index);
+  void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string path,int index);
+  void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string path,uint reserved);
+  void Resolve(IntPtr hwnd,uint flags);
+  void SetPath([MarshalAs(UnmanagedType.LPWStr)] string path);
+ }
+ [ComImport,Guid("00000109-0000-0000-C000-000000000046"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ interface IPersistStream {
+  void GetClassID(out Guid id);
+  [PreserveSig] int IsDirty();
+  void Load(System.Runtime.InteropServices.ComTypes.IStream stream);
+  void Save(System.Runtime.InteropServices.ComTypes.IStream stream,[MarshalAs(UnmanagedType.Bool)] bool clearDirty);
+  void GetSizeMax(out long size);
+ }
+ [DllImport("ole32.dll")]
+ static extern int CreateStreamOnHGlobal(IntPtr memory,[MarshalAs(UnmanagedType.Bool)] bool deleteOnRelease,
+  out System.Runtime.InteropServices.ComTypes.IStream stream);
+ internal static byte[] BuildShortcutBytes(string release,string launcher) {
+  CheckPath(release);CheckPath(launcher);
+  if(!File.Exists(launcher))throw new IOException("RC1_MANUAL_LAUNCHER_ABSENT");
+  object instance=null;
+  System.Runtime.InteropServices.ComTypes.IStream stream=null;
+  IntPtr read=IntPtr.Zero;
+  try {
+   instance=Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046"),true));
+   var link=(IShellLinkW)instance;
+   link.SetPath(launcher);
+   link.SetArguments("--full");
+   link.SetWorkingDirectory(release);
+   link.SetIconLocation(Path.Combine(release,"Source","RDCRelay.ico"),0);
+   link.SetDescription("RDC Relay 1.6.0 RC1 (full Host/GUI candidate)");
+   Marshal.ThrowExceptionForHR(CreateStreamOnHGlobal(IntPtr.Zero,true,out stream));
+   ((IPersistStream)instance).Save(stream,true);
+   System.Runtime.InteropServices.ComTypes.STATSTG stat;
+   stream.Stat(out stat,1);
+   if(stat.cbSize<=0||stat.cbSize>65536)throw new IOException("RC1_MANUAL_NEW_SHORTCUT_SIZE");
+   byte[] bytes=new byte[(int)stat.cbSize];
+   stream.Seek(0,0,IntPtr.Zero);
+   read=Marshal.AllocCoTaskMem(sizeof(int));
+   Marshal.WriteInt32(read,0);
+   stream.Read(bytes,bytes.Length,read);
+   if(Marshal.ReadInt32(read)!=bytes.Length)throw new IOException("RC1_MANUAL_NEW_SHORTCUT_READ");
+   return bytes;
+  }finally{
+   if(read!=IntPtr.Zero)Marshal.FreeCoTaskMem(read);
+   if(stream!=null)Marshal.FinalReleaseComObject(stream);
+   if(instance!=null)Marshal.FinalReleaseComObject(instance);
+  }
+ }
  // Copies only the verified candidate's exact manifest-listed payload.
  // Old installed app directories are never moved, removed or overwritten.
  internal static string Prepare(string source,string localRoot,string[] required) {

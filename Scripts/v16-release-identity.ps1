@@ -86,11 +86,11 @@ function Set-RdcV16QualificationIdentity {
   foreach($method in @('string OldHostMutexName','void CheckPath','bool NoPinnedRemoteVerified','string ReadShortcut','object OpenShortcut')){
    $s=Replace-Exact $s ('static '+$method) ('internal static '+$method)
   }
-  $a=$s.IndexOf('   if(firstInstall){')
+  $a=$s.IndexOf('   string temporary=Path.Combine(desktop,')
   $b=$s.IndexOf('  }finally{',$a)
   if($a -lt 0 -or $b -le $a){throw 'V16_ACTIVATION_DRIFT'}
   $new=@'
-   RdcV16IntegratedMaintenance.Publish(release,localRoot,desktop,temporary,previousRc1HostIdle);
+   RdcV16IntegratedMaintenance.Publish(release,localRoot,desktop,BuildShortcutBytes(release,launcher),previousRc1HostIdle);
    return firstInstall?"CREATED":switchedFromStable?"SWITCHED_STABLE":"SWITCHED_RC1";
 '@
   $s=$s.Substring(0,$a)+$new+[Environment]::NewLine+$s.Substring($b)

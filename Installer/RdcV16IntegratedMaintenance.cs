@@ -250,8 +250,9 @@ internal static class RdcV16IntegratedMaintenance {
    Safe(marker);File.Move(mt,marker);
   }finally{if(File.Exists(tmp))File.Delete(tmp);if(File.Exists(mt))File.Delete(mt);}
  }
- internal static void Publish(string release,string local,string desktop,string stagedLink,bool deferred){
+ internal static void Publish(string release,string local,string desktop,byte[] link,bool deferred){
   if(deferred)throw new IOException("V16_OLD_HOST_NOT_STOPPED");
+  if(link==null||link.Length==0||link.Length>65536)throw new IOException("V16_METADATA_INPUT");
   if(!RdcRc1ManualUpgrade.NoPinnedRemoteVerified())throw new IOException("V16_REMOTE_ACTIVE");
   RdcRc1CandidateSetup.ValidateInstalledSource(release);
   string prior=RegisteredRelease(local);
@@ -268,7 +269,7 @@ internal static class RdcV16IntegratedMaintenance {
   string committed=Path.Combine(Path.GetDirectoryName(maintenance),"activation.committed");
   Safe(journal);Safe(committed);
   if(File.Exists(committed))throw new IOException("V16_ALREADY_COMMITTED");
-  byte[] link=File.ReadAllBytes(stagedLink);
+
   using(var parent=Registry.CurrentUser.CreateSubKey(Parent)){
    RdcV16MetadataTransaction.Prepare(parent,desktop,Programs(),release,maintenance,journal,link,link);
    try{
@@ -280,7 +281,7 @@ internal static class RdcV16IntegratedMaintenance {
     throw;
    }
   }
-  File.Delete(stagedLink);
+
  }
  static void Walk(string dir,List<string> files){
   Safe(dir);
