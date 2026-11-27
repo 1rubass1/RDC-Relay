@@ -3,45 +3,45 @@
 </p>
 
 <p align="center">
-  <b>English</b> | <a href="README.ru.md">Русский</a>
+  <b>Русский</b> | <a href="README.en.md">English</a>
 </p>
 
-**RDC Relay is an independent software supervisor for Desktop Commander Remote on Windows.**
+**RDC Relay — независимый программный супервизор Desktop Commander Remote для Windows.**
 
-It provides background management of Remote and monitors the state of the MCP connection used for AI interaction with your computer, without the need to work with a terminal.
+Приложение обеспечивает фоновое управление Remote и мониторинг состояния MCP-подключения для взаимодействия ИИ с компьютером без необходимости работы с терминалом.
 
-## Key features
+## Основные возможности
 
-- **Remote management** — start, stop, reconnect and keep Remote running in the background.
-- **Automatic recovery** — diagnose failures and restore the connection.
-- **Real-time monitoring** — view connection status, Remote activity, the current account and remaining calls.
-- **Account switching** — switch between Desktop Commander accounts.
-- **System tray controls** — quick access to essential functions.
-- **Informative logging** — turn the technical Remote event stream into a compact, readable journal while retaining access to the original logs.
+- **Управление Remote** — запуск, остановка, переподключение и поддержание фоновой работы.
+- **Автоматическое восстановление** — диагностика сбоев и восстановление подключения.
+- **Мониторинг в реальном времени** — отображение состояния подключения, активности Remote, текущего аккаунта и оставшегося количества вызовов.
+- **Смена аккаунта** — переключение между учётными записями Desktop Commander.
+- **Управление из системного трея** — быстрый доступ к основным функциям.
+- **Информативное журналирование** — преобразование технического потока событий Remote в компактный читаемый журнал с сохранением доступа к исходным логам.
 
-## Installation
+## Установка
 
-The latest version of RDC Relay is available in [Releases](https://github.com/Rubo-Facility/RDC-Relay/releases) in two formats:
+Актуальная версия RDC Relay доступна в разделе [Releases](https://github.com/Rubo-Facility/RDC-Relay/releases) в двух вариантах:
 
-- **Setup** — standard installer. If the required Node.js, npm and npx environment is missing, Setup offers to install Node.js 24 LTS.
-- **Portable** — no installation required. Extract the entire ZIP archive to a local folder and launch `RDC Relay.exe`.
+- **Setup** — стандартный установщик. При отсутствии необходимого окружения Node.js, npm и npx установщик предложит установить Node.js 24 LTS.
+- **Portable** — портативная версия без установки. Полностью распакуйте ZIP-архив в локальную папку и запустите `RDC Relay.exe`.
 
 > [!CAUTION]
-> The installer is not digitally signed. Windows SmartScreen may display a warning, and Smart App Control may block execution.
+> Установщик пока не имеет цифровой подписи. Windows SmartScreen может предупреждать о запуске программы, а Smart App Control — блокировать её запуск.
 >
-> **Smart App Control (SAC).**
-> RDC Relay 1.6.0 is distributed without a trusted code-signing signature. With Smart App Control enabled, Windows may block both Setup and normal launches of an already installed copy. If you prefer to keep this protection, use the [original Desktop Commander](https://desktopcommander.app/).
+> **Smart App Control (Интеллектуальное управление приложениями).**
+> RDC Relay 1.6.0 распространяется без доверенной цифровой подписи. При включённом Smart App Control Windows может блокировать не только установщик, но и обычный запуск уже установленной программы. Если вы хотите сохранить эту защиту, используйте [оригинальный Desktop Commander](https://desktopcommander.app/).
 >
-> Turning SAC off reduces system-wide protection against untrusted applications; it is not an exception just for RDC Relay. There is no need to disable antivirus, SmartScreen or the firewall. RDC Relay never changes these security settings automatically.
+> Отключение Smart App Control снижает защищённость всей системы: Windows перестаёт применять этот дополнительный контроль доверия к приложениям. Это не исключение только для RDC Relay. Антивирус, SmartScreen и брандмауэр отключать не требуется. RDC Relay не изменяет настройки защиты автоматически.
 >
-> Manage SAC in **Windows Security → App & browser control → Smart App Control settings**. If you independently decide to change the setting, select Off or On where supported. Select On to restore protection. Before turning it off, confirm that your Windows build supports re-enabling SAC: older builds may require a reset or reinstallation, and returning to evaluation mode can also require a reset or reinstall. If the setting is unavailable, do not manually modify system policies.
+> Управление: **Безопасность Windows → Управление приложениями и браузером → Параметры интеллектуального управления приложениями**. Если вы самостоятельно приняли решение изменить настройку, здесь доступны режимы «Выкл.» и «Вкл.» (при поддержке системой). Для восстановления защиты выберите «Вкл.». Перед отключением убедитесь, что ваша версия Windows поддерживает обратное включение: на старых сборках может потребоваться сброс или переустановка Windows; возвращение в режим оценки также может потребовать сброса или переустановки. Если настройка недоступна, не изменяйте системные политики вручную.
 >
-> [Official Microsoft FAQ (EN)](https://support.microsoft.com/en-gb/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions)
+> [Официальная справка Microsoft (RU)](https://support.microsoft.com/ru-ru/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions)
 
-## Original project
+## Оригинальный проект
 
-RDC Relay is an independent project and is not officially affiliated with the developers of Desktop Commander. Device pairing uses the official Desktop Commander approval flow; approve only devices you recognize.
+RDC Relay является независимым проектом и официально не связан с разработчиками Desktop Commander. Подключение устройства выполняется через официальный механизм подтверждения Desktop Commander; подтверждайте только знакомые вам устройства.
 
 [Desktop Commander](https://github.com/wonderwhy-er/DesktopCommanderMCP)
 
-[Changelog](CHANGELOG.md)
+[Журнал изменений](CHANGELOG.md)
