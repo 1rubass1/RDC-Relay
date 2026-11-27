@@ -97,12 +97,7 @@ function Set-RdcV16PublicLauncher {
  Edit $setup '"RC1 Pilot Launcher.exe"' '"RDC Relay.exe"' 2
  # Installed qualification manifests have the old launcher name, while the
  # public embedded candidate has only the new name.
- Edit $setup '  var listed=new List<string>();' @'
-  string[] validationRequired=(string)manifest["kind"]=="FULL_HOST_GUI_V16_PUBLIC"?Required:Required.Select(x=>x=="RDC Relay.exe"?"RC1 Pilot Launcher.exe":x).ToArray();
-  var listed=new List<string>();
-'@
- Edit $setup 'listed.Count!=Required.Length' 'listed.Count!=validationRequired.Length'
- Edit $setup 'foreach(string required in Required)' 'foreach(string required in validationRequired)'
+ Edit $setup 'string[] validationRequired=Required;' 'string[] validationRequired=(string)manifest["kind"]=="FULL_HOST_GUI_V16_PUBLIC"?Required:Required.Select(x=>x=="RDC Relay.exe"?"RC1 Pilot Launcher.exe":x).ToArray();'
  $manual=Join-Path $InstallerStage 'Rc1ManualUpgrade.cs'
  Edit $manual 'Path.Combine(release,"RC1 Pilot Launcher.exe")' 'Path.Combine(release,"RDC Relay.exe")'
  Edit $manual 'bool isOldRc1=String.Equals(Path.GetFileName(oldFull),"RC1 Pilot Launcher.exe",StringComparison.OrdinalIgnoreCase)&&' 'bool isOldRc1=(String.Equals(Path.GetFileName(oldFull),"RC1 Pilot Launcher.exe",StringComparison.OrdinalIgnoreCase)||String.Equals(Path.GetFileName(oldFull),"RDC Relay.exe",StringComparison.OrdinalIgnoreCase))&&'
