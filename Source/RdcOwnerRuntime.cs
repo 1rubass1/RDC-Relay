@@ -1234,6 +1234,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
  public string LastGuiError {get{lock(gate){return lastGuiError;}}}
  // Strict Ready is retained for initial OAuth consent.
  string managedQuotaIdleAccount="";
+ string managedDeliveryRecoveryAccount="",managedDeliveryRecoveryDevice="";
  string SelectQuotaAccount(bool freshOnly){
   if(!managedMode||observedMode||trialRoot!=null||disposed||exitRequested||WindowsEnding||
      accountLogoutProcess!=null||accountSwitchFaultLatched||managedProcess==null)return "";
@@ -2097,6 +2098,7 @@ void RefreshTrayMenu(){
    accountSwitchFaultLatched=false;
    toolJournal.Reset();
    managedLogStream.Reset();managedAccount="";managedQuotaIdleAccount="";managedDeviceName="";managedDeviceId="";
+   ClearManagedDeliveryRecovery();
    managedBornUtcTicks=child.BornUtcTicks;managedBannerArt.Clear();managedBannerScanned=0;
    managedStartupHeader.Clear();managedStartupComplete=false;managedStartupScanned=0;
    managedState="Connecting";managedDetail="Starting pinned Desktop Commander Remote";
@@ -2426,11 +2428,11 @@ void RefreshTrayMenu(){
   if(!TrySafeIdentityLine(line,out field,out value))return;
   bool changed=false;
   if(field=="user" && managedAccount!=value){
-   if(!String.Equals(managedAccount,value,StringComparison.OrdinalIgnoreCase))managedQuotaIdleAccount="";
+   if(!String.Equals(managedAccount,value,StringComparison.OrdinalIgnoreCase)){managedQuotaIdleAccount="";ClearManagedDeliveryRecovery();}
    managedAccount=value;changed=true;
   }
   else if(field=="deviceName" && managedDeviceName!=value){managedDeviceName=value;changed=true;}
-  else if(field=="deviceId" && managedDeviceId!=value){managedDeviceId=value;changed=true;}
+  else if(field=="deviceId" && managedDeviceId!=value){ClearManagedDeliveryRecovery();managedQuotaIdleAccount="";managedDeviceId=value;changed=true;}
   if(changed)remoteSupervisor.NoteHostEvent("Owned Remote identity metadata received: "+field);
  }
  // Only top-level status lines from the pinned Remote constitute health
@@ -2518,8 +2520,55 @@ void RefreshTrayMenu(){
   return proofUtc==DateTime.MinValue || proofUtc>nowUtc ||
     nowUtc-proofUtc>ReadyEvidenceLease;
  }
+ void ClearManagedDeliveryRecovery(){
+  managedDeliveryRecoveryAccount="";managedDeliveryRecoveryDevice="";
+ }
+ // A transient channel error may outlive its repair in the console: the
+ // upstream v0.3.4 logs targeted server delivery before executing a tool,
+ // while successful heartbeats need not print a fresh Ready marker.
+ // Remember only an already-verified same-device identity. Never grant
+ // fresh technical Ready or fresh OAuth consent from a tool receipt.
+ void NoteManagedTransportTransition(string line,string next){
+  if(next=="")return;
+  string status=RemoteStatusText(line);
+  bool transient=next=="Fault"&&(HasRemoteStatus(status,"Channel error:")||
+   HasRemoteStatus(status,"Channel closed")||HasRemoteStatus(status,"Channel subscription timed out"));
+  if(transient){
+   string account=SelectQuotaAccount(false);
+   if(!String.IsNullOrEmpty(account)&&!String.IsNullOrEmpty(managedDeviceId)){
+    managedDeliveryRecoveryAccount=account;managedDeliveryRecoveryDevice=managedDeviceId;
+   }
+  }else if(next!="Fault"||!HasRemoteStatus(status,"Device marked as offline")){
+   ClearManagedDeliveryRecovery();
+  }
+  if(next!="Ready")managedQuotaIdleAccount="";
+ }
+ static bool IsTargetedDeliveryMarker(string line,string marker){
+  return marker.StartsWith("Remote tool started|",StringComparison.Ordinal)&&
+   System.Text.RegularExpressions.Regex.IsMatch(line,
+    @"\A\uD83D\uDD27 Received tool call [0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}: [a-z][a-z0-9_]{1,39} \{.*\} metadata: \{.*\}\z");
+ }
+ void ObserveManagedDeliveryRecovery(string line,string marker){
+  if(managedState!="Fault"||managedDetail!="Remote channel unavailable"||
+     String.IsNullOrEmpty(managedDeliveryRecoveryAccount)||
+     !String.Equals(managedAccount,managedDeliveryRecoveryAccount,StringComparison.OrdinalIgnoreCase)||
+     !String.Equals(managedDeviceId,managedDeliveryRecoveryDevice,StringComparison.Ordinal)||
+     managedProcess==null||!managedProcess.Running||managedProcess.StopRequested||
+     managedParserFault||(managedLogPump!=null&&(managedLogPump.ReadFault||managedLogPump.ParserFault||managedLogPump.Complete))||
+     !IsTargetedDeliveryMarker(line,marker))return;
+  managedQuotaIdleAccount=managedDeliveryRecoveryAccount;
+  ClearManagedDeliveryRecovery();
+  managedReadyEvidenceUtc=DateTime.MinValue;
+  managedState="Reconnecting";
+  managedDetail="Remote channel unconfirmed; awaiting new connectivity evidence";
+  remoteSupervisor.ManagedStatus(managedProcess.Pid,true,managedState,managedDetail);
+  Append("remote","targeted call delivered after channel loss; fresh Ready still unconfirmed");
+ }
  void MarkManagedReadinessUnconfirmed(string detail,bool fault){
-  if(managedState!="Ready")return;
+  ClearManagedDeliveryRecovery();
+  if(managedState!="Ready"&&!(managedState=="Reconnecting"&&
+     managedDetail=="Remote channel unconfirmed; awaiting new connectivity evidence"))return;
+  if(detail!="Remote channel unconfirmed; awaiting new connectivity evidence")managedQuotaIdleAccount="";
   managedReadyEvidenceUtc=DateTime.MinValue;
   managedState=fault?"Fault":"Reconnecting";
   managedDetail=detail;
@@ -2539,6 +2588,7 @@ void RefreshTrayMenu(){
   if(!managedMode||managedProcess==null||!managedProcess.HasStarted)return;
   if(!managedProcess.Running){
    managedReadyEvidenceUtc=DateTime.MinValue;
+   ClearManagedDeliveryRecovery();managedQuotaIdleAccount="";
    managedLogStream.Reset();
    if(managedLogSessions!=null){
     try{FinishManagedLog(0);}
@@ -2613,6 +2663,7 @@ void RefreshTrayMenu(){
   }
  }
  void FaultManagedCapture(){
+  ClearManagedDeliveryRecovery();managedQuotaIdleAccount="";
   if(managedState=="Ready")MarkManagedReadinessUnconfirmed("Remote log stream unconfirmed",true);
   else if(managedState!="Fault"){
    managedReadyEvidenceUtc=DateTime.MinValue;managedState="Fault";managedDetail="Remote log stream unconfirmed";
@@ -2645,11 +2696,12 @@ void RefreshTrayMenu(){
      if(marker.StartsWith("Remote tool ",StringComparison.Ordinal))
       marker=toolJournal.Format(cleanLine,marker);
      if(marker=="")continue;
-     // Journal start/completion/failure for UI activity only. Never
-     // recover Fault/Reconnecting or refresh the Ready evidence lease from
-     // local tool completion: the remote result could still fail to upload.
+     // Only a fresh, targeted delivery may clear a stale transport-only
+     // presentation fault. Local completion never proves remote connectivity.
+     ObserveManagedDeliveryRecovery(cleanLine,marker);
      remoteSupervisor.AddSyntheticLogLine(marker);
      if(next!=""){
+      NoteManagedTransportTransition(cleanLine,next);
       if(next=="Ready"&&managedLogPump!=null&&(managedLogPump.ParserFault||managedLogPump.ReadFault)){FaultManagedCapture();return;}
       if(next=="Ready"&&!managedSessionAccepted&&managedLogSessions!=null&&managedLogPump!=null&&!managedLogPump.StorageFault){
        try{managedLogSessions.Accept();managedSessionAccepted=true;}

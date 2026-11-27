@@ -1,4 +1,4 @@
-# R2-002-F1/F2 exact production managed/observed log sequencing.
+﻿# R2-002-F1/F2 exact production managed/observed log sequencing.
 # Runs a short-lived inert owned Job and strictly disposable fake logs only.
 # NO real Remote, GUI, authentication, network, installer or installed files.
 # -PackagedRuntimeDll optionally exercises the exact private build DLL and its
@@ -65,12 +65,15 @@ function NewManagedReader([string]$initial,[datetime]$proof){
  $state=New-Object RdcOwnerRemoteState
  $state.EnableManaged()
  $state.ManagedStatus($script:job.Pid,$true,$initial,'R2 synthetic private link proof')
+ SetPrivate $runtime 'gate' (New-Object object)
  SetPrivate $runtime 'managedMode' $true
  SetPrivate $runtime 'managedProcess' $script:job
  SetPrivate $runtime 'managedState' $initial
  SetPrivate $runtime 'managedLogPath' $script:managedLog
  SetPrivate $runtime 'managedLogStream' (New-Object RdcOwnerUtf8LogBuffer)
  SetPrivate $runtime 'managedReadyEvidenceUtc' $proof
+ SetPrivate $runtime 'managedAccount' 'fixture@example.org'
+ SetPrivate $runtime 'managedDeviceId' 'fixture-device'
  SetPrivate $runtime 'managedLogOffset' ([long]0)
  SetPrivate $runtime 'managedStartupComplete' $true
  SetPrivate $runtime 'managedBannerScanned' 100
@@ -119,6 +122,24 @@ try{
  Check ((GetPrivate $reader.Runtime 'managedReadyEvidenceUtc').Ticks -eq $now.Ticks) 'managed completion does not extend still-valid ready lease'
  $reader=OwnedCase 'new connection after loss legitimately restores Ready' ("Channel closed`n"+$completed+"`nDesktop Commander Remote is connected`n") 'Ready' $now 'Ready' 3
  Check ((GetPrivate $reader.Runtime 'managedReadyEvidenceUtc') -gt [DateTime]::UtcNow.AddSeconds(-20)) 'managed new channel evidence renews proof'
+ # A targeted delivery is positive inbound evidence but not a full
+ # Ready proof. Keep the old verified identity for existing quota only.
+ $receipt=[char]::ConvertFromUtf32(0x1F527)+' Received tool call aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee: read_file {} metadata: {}'
+ $reader=OwnedCase 'channel error then offline then targeted receipt' ("Channel error: synthetic"+[char]10+"Device marked as offline"+[char]10+$receipt+[char]10) 'Ready' $now 'Reconnecting' 3
+ $snap=$reader.State.Snapshot()
+ Check ($snap.status -ceq 'Remote channel unconfirmed; awaiting new connectivity evidence' -and $snap.toolActivity -ceq 'working' -and [RdcOwnerTrayVisual]::DisplaySemantic($snap.state,$snap.status,$snap.ownership,$snap.processAlive,$snap.toolActivity) -ceq 'working') 'delivery restores shared waiting/working presentation'
+ Check ((GetPrivate $reader.Runtime 'managedReadyEvidenceUtc') -eq [DateTime]::MinValue -and $reader.Runtime.ActiveManagedAccount -eq '' -and $reader.Runtime.QuotaManagedAccount -eq 'fixture@example.org') 'delivery does not grant technical Ready or new consent; existing same-account quota permitted'
+ $reader=OwnedCase 'targeted receipt after explicit auth expiry' ("Channel closed"+[char]10+"Remote session expired and could not be renewed."+[char]10+$receipt+[char]10) 'Ready' $now 'Fault' 3
+ Check ($reader.Runtime.QuotaManagedAccount -eq '') 'authentication failure never recovers quota via receipt'
+ $null=OwnedCase 'no prior verified readiness' ("Channel closed"+[char]10+$receipt+[char]10) 'Connecting' ([DateTime]::MinValue) 'Fault' 2
+ $null=OwnedCase 'malformed receipt without metadata' ("Channel closed"+[char]10+$started+[char]10) 'Ready' $now 'Fault' 2
+ $null=OwnedCase 'ordinary line contains delivery-like text' ("Channel closed"+[char]10+'other output '+$receipt+[char]10) 'Ready' $now 'Fault' 1
+ $null=OwnedCase 'new explicit failure after recovered delivery' ("Channel closed"+[char]10+$receipt+[char]10+"Channel closed"+[char]10) 'Ready' $now 'Fault' 3
+ $null=OwnedCase 'duplicate receipt cannot recover later channel failure' ($receipt+[char]10+"Channel closed"+[char]10+$receipt+[char]10) 'Ready' $now 'Fault' 2
+ $reader=OwnedCase 'new receipt then local completion remains unconfirmed' ("Channel closed"+[char]10+$receipt+[char]10+$completed+[char]10) 'Ready' $now 'Reconnecting' 3
+ Check ((GetPrivate $reader.Runtime 'managedReadyEvidenceUtc') -eq [DateTime]::MinValue) 'local completion still cannot renew transport proof'
+ $reader=OwnedCase 'new receipt then fresh connection proof' ("Channel closed"+[char]10+$receipt+[char]10+"Desktop Commander Remote is connected"+[char]10) 'Ready' $now 'Ready' 3
+ Check ($reader.Runtime.ActiveManagedAccount -eq 'fixture@example.org') 'only explicit new proof restores fresh authorization eligibility'
  # Replay the observed 0.3.4 console framing through actual managed UTF-8 parsing.
  $stamp='[23:27:08] '
  $ready=[char]0x2705+' Device ready:'
