@@ -5999,6 +5999,25 @@ function Remove-Rc1OwnerWordmarkArt([string]$text) {
     if($end -ge $rows.Length){return ''}
     return [string]::Join([Environment]::NewLine,$rows[$end..($rows.Length-1)])
 }
+# Render only the two upstream supplementary-plane heading glyphs as
+# supported BMP symbols. Do not change original logs, header wording,
+# other emoji, or ordinary text containing these same code points.
+function Convert-Rc1OwnerStartupGlyphs([string]$text) {
+    $text=[regex]::Replace($text,'(?m)^([ \t]*)\uD83C\uDF10\uFE0F? (?=Remote Connection\r?$)',('$1'+[char]0x25CE+' '))
+    return [regex]::Replace($text,'(?m)^([ \t]*)\uD83D\uDE80\uFE0F? (?=Starting MCP Device\.\.\.\r?$)',('$1'+[char]0x25B6+' '))
+}
+function Apply-Rc1OwnerStartupGlyphs([RdcLogBox]$target) {
+    if(-not $target -or $target.TextLength -eq 0){return}
+    $font=New-Object Drawing.Font('Segoe UI Symbol',$target.Font.Size)
+    try{
+        foreach($m in [regex]::Matches($target.Text,'(?m)^[ \t]*(?<symbol>\u25CE)(?= Remote Connection\r?$)|^[ \t]*(?<symbol>\u25B6)(?= Starting MCP Device\.\.\.\r?$)')){
+            $symbol=$m.Groups['symbol']
+            $target.Select($symbol.Index,$symbol.Length)
+            $target.SelectionFont=$font
+            $target.SelectionColor=if($symbol.Value -ceq [string][char]0x25CE){$accentNetwork}else{$accentOrange}
+        }
+    }finally{$font.Dispose()}
+}
 function Render-CompactLog {
     if (-not $log -or $log.IsDisposed -or -not $headerLog -or $headerLog.IsDisposed) { return }
 
@@ -6008,6 +6027,7 @@ function Render-CompactLog {
     if($OwnerGui -and $headerDisplay){
         $headerDisplay=Convert-Rc1OwnerStartupInstructions $headerDisplay
         $headerDisplay=Remove-Rc1OwnerWordmarkArt $headerDisplay
+        $headerDisplay=Convert-Rc1OwnerStartupGlyphs $headerDisplay
     }
     $headerLayoutKey=if($OwnerGui -and $headerDisplay){$headerLog.BannerLayoutKey}else{''}
     if ($script:lastRenderedHeader -cne $headerDisplay -or $script:lastHeaderLayoutKey -cne $headerLayoutKey) {
@@ -6051,6 +6071,7 @@ function Render-CompactLog {
             Color-LogToken $headerLog '💾' $accentStorage
             Color-LogToken $headerLog '👋' $accentGreeting
             if($OwnerGui){Apply-OwnerEmojiFont $headerLog}
+            if($OwnerGui){Apply-Rc1OwnerStartupGlyphs $headerLog}
 
             if ($headerHadSelection) {
                 $restoreHeaderStart = [Math]::Min($headerSelectionStart,$headerLog.TextLength)
