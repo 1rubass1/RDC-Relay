@@ -4,27 +4,27 @@
 
 A concise history of RDC Relay releases, newest first.
 
-## 1.6.0 — 2026-11-28 (замена сборки / replacement build)
+## 1.6.0 — 2026-11-25
 
 ### Русский
 
-- **Архитектура:** фоновый Host управляет Remote независимо от главного окна; управление через системный трей.
-- **Подключение:** официальный канал Desktop Commander `@latest`, исправленная передача PATH, поддержка отметок времени в журнале и восстановление визуального состояния при повторной доставке вызова после сбоя.
-- **Remaining Calls:** единый источник официальных данных для окна и трея, обновление каждые 30 минут, ограниченное ускорение при открытии окна, проверка аккаунта и срока актуальности.
-- **Интерфейс:** масштабируемый баннер, общая прокрутка заголовка, компактное сворачивание, круглые минимальные ползунки, коррекция геометрии эффекта индикатора.
-- **Журнал:** автоматическая ротация, ограничения хранения и диагностика неудачных запусков.
-- **Установка и обновления:** Node.js 24 LTS при необходимости и с согласия пользователя; поддерживаемая базовая архитектура 1.6.0, без автоматической миграции с 1.5.x. Перед установкой заменяющей сборки завершите RDC Relay.
-- **Локализация:** русский и английский интерфейс.
+- **Новая архитектура.** RDC Relay поддерживает соединение в фоновом режиме независимо от основного окна. Управление доступно через системный трей.
+- **Стабильность и подключение.** Переработаны управление процессами Remote, контроль готовности и восстановление связи. Используется актуальная версия оригинального Desktop Commander Remote.
+- **Мониторинг.** Синхронизировано отображение остатка вызовов в главном окне и трее; улучшены обновление данных и проверка их актуальности.
+- **Интерфейс.** Улучшены индикация состояния, визуальные эффекты, контекстные меню и диалоги. Обновлены оформление заголовка, прокрутка и адаптация окна к разным размерам и масштабам.
+- **Журнал событий.** Просмотр и сохранение логов, автоматическая ротация, ограничение занимаемого пространства и улучшенная диагностика запуска.
+- **Установка и обновления.** Setup предлагает установить Node.js 24 LTS, если необходимые зависимости отсутствуют. Предусмотрен отдельный канал последующих обновлений. Перед установкой завершите работающий RDC Relay.
+- **Локализация.** Русский и английский языки с переключением в программе.
 
 ### English
 
-- **Architecture:** background Host manages Remote independently of the window, with system tray controls.
-- **Connection:** official Desktop Commander `@latest` channel, corrected PATH handling, timestamped log support and visual recovery when targeted calls resume after a channel error.
-- **Remaining Calls:** shared official data source for window and tray, 30-minute refresh, bounded refresh hint on window open, account and freshness checks.
-- **Interface:** scalable wordmark, shared header scrolling, compact collapse, circular minimum scrollbar thumbs and corrected indicator effect geometry.
-- **Journal:** automatic rotation, storage limits and failed-start diagnostics.
-- **Installation and updates:** optional consent-based Node.js 24 LTS installation; supported 1.6.0 baseline without automatic migration from 1.5.x. Exit RDC Relay before installing the replacement build.
-- **Localization:** Russian and English UI.
+- **New architecture.** RDC Relay maintains its connection in the background, independently of the main window, with system tray controls.
+- **Reliability and connection.** Reworked Remote process management, readiness tracking and connection recovery. Uses the latest version of the original Desktop Commander Remote.
+- **Monitoring.** Synchronized remaining calls in the main window and system tray, with improved data refresh and freshness checks.
+- **Interface.** Refined status indicators, visual effects, context menus and dialogs. Updated the header design, scrolling and adaptation to different window sizes and display scaling.
+- **Activity journal.** Log viewing, exporting, automatic rotation, storage limits and improved startup diagnostics.
+- **Installation and updates.** Setup offers Node.js 24 LTS when required dependencies are missing. A dedicated update feed supports subsequent releases. Exit any running instance of RDC Relay before installation.
+- **Localization.** Russian and English with in-app switching.
 
 [Release / Релиз 1.6.0](https://github.com/Rubo-Facility/RDC-Relay/releases/tag/v1.6.0)
 
