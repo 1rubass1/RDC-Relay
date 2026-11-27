@@ -1,4 +1,4 @@
-# Isolated original renderer and uptime contract.
+﻿# Isolated original renderer and uptime contract.
 $ErrorActionPreference='Stop'
 $src=Join-Path (Split-Path $PSScriptRoot -Parent) 'Source'
 $gui=[IO.File]::ReadAllText((Join-Path $src 'rc1-owner-gui.ps1'))
@@ -16,7 +16,7 @@ Check ($runtime.Contains('managedBornUtcTicks=child.BornUtcTicks') -and $runtime
 Check ($gui.Contains('{0:00}:{1:00}:{2:00}') -and $gui.Contains('$script:ownerRemoteBornTicks')) 'original uptime footer restored'
 Check (-not $gui.Contains("'Управление: Host-owned Job'")) 'obsolete footer text removed'
 Check ($runtime.Contains('AcceptManagedBannerArt(cleanLine)') -and $runtime.Contains('"remoteStartupArt"') -and $gui.Contains('$snapshot.remoteStartupArt')) 'safe original startup art in authenticated snapshot'
-Check ($gui.Contains("('- User: '") -and $gui.Contains("('- Device Name: '") -and $gui.Contains("('- Device ID: '")) 'original semantic value coloring applies'
+Check ($gui.Contains("owner.fallback.label.user") -and $gui.Contains("owner.fallback.label.deviceName") -and $gui.Contains("owner.fallback.label.deviceId") -and $view.Contains("User:\s*(.+)") -and $view.Contains("Device Name:\s*(.+)") -and $view.Contains("Device ID:\s*(.+)")) 'localized identity labels and original semantic value coloring apply'
 # The original six-row pseudographic DESKTOP (left) / COMMANDER (right)
 # banner is the only reversed palette. Test the exact production RichEdit
 # painter, not a reimplementation of its 61-character split.

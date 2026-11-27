@@ -57,10 +57,10 @@ foreach($separator in @('LF','CRLF')){
 }
 $OwnerGui=$true
 Check ((Add-Rc1OwnerBannerLeadingColumn 'ordinary status') -ceq 'ordinary status') 'non-art Owner fallback remains untouched'
-Check ($raw.Contains('$headerDisplay=Add-Rc1OwnerBannerLeadingColumn $headerDisplay') -and
+Check ($raw.Contains('$headerDisplay=Remove-Rc1OwnerWordmarkArt $headerDisplay') -and
  $raw.Contains('$headerDisplay=Convert-Rc1OwnerStartupInstructions $headerDisplay') -and
  $raw.Contains('$script:lastRenderedHeader = $headerDisplay') -and
- $raw.Contains('$headerLog.Text = $headerDisplay')) 'inset is applied to render copy after instructions conversion'
+ $raw.Contains('$headerLog.Text = $headerDisplay')) 'resource banner removes upstream art from render copy after instructions conversion'
 Check ($raw.Contains('$headerLog.OwnerBannerLeadingColumn = [bool]$OwnerGui') -and
  $raw.Contains('int split = Math.Min(OwnerBannerLeadingColumn ? 63 : 61, line.Length);')) 'color boundary moves with Owner art, legacy split unchanged'
 Check ($raw.Contains('if($OwnerGui){$headerLog.Margin = [Windows.Forms.Padding]::new(3,5,3,3)}') -and
