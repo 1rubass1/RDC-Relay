@@ -7329,6 +7329,27 @@ function Get-RdcOwnerJournalText {
                  'yyyy-MM-dd HH:mm:ss.fff', [Globalization.CultureInfo]::InvariantCulture)+' UTC')
         }
         [void]$lines.Add('')
+        # Revalidate only fixed fields from the authenticated attempt snapshot.
+        # Never open Last unsuccessful sessions.log: that file contains private raw bytes.
+        $attemptLines=New-Object 'System.Collections.Generic.List[string]'
+        $fileState='(missing|unknown|not_file|present)'
+        $nodeState='(missing|unknown|not_file|present\(version_unknown\)|(present|unsupported)\([0-9]{1,10}(\.[0-9]{1,10}){3}\))'
+        $runtimePattern='\Aruntime (ProgramFiles|AppDataNpm|ProgramFilesX86): (check_unknown|node='+$nodeState+' npm='+$fileState+' npx='+$fileState+'|npm-cli='+$fileState+' npx-cli='+$fileState+')\z'
+        $fixedPattern='\A(attempt_phase=(startup_observation|completed|preflight_failed|launch_failed)|completion_kind=(unknown|preflight_failed|launch_failed|exit_before_ready|startup_stop_requested|authorization_stop_requested|stop_requested_after_ready|unexpected_after_ready)|preflight_reason=(none|runtime_unavailable|inspection_failed)|cmd_exit=(unknown|-?[0-9]{1,10})|(stop_requested|accepted_session|auth_pending_observed|eof|read_fault|storage_fault|parser_fault)=(yes|no|unknown)|(capture_read|write_ack|retained|parser_pending)=(unknown|[0-9]{1,19})|prerequisite_observations=unknown)\z'
+        $packagePattern='\Aruntime (ProgramFiles|AppDataNpm|ProgramFilesX86): npm_package=(missing|unknown|not_file|present\(version_unknown\)|present\([0-9]{1,9}(\.[0-9]{1,9}){2}\))\z'
+        $systemPattern='\A(windows_version=(unknown|[0-9]{1,10}(\.[0-9]{1,10}){2}) native_arch=(unknown|x86|x64|arm64|arm) host_bits=(32|64)|remote_requested=0\.2\.52 remote_actual_version=unknown)\z'
+        foreach($entry in @($script:ownerAttemptDiagnostics | Select-Object -First 28)){
+            if($entry -is [string] -and $entry.Length -le 120 -and
+                ($entry -cmatch $fixedPattern -or $entry -cmatch $runtimePattern -or
+                 $entry -cmatch $packagePattern -or $entry -cmatch $systemPattern)){
+                [void]$attemptLines.Add($entry)
+            }
+        }
+        if($attemptLines.Count -gt 0){
+            [void]$lines.Add((Get-RdcOwnerDialogText 'journal.owner.attemptHeading' 'ДИАГНОСТИКА ТЕКУЩЕЙ ИЛИ ПОСЛЕДНЕЙ ПОПЫТКИ (данные Host)'))
+            foreach($entry in $attemptLines){[void]$lines.Add('  • '+$entry)}
+            [void]$lines.Add('')
+        }
         [void]$lines.Add((Get-RdcOwnerDialogText 'journal.owner.diagHeading' 'ДИАГНОСТИКА HOST (последние доступные записи)'))
         $diagCount=0
         foreach($entry in @($script:ownerRecentDiagnostics)){

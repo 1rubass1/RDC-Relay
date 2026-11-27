@@ -13,6 +13,7 @@ public sealed class RdcLogPumpProbe {
   offset+=n;return n;
  }
  public int Invalid(byte[] buffer,out bool eof){eof=false;return buffer.Length+1;}
+ public int Empty(byte[] buffer,out bool eof){eof=true;return 0;}
  public static DateTime Clock(){return new DateTime(2026,11,24);}
 }
 '@
@@ -36,6 +37,7 @@ try{
  $actual=New-Object IO.MemoryStream
  foreach($path in $pump.RetainedPaths){$bytes=[IO.File]::ReadAllBytes($path);$actual.Write($bytes,0,$bytes.Length)}
  Check ([Convert]::ToBase64String($actual.ToArray()) -ceq [Convert]::ToBase64String([byte[]](0..39))) 'all original bytes retained despite parser overflow'
+ Check ($pump.BytesRead -eq 40 -and $pump.BytesWriteAcknowledged -eq 40 -and $pump.RetainedBytes -eq 40) 'read and successful write counters retain parser-independent totals'
  $actual.Dispose()
  $dir=Join-Path $root 'storage'
  $sink=New-Sink $dir
@@ -43,17 +45,22 @@ try{
  [IO.File]::WriteAllBytes($foreign,[byte[]](90,91))
  $pump=New-Object RdcOwnerLogPump -ArgumentList @((New-Reader Read),$sink,64)
  Check ($pump.WaitForCompletion(3000) -and $pump.CleanEof -and $pump.StorageFault -and -not $pump.ParserFault -and -not $pump.ReadFault) 'sink failure latches but still drains and supplies parser'
+ Check ($pump.BytesRead -eq 40 -and $pump.BytesWriteAcknowledged -eq 0 -and $pump.RetainedBytes -eq 0) 'storage failure distinguished from empty process output'
  $data=New-Object byte[] 40
  Check ($pump.ReadPending($data) -eq 40 -and [Convert]::ToBase64String($data) -ceq [Convert]::ToBase64String([byte[]](0..39))) 'parser receives original bytes after storage failure'
  Check ([Convert]::ToBase64String([IO.File]::ReadAllBytes($foreign)) -ceq 'Wls=') 'collision never overwrites existing file'
  $sink=New-Sink (Join-Path $root 'invalid')
  $pump=New-Object RdcOwnerLogPump -ArgumentList @((New-Reader Invalid),$sink,64)
  Check ($pump.WaitForCompletion(3000) -and $pump.ReadFault -and -not $pump.CleanEof) 'invalid reader contract is not misreported as EOF'
+ Check ($pump.BytesRead -eq 0 -and $pump.BytesWriteAcknowledged -eq 0 -and $pump.RetainedBytes -eq 0) 'invalid reader adds no bytes'
+ $sink=New-Sink (Join-Path $root 'empty')
+ $pump=New-Object RdcOwnerLogPump -ArgumentList @((New-Reader Empty),$sink,64)
+ Check ($pump.WaitForCompletion(3000) -and $pump.CleanEof -and -not $pump.ReadFault -and -not $pump.StorageFault -and $pump.BytesRead -eq 0 -and $pump.BytesWriteAcknowledged -eq 0 -and $pump.RetainedBytes -eq 0) 'clean empty EOF distinguished from reader and storage errors'
 }finally{
  if($pump -and -not $pump.WaitForCompletion(3000)){throw 'PUMP_STILL_RUNNING_RETAIN_FIXTURE'}
  if([IO.Path]::GetFileName($root) -cnotmatch '^RDC-LOG-PUMP-[a-f0-9]{32}$' -or [IO.Path]::GetDirectoryName($root) -cne [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([char]92)){throw 'PUMP_CLEANUP_SCOPE'}
  foreach($entry in Get-ChildItem -LiteralPath $root -Force){
-  if(-not $entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -or @('overflow','storage','invalid') -cnotcontains $entry.Name){throw 'PUMP_CLEANUP_UNKNOWN'}
+  if(-not $entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -or @('overflow','storage','invalid','empty') -cnotcontains $entry.Name){throw 'PUMP_CLEANUP_UNKNOWN'}
   foreach($file in Get-ChildItem -LiteralPath $entry.FullName -Force){
    if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Name -cnotmatch '^2026-11-24_part-\d+\.log$'){throw 'PUMP_CLEANUP_UNKNOWN_PART'}
   }

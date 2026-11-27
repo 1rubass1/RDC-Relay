@@ -950,6 +950,103 @@ public static class RdcOwnerTrayConfirmation {
  }
 }
 
+// Read-only environment observations. No process launch, PATH probe, npm cache
+// scan or registry enumeration; package metadata is not proof of execution.
+public static class RdcOwnerEnvironmentDiagnostics {
+ [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential,CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+ struct OsVersion {
+  public uint Size,Major,Minor,Build,Platform;
+  [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValTStr,SizeConst=128)]
+  public string ServicePack;
+ }
+ [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+ struct NativeSystemInfo {
+  public ushort Architecture,Reserved;
+  public uint PageSize;
+  public IntPtr MinAddress,MaxAddress,ProcessorMask;
+  public uint ProcessorCount,ProcessorType,AllocationGranularity;
+  public ushort ProcessorLevel,ProcessorRevision;
+ }
+ [System.Runtime.InteropServices.DllImport("ntdll.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+ static extern int RtlGetVersion(ref OsVersion version);
+ [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+ static extern void GetNativeSystemInfo(out NativeSystemInfo info);
+ public static string[] ObserveSystem(){
+  string version="unknown",arch="unknown";
+  try{
+   var v=new OsVersion{Size=(uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(OsVersion))};
+   if(RtlGetVersion(ref v)==0)version=String.Format(System.Globalization.CultureInfo.InvariantCulture,"{0}.{1}.{2}",v.Major,v.Minor,v.Build);
+  }catch{}
+  try{
+   NativeSystemInfo n;GetNativeSystemInfo(out n);
+   switch(n.Architecture){case 0:arch="x86";break;case 9:arch="x64";break;case 12:arch="arm64";break;case 5:arch="arm";break;}
+  }catch{}
+  return new[]{"windows_version="+version+" native_arch="+arch+" host_bits="+(Environment.Is64BitProcess?"64":"32"),
+   "remote_requested=0.2.52 remote_actual_version=unknown"};
+ }
+ public static string NpmPackageState(string root,Action<string> checkPath){
+  try{
+   string path=Path.Combine(root,"node_modules","npm","package.json");
+   string state=RdcOwnerPrerequisiteDiagnostics.FileState(path,checkPath);
+   if(state!="present")return state;
+   checkPath(path);
+   using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read)){
+    if(stream.Length==0||stream.Length>65536)return "present(version_unknown)";
+    using(var reader=new StreamReader(stream,new UTF8Encoding(false,true),true)){
+     string raw=reader.ReadToEnd();
+     var serializer=new System.Web.Script.Serialization.JavaScriptSerializer{MaxJsonLength=65536,RecursionLimit=16};
+     var obj=serializer.DeserializeObject(raw) as Dictionary<string,object>;
+     object name,version;
+     if(obj==null||!obj.TryGetValue("name",out name)||!Object.Equals(name,"npm")||
+        !obj.TryGetValue("version",out version)||!(version is string))return "present(version_unknown)";
+     string v=(string)version;
+     if(v.Length>48||!System.Text.RegularExpressions.Regex.IsMatch(v,@"\A[0-9]{1,9}(\.[0-9]{1,9}){2}\z"))
+      return "present(version_unknown)";
+     return "present("+v+")";
+    }
+   }
+  }catch{return "unknown";}
+ }
+}
+// Read-only prerequisite observations. No PATH execution or private paths in exported events.
+// This helper never changes the launch resolver's acceptance or fallback policy.
+public static class RdcOwnerPrerequisiteDiagnostics {
+ public static string FileState(string path,Action<string> checkPath){
+  try{
+   checkPath(path);
+   var attributes=File.GetAttributes(path);
+   if((attributes&FileAttributes.ReparsePoint)!=0)return "unknown";
+   return (attributes&FileAttributes.Directory)!=0?"not_file":"present";
+  }catch(FileNotFoundException){return "missing";}
+   catch(DirectoryNotFoundException){return "missing";}
+   catch{ return "unknown"; }
+ }
+ public static string NodeState(string path,Action<string> checkPath){
+  string state=FileState(path,checkPath);
+  if(state!="present")return state;
+  try{
+   checkPath(path);
+   var v=FileVersionInfo.GetVersionInfo(path);
+   if(v.FileMajorPart<=0)return "present(version_unknown)";
+   string version=String.Format(System.Globalization.CultureInfo.InvariantCulture,
+    "{0}.{1}.{2}.{3}",v.FileMajorPart,v.FileMinorPart,v.FileBuildPart,v.FilePrivatePart);
+   bool supported=v.FileMajorPart>22||(v.FileMajorPart==22&&v.FileMinorPart>=12);
+   return (supported?"present(":"unsupported(")+version+")";
+  }catch{return "present(version_unknown)";}
+ }
+ public static string[] Observe(string root,string location,Action<string> checkPath){
+  string node=NodeState(Path.Combine(root,"node.exe"),checkPath);
+  string npm=FileState(Path.Combine(root,"npm.cmd"),checkPath);
+  string npx=FileState(Path.Combine(root,"npx.cmd"),checkPath);
+  string bin=Path.Combine(root,"node_modules","npm","bin");
+  return new[]{
+   "runtime "+location+": node="+node+" npm="+npm+" npx="+npx,
+   "runtime "+location+": npm-cli="+FileState(Path.Combine(bin,"npm-cli.js"),checkPath)+
+    " npx-cli="+FileState(Path.Combine(bin,"npx-cli.js"),checkPath)
+  };
+ }
+}
+
 public sealed class RdcOwnerRuntime : IDisposable {
  readonly object gate=new object();
  readonly string sourceRoot, guiScript, stateRoot, ticketFile, instance, generation, trialRoot;
@@ -974,6 +1071,11 @@ public sealed class RdcOwnerRuntime : IDisposable {
  RdcOwnerLogSessions managedLogSessions=null;
  RdcOwnerLogPump managedLogPump=null;
  bool managedSessionAccepted=false,managedLogFaultReported=false,managedLogFinishFaultReported=false,managedParserFault=false;
+ bool managedExitReported=false,managedCaptureSummaryReported=false;
+ bool managedAuthPendingObserved=false,managedLaunchRollback=false;
+ string[] managedPrerequisiteObservations;
+ string[] managedAttemptSummary;
+ string managedCompletionKind="unknown";
  // Logout is a separate, bounded private Job; never execute in the GUI or
  // borrow the running Remote's process tree or credential files.
  RdcOwnerManagedProcess accountLogoutProcess=null;
@@ -1745,13 +1847,31 @@ void RefreshTrayMenu(){
    return true;
   }
  }
- static string ResolvePinnedNpx(){
+ string ResolvePinnedNpx(){return ResolvePinnedNpxWithDiagnostics(null);}
+ string ResolvePinnedNpxWithDiagnostics(List<string> observations){
   string[] candidates=new string[]{
    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"nodejs","npx.cmd"),
    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"npm","npx.cmd"),
    Path.Combine(Environment.GetEnvironmentVariable("ProgramFiles(x86)")??@"C:\Program Files (x86)","nodejs","npx.cmd")
   };
-  foreach(string file in candidates){
+  string[] locations={"ProgramFiles","AppDataNpm","ProgramFilesX86"};
+  for(int i=0;i<candidates.Length;i++){
+   string file=candidates[i];
+   // Diagnostic failures cannot change the established launch decision.
+   try{
+    foreach(string line in RdcOwnerPrerequisiteDiagnostics.Observe(Path.GetDirectoryName(file),locations[i],CheckPath)){
+     if(observations!=null)observations.Add(line);
+     Append("remote",line);
+    }
+    if(observations!=null){
+     string metadata="runtime "+locations[i]+": npm_package="+RdcOwnerEnvironmentDiagnostics.NpmPackageState(Path.GetDirectoryName(file),CheckPath);
+     observations.Add(metadata);Append("remote",metadata);
+    }
+   }catch{
+    string line="runtime "+locations[i]+": check_unknown";
+    if(observations!=null)observations.Add(line);
+    Append("remote",line);
+   }
    CheckPath(file);
    if(!File.Exists(file))continue;
    string dir=Path.GetDirectoryName(file);
@@ -1812,12 +1932,37 @@ void RefreshTrayMenu(){
    throw new InvalidOperationException("RC1_LEGACY_GUI_STILL_ACTIVE");
   if(AnotherDesktopCommanderRemote())
    throw new InvalidOperationException("RC1_EXISTING_REMOTE_ADOPTED_NO_DUPLICATE");
-  string npx=ResolvePinnedNpx();
-  StartManagedCapture(npx,Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(stateRoot)),"Logs"));
+  string logRoot=Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(stateRoot)),"Logs");
+  var observations=new List<string>(RdcOwnerEnvironmentDiagnostics.ObserveSystem());
+  string npx;
+  try{npx=ResolvePinnedNpxWithDiagnostics(observations);}
+  catch(Exception problem){
+   // Do not replace or recover a log while any old capture still owns it.
+   // Preserve the actual launch exception even if diagnostics fail.
+   try{
+    int oldExit;
+    if(WindowsEnding||managedLogSessions!=null||managedLogPump!=null||
+       (managedProcess!=null&&!managedProcess.TryGetCompletedExitCode(out oldExit))){
+     Append("remote","preflight report deferred: owned capture not finalized");
+    }else{
+     var reason=problem.Message=="RC1_PINNED_NPX_MISSING"?
+      RdcOwnerPreflightFailure.RuntimeUnavailable:RdcOwnerPreflightFailure.InspectionFailed;
+     var preflightInfo=new RdcOwnerFailedSessionInfo{PreflightFailure=reason,PrerequisiteObservations=observations.ToArray()};
+     managedCompletionKind=RdcOwnerCompletionDiagnostics.Classify(false,preflightInfo);
+     managedAttemptSummary=RdcOwnerLogSessions.AttemptDiagnostics("preflight_failed",false,preflightInfo);
+     using(var store=new RdcOwnerLogSessions(logRoot))
+      store.RecordPreflightFailure(reason,observations.ToArray());
+     Append("remote","preflight failure report saved");
+    }
+   }catch{Append("remote","preflight failure report unavailable");}
+   throw;
+  }
+  StartManagedCaptureWithDiagnostics(npx,logRoot,observations.ToArray());
  }
  // The production caller has already verified the no-external-Remote gate.
  // The explicit root argument also permits a disposable, fake-only fixture.
- void StartManagedCapture(string npx,string logRoot){
+ void StartManagedCapture(string npx,string logRoot){StartManagedCaptureWithDiagnostics(npx,logRoot,null);}
+ void StartManagedCaptureWithDiagnostics(string npx,string logRoot,string[] observations){
   if(WindowsEnding)throw new InvalidOperationException("RC1_WINDOWS_ENDING");
   if(managedProcess!=null){
    int oldExit;
@@ -1826,6 +1971,12 @@ void RefreshTrayMenu(){
    managedProcess.Dispose();managedProcess=null;
   }
   var child=new RdcOwnerManagedProcess();
+  managedExitReported=false;managedCaptureSummaryReported=false;
+  managedAuthPendingObserved=false;managedLaunchRollback=false;
+  managedPrerequisiteObservations=observations;
+  managedCompletionKind="unknown";
+  managedAttemptSummary=RdcOwnerLogSessions.AttemptDiagnostics("startup_observation",false,
+   new RdcOwnerFailedSessionInfo{PrerequisiteObservations=observations});
   RdcOwnerLogSessions sessions=null;
   RdcOwnerLogParts sink=null;
   bool began=false;
@@ -1851,10 +2002,14 @@ void RefreshTrayMenu(){
   }catch{
    // A failure after spawn must never abandon an untracked private Job.
    if(!child.HasStarted){
-    try{if(sink!=null)sink.Dispose();if(sessions!=null&&began)sessions.FinalizeCurrent();}
+    var launchInfo=new RdcOwnerFailedSessionInfo{LaunchFailed=true,PrerequisiteObservations=managedPrerequisiteObservations};
+    managedCompletionKind="launch_failed";
+    managedAttemptSummary=RdcOwnerLogSessions.AttemptDiagnostics("launch_failed",false,launchInfo);
+    try{if(sink!=null)sink.Dispose();if(sessions!=null&&began)sessions.FinalizeCurrentWithDiagnostics(new RdcOwnerFailedSessionInfo{LaunchFailed=true,PrerequisiteObservations=managedPrerequisiteObservations});}
     finally{if(sessions!=null)sessions.Dispose();child.Dispose();}
     throw;
    }
+   managedLaunchRollback=true;
    bool stopped=false;
    try{stopped=child.StopOwnedOnly(10000);}catch{}
    if(sink!=null)sink.Dispose();
@@ -1885,10 +2040,48 @@ void RefreshTrayMenu(){
    if(wait.ElapsedMilliseconds>=timeoutMs)throw new InvalidOperationException("RC1_LOG_JOB_NOT_COMPLETE");
    Thread.Sleep(10);
   }
+  if(!managedExitReported){
+   // Exit code belongs to the cmd.exe root, not necessarily the Node child.
+   // A stop request is an observation, not proof of why the process exited.
+   Append("remote","completion: cmd_exit="+exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)+
+    " stop_requested="+(managedProcess.StopRequested?"yes":"no")+" accepted_session="+(managedSessionAccepted?"yes":"no"));
+   var completionInfo=new RdcOwnerFailedSessionInfo{CmdExit=exitCode,StopRequested=managedProcess.StopRequested,
+    AuthPendingObserved=managedAuthPendingObserved,LaunchFailed=managedLaunchRollback};
+   managedCompletionKind=RdcOwnerCompletionDiagnostics.Classify(managedSessionAccepted,completionInfo);
+   completionInfo.PrerequisiteObservations=managedPrerequisiteObservations;
+   managedAttemptSummary=RdcOwnerLogSessions.AttemptDiagnostics("completed",managedSessionAccepted,completionInfo);
+   Append("remote","completion_kind="+managedCompletionKind);
+   managedExitReported=true;
+  }
   int remaining=(int)Math.Max(0,timeoutMs-wait.ElapsedMilliseconds);
   if(managedLogPump!=null&&!managedLogPump.WaitForCompletion(remaining))
    throw new IOException("RC1_LOG_DRAIN_PENDING");
-  managedLogSessions.FinalizeCurrent();managedLogSessions.Dispose();
+  if(!managedCaptureSummaryReported){
+   var pump=managedLogPump;
+   if(pump==null)Append("remote","capture summary: unavailable");
+   else{
+    Append("remote","capture bytes: read="+pump.BytesRead.ToString(System.Globalization.CultureInfo.InvariantCulture)+
+     " write_ack="+pump.BytesWriteAcknowledged.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    Append("remote","capture retained_bytes="+pump.RetainedBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)+
+     " parser_pending="+pump.PendingBytes.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    Append("remote","capture flags: eof="+(pump.CleanEof?"yes":"no")+" read_fault="+(pump.ReadFault?"yes":"no")+
+     " storage_fault="+(pump.StorageFault?"yes":"no")+" parser_fault="+((pump.ParserFault||managedParserFault)?"yes":"no"));
+   }
+   managedCaptureSummaryReported=true;
+  }
+  var failureInfo=new RdcOwnerFailedSessionInfo{CmdExit=exitCode,StopRequested=managedProcess.StopRequested,AuthPendingObserved=managedAuthPendingObserved,LaunchFailed=managedLaunchRollback,PrerequisiteObservations=managedPrerequisiteObservations};
+  if(managedLogPump!=null){
+   failureInfo.BytesRead=managedLogPump.BytesRead;
+   failureInfo.BytesWriteAcknowledged=managedLogPump.BytesWriteAcknowledged;
+   failureInfo.RetainedBytes=managedLogPump.RetainedBytes;
+   failureInfo.ParserPending=managedLogPump.PendingBytes;
+   failureInfo.CleanEof=managedLogPump.CleanEof;
+   failureInfo.ReadFault=managedLogPump.ReadFault;
+   failureInfo.StorageFault=managedLogPump.StorageFault;
+   failureInfo.ParserFault=managedLogPump.ParserFault||managedParserFault;
+  }
+  managedAttemptSummary=RdcOwnerLogSessions.AttemptDiagnostics("completed",managedSessionAccepted,failureInfo);
+  managedLogSessions.FinalizeCurrentWithDiagnostics(failureInfo);managedLogSessions.Dispose();
   managedLogSessions=null;managedLogPump=null;managedSessionAccepted=false;
  }
  // Only Host-owned Remote can be switched. The old Job must be fully
@@ -2239,6 +2432,7 @@ void RefreshTrayMenu(){
     catch(Exception error){if(!managedLogFinishFaultReported){managedLogFinishFaultReported=true;Append("remote","managed log finalization pending: "+error.GetType().Name);}}
    }
    if(managedState!="Disconnected"){
+    if(!managedExitReported)Append("remote","completion: cmd_exit=unknown (finalization pending or unavailable)");
     managedAccount="";managedDeviceName="";managedDeviceId="";managedBornUtcTicks=0;
     managedBannerArt.Clear();managedBannerScanned=0;
    managedStartupHeader.Clear();managedStartupComplete=false;managedStartupScanned=0;
@@ -2338,6 +2532,7 @@ void RefreshTrayMenu(){
        try{managedLogSessions.Accept();managedSessionAccepted=true;}
        catch(Exception error){if(!managedLogFaultReported){managedLogFaultReported=true;Append("remote","log session acceptance failed: "+error.GetType().Name);}}
       }
+      if(next=="AuthPending")managedAuthPendingObserved=true;
       managedReadyEvidenceUtc=next=="Ready"?DateTime.UtcNow:DateTime.MinValue;
       managedState=next;
       managedDetail=marker;
@@ -2410,7 +2605,9 @@ void RefreshTrayMenu(){
   return new Dictionary<string,object>{
    {"hostPid",hostPid},{"hostGeneration",generation},{"hostTicks",hostBorn},
    {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":managedMode?"MANAGED_OWNER_RC1":"FAKE_ONLY_RC1"},{"remoteId",remoteSupervisor.SessionId},
-   {"remote",observed},{"remoteConnected",(managedMode||observedMode) && (string)observed["state"]=="Ready"},
+   {"remote",observed},{"remoteCompletionKind",managedMode?(managedCompletionKind??"unknown"):"unknown"},
+   {"remoteAttemptDiagnostics",managedMode?(managedAttemptSummary??new string[0]):new string[0]},
+   {"remoteConnected",(managedMode||observedMode) && (string)observed["state"]=="Ready"},
    {"account",observedMode?"Existing Remote / read-only":managedMode?"RC1 Host-owned Remote":"DEMO: disabled"},
    {"remoteBornUtcTicks",managedMode?managedBornUtcTicks:0L},
    {"remoteStartupArt",managedMode?String.Join("\n",managedBannerArt.ToArray()):""},

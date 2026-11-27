@@ -219,7 +219,24 @@ function Get-Rc1QuotaStatus([string]$path,[string]$expectedEmail,[DateTime]$nowU
 # RC1 Owner-only presentation: translate the six Host state codes into a
 # short Russian title, with an independent, allowlisted explanation underneath.
 # Never render raw Host status/diagnostics or alter the actual Remote state.
-function Get-Rc1OwnerConnectionText([string]$state,[string]$detail,[bool]$observed,[string]$activity='idle') {
+function Get-Rc1OwnerCompletionKind([string]$value) {
+ if($value -cin @('preflight_failed','launch_failed','exit_before_ready','startup_stop_requested',
+    'authorization_stop_requested','stop_requested_after_ready','unexpected_after_ready')){return $value}
+ return 'unknown'
+}
+function Get-Rc1OwnerConnectionText([string]$state,[string]$detail,[bool]$observed,[string]$activity='idle',[string]$completion='unknown') {
+ # Presentation only: Host retains its technical state and permissions.
+ if(-not $observed -and $state -ceq 'Disconnected'){
+  switch -CaseSensitive ($completion){
+   'exit_before_ready' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.fault' 'Ошибка связи');Detail=(Get-RdcOwnerUiText 'owner.completion.beforeReady' 'Remote завершился до подключения');CompletionFault=$true}}
+   'unexpected_after_ready' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.fault' 'Ошибка связи');Detail=(Get-RdcOwnerUiText 'owner.completion.unexpected' 'Remote неожиданно завершился');CompletionFault=$true}}
+   'launch_failed' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.fault' 'Ошибка связи');Detail=(Get-RdcOwnerUiText 'owner.connection.detail.fault.start' 'Не удалось запустить Remote');CompletionFault=$true}}
+   'authorization_stop_requested' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.disconnected' 'Отключён');Detail=(Get-RdcOwnerUiText 'owner.completion.authStopped' 'Остановка при авторизации')}}
+   'startup_stop_requested' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.disconnected' 'Отключён');Detail=(Get-RdcOwnerUiText 'owner.completion.startStopped' 'Запуск остановлен')}}
+   'stop_requested_after_ready' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.disconnected' 'Отключён');Detail=''}}
+  }
+ }
+
  # Quietness is not a positive proof of connectivity, nor a recovery event.
  # This trusted Host reason is display-only: never promote technical Ready.
  if(-not $observed -and $state -ceq 'Reconnecting' -and
@@ -369,7 +386,7 @@ function Apply-RdcOwnerLocale([switch]$Force){
  # Re-render only the last validated Host status; never re-read provider text or IPC.
  if($script:ownerLastSafePresentation){
   $safe=$script:ownerLastSafePresentation
-  $localized=Get-Rc1OwnerConnectionText ([string]$safe.State) ([string]$safe.Detail) ([bool]$safe.Observed) ([string]$safe.Activity)
+  $localized=Get-Rc1OwnerConnectionText ([string]$safe.State) ([string]$safe.Detail) ([bool]$safe.Observed) ([string]$safe.Activity) ([string]$safe.Completion)
   Set-State $localized.Name $localized.Detail $safe.Color
  }
  # The already-authorized periodic GET_SNAPSHOT rebuilds the sanitized fallback
@@ -529,6 +546,7 @@ function Start-RdcOwnerGui {
  $script:ownerLastLogEpoch=-1
  $script:ownerDetailedJournal=New-Object 'System.Collections.Generic.List[string]'
  $script:ownerRecentDiagnostics=@()
+ $script:ownerAttemptDiagnostics=@()
  $script:ownerJournalRemoteState='Unknown'
  $script:ownerJournalRemotePid=0
  $script:ownerJournalOwnership='Unknown'
@@ -620,6 +638,8 @@ function Start-RdcOwnerGui {
      $script:ownerJournalOwnership=[string]$remoteSnapshot.ownership
      $script:ownerJournalToolActivity=[string]$remoteSnapshot.toolActivity
      $script:ownerJournalLastSnapshotUtc=[DateTime]::UtcNow
+     $completion=Get-Rc1OwnerCompletionKind ([string]$snapshot.remoteCompletionKind)
+     $script:ownerAttemptDiagnostics=if($script:ownerManagedMode){@($snapshot.remoteAttemptDiagnostics | Select-Object -First 28)}else{@()}
      $script:ownerRecentDiagnostics=@($remoteSnapshot.diagnostics |
        Where-Object{
         $v=[string]$_
@@ -683,11 +703,12 @@ function Start-RdcOwnerGui {
         [Drawing.Color]::LightCoral
        }elseif([string]$remoteSnapshot.state -ceq 'Disconnected'){[Drawing.Color]::Gray
        }else{[Drawing.Color]::Khaki}
-       $presentation=Get-Rc1OwnerConnectionText ([string]$remoteSnapshot.state) ([string]$remoteSnapshot.status) $false $toolActivity
+       $presentation=Get-Rc1OwnerConnectionText ([string]$remoteSnapshot.state) ([string]$remoteSnapshot.status) $false $toolActivity $completion
        if($presentation.Waiting){$color=[Drawing.Color]::PaleGreen}
+       if($presentation.CompletionFault){$color=[Drawing.Color]::LightCoral}
        $script:ownerLastSafePresentation=@{
         State=[string]$remoteSnapshot.state;Detail=[string]$remoteSnapshot.status
-        Observed=$false;Color=$color;Activity=$toolActivity
+        Observed=$false;Color=$color;Activity=$toolActivity;Completion=$completion
        }
        Set-State $presentation.Name $presentation.Detail $color
        $script:ownerLastUptimeText=''  # Timer owns the original runtime footer.

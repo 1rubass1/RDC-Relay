@@ -24,7 +24,7 @@ function Reopen(){
 try{
  $store=New-Object RdcOwnerLogSessions -ArgumentList $root
  $store.Recover()
- $c=$store.CurrentPath;$p=$store.PreviousPath;$r=Join-Path $root 'RetiredSession'
+ $c=$store.CurrentPath;$p=$store.PreviousPath;$r=Join-Path $root 'RetiredSession';$failed=$store.FailedPath
  $denied=$false
  try{$other=New-Object RdcOwnerLogSessions -ArgumentList $root;$other.Dispose()}catch{$denied=$true}
  Check $denied 'exclusive per-user session lease'
@@ -35,12 +35,17 @@ try{
  Begin-Data ([byte[]](4,5)) $false
  $store.FinalizeCurrent()
  Check ((Read-Parts $p) -ceq 'AQID' -and -not (Test-Path -LiteralPath $c)) 'failed launch leaves previous byte-exact'
+ $firstFailed=[IO.File]::ReadAllBytes($failed)
+ Check (([Text.Encoding]::UTF8.GetString($firstFailed)).Contains('raw_included_bytes=2 raw_truncated=no') -and $firstFailed[-2] -eq 4 -and $firstFailed[-1] -eq 5) 'failed report includes original bytes'
  Begin-Data ([byte[]](6,7)) $false
  Reopen
  Check ((Read-Parts $p) -ceq 'AQID' -and -not (Test-Path -LiteralPath $c)) 'interrupted unaccepted session leaves previous'
+ $recoveredFailed=[IO.File]::ReadAllBytes($failed)
+ Check (([Text.Encoding]::UTF8.GetString($recoveredFailed)).Contains('completion=unknown') -and $recoveredFailed[-2] -eq 6 -and $recoveredFailed[-1] -eq 7) 'recovery replaces only failed report, unknown completion explicit'
  Begin-Data ([byte[]](8,9)) $true
  Reopen
  Check ((Read-Parts $p) -ceq 'CAk=' -and -not (Test-Path -LiteralPath $c)) 'accepted interrupted session recovered as previous'
+ Check ([Convert]::ToBase64String([IO.File]::ReadAllBytes($failed)) -ceq [Convert]::ToBase64String($recoveredFailed)) 'accepted session preserves failed report'
  Begin-Data ([byte[]](10,11)) $true
  $store.Dispose()
  [IO.Directory]::Move($p,$r)
@@ -74,7 +79,7 @@ try{
    foreach($f in Get-ChildItem -LiteralPath $e.FullName -Force){
     if($f.PSIsContainer -or ($f.Attributes -band [IO.FileAttributes]::ReparsePoint) -or ($f.Name -cnotmatch '^(\.rdc-(session|accepted)-v1|\d{4}-\d{2}-\d{2}_part-\d+\.log|foreign\.txt)$')){throw 'SESSION_TEST_CLEANUP_UNKNOWN'}
    }
-  }elseif($e.Name -cne '.rdc-session-lock-v1'){throw 'SESSION_TEST_CLEANUP_UNKNOWN'}
+  }elseif(@('.rdc-session-lock-v1','Last unsuccessful sessions.log') -cnotcontains $e.Name){throw 'SESSION_TEST_CLEANUP_UNKNOWN'}
  }
  [IO.Directory]::Delete($root,$true)
 }

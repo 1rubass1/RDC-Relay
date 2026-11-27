@@ -100,6 +100,41 @@ Check ($hostSource.Contains('Append("gui",code);') -and
 $errors=$null;$tokens=$null
 [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $source 'rc1-owner-gui.ps1'),[ref]$tokens,[ref]$errors)
 Check ($errors.Count -eq 0) 'journal source parses in Windows PowerShell 5.1'
+# Completion presentation and export reuse exact production functions.
+$script:ownerUiTexts=$en
+$p=Get-Rc1OwnerConnectionText 'Disconnected' 'Host-owned Remote process exited' $false 'idle' 'unexpected_after_ready'
+Check ($p.CompletionFault -and $p.Detail -ceq 'Remote exited unexpectedly') 'unexpected exit uses English fault presentation'
+$p=Get-Rc1OwnerConnectionText 'Disconnected' '' $false 'idle' 'authorization_stop_requested'
+Check (-not $p.CompletionFault -and $p.Detail -ceq 'Stopped during authorization') 'requested authorization stop is not a fault'
+$p=Get-Rc1OwnerConnectionText 'Ready' '' $false 'idle' 'unexpected_after_ready'
+Check (-not $p.CompletionFault -and $p.Name -ceq 'Connected') 'stale completion cannot override active Ready'
+$p=Get-Rc1OwnerConnectionText 'Disconnected' '' $true 'idle' 'unexpected_after_ready'
+Check (-not $p.CompletionFault) 'observed Remote not reclassified by owned completion'
+$script:ownerUiTexts=$ru
+$p=Get-Rc1OwnerConnectionText 'Disconnected' '' $false 'idle' 'exit_before_ready'
+Check ($p.CompletionFault -and $p.Detail -ceq 'Remote завершился до подключения') 'Russian early exit detail'
+Check ((Get-Rc1OwnerCompletionKind 'private payload') -ceq 'unknown') 'unknown completion not rendered verbatim'
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $source 'remote-window.ps1'),[ref]$tokens,[ref]$errors)
+foreach($name in @('Get-RdcOwnerDialogText','Get-RdcOwnerJournalText')){
+ $fn=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true)
+ if(-not $fn){throw 'MISSING_JOURNAL_FUNCTION'}
+ . ([scriptblock]::Create($fn.Extent.Text))
+}
+$OwnerGui=$true
+$script:ownerJournalRemoteState='Disconnected'
+$script:ownerJournalOwnership='Owned'
+$script:ownerJournalToolActivity='idle'
+$script:ownerJournalRemotePid=0
+$script:ownerJournalLastSnapshotUtc=[DateTime]::MinValue
+$script:ownerRecentDiagnostics=@()
+$script:ownerDetailedJournal=@()
+$script:ownerAttemptDiagnostics=@('attempt_phase=completed','completion_kind=exit_before_ready','cmd_exit=0',
+ 'runtime ProgramFiles: node=missing npm=missing npx=missing','runtime AppDataNpm: node=private_path npm=present npx=present','RAW_PRIVATE_DATA')
+$report=Get-RdcOwnerJournalText
+Check ($report.Contains('ДИАГНОСТИКА ТЕКУЩЕЙ ИЛИ ПОСЛЕДНЕЙ ПОПЫТКИ') -and $report.Contains('cmd_exit=0') -and $report.Contains('node=missing') -and -not $report.Contains('private_path') -and -not $report.Contains('RAW_PRIVATE_DATA')) 'Russian export includes only allowlisted attempt lines'
+$script:ownerUiTexts=$en
+$report=Get-RdcOwnerJournalText
+Check ($report.Contains('CURRENT OR LAST ATTEMPT (Host observations)') -and $report.Contains('completion_kind=exit_before_ready') -and -not $report.Contains('RAW_PRIVATE_DATA')) 'English export retains invariant diagnostics'
 Write-Output ('RC1_OWNER_JOURNAL_LANGUAGE_PASS='+$pass+' FAIL='+$fail)
 if($fail){exit 1}
 exit 0
