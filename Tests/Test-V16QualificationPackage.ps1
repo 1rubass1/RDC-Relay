@@ -1,4 +1,4 @@
-﻿# Real compiled Setup/Launcher validation, no product execution.
+# Real compiled Setup/Launcher validation, no product execution.
 param([Parameter(Mandatory=$true)][string]$Package,[string]$ExpectedVersion='1.6.0',[switch]$PublicPreflight)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
@@ -9,7 +9,8 @@ $expectedStatus=if($PublicPreflight){'PUBLIC_RELEASE'}else{'RELEASE_QUALIFICATIO
 $pass=0
 function Check([bool]$ok,[string]$label){if(!$ok){throw ('FAIL '+$label)};$script:pass++;Write-Output ('PASS '+$label)}
 Check ($manifest.candidate -ceq $ExpectedVersion -and $manifest.kind -ceq $expectedKind -and $manifest.installable -eq $true -and $manifest.publishable -eq [bool]$PublicPreflight) 'numeric package identity and matching publication class'
-Check ($manifest.files.Count -eq 29 -and @($manifest.files.name|Select-Object -Unique).Count -eq 29) 'exact unique payload member count'
+Check ($manifest.files.Count -eq 28 -and @($manifest.files.name|Select-Object -Unique).Count -eq 28) 'exact unique payload member count'
+Check (-not (Test-Path -LiteralPath (Join-Path $Package 'Source/update.ps1'))) 'retired updater absent from new payload'
 foreach($row in $manifest.files){
  $file=Join-Path $Package $row.name
  Check ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ceq $row.sha256) ('manifest SHA '+$row.name)
@@ -52,7 +53,7 @@ $portable=$launchType.GetMethod('ValidatePortablePackage',$binding)
 Check $true 'actual compiled Setup and Launcher accept same exact manifest'
 Check ($setupType.GetMethod('ValidatedCandidateDisplayVersion',$binding).Invoke($null,@($Package)) -ceq $ExpectedVersion) 'actual compiled Setup confirmation numeric version'
 $resourceNames=@($setupAsm.GetManifestResourceNames())
-Check ($resourceNames.Count -eq 30) 'exact embedded manifest plus 29 payload resources'
+Check ($resourceNames.Count -eq 29) 'exact embedded manifest plus 28 payload resources'
 foreach($row in @($manifest.files)+@([pscustomobject]@{name='owner-source-manifest.json';sha256=(Get-FileHash -LiteralPath (Join-Path $Package 'owner-source-manifest.json')).Hash})){
  $stream=$setupAsm.GetManifestResourceStream('RdcPayload.'+$row.name.Replace('/','.'))
  if(!$stream){throw ('MISSING_RESOURCE '+$row.name)}

@@ -60,6 +60,8 @@ $names=@(
  'divider-caustic-detail.ps','divider-particles.ps','divider-particles-core.ps',
  'update-notice.ps1','update.ps1'
 )
+# Numeric Full Host packages never contain the retired flat updater.
+if($ReleaseQualification){$names=@($names|Where-Object {$_ -cne 'update.ps1'})}
 function Check-Path([string]$path){
  $cursor=[IO.Path]::GetFullPath($path)
  while($cursor){

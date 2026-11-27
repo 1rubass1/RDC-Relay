@@ -1,33 +1,19 @@
-﻿param([Parameter(Mandatory=$true)][string]$PublicStage,[Parameter(Mandatory=$true)][string]$BridgeStage)
+﻿param([Parameter(Mandatory=$true)][string]$PublicStage)
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $package=Join-Path $PublicStage 'package'
 $setup=Join-Path $package 'RDC.Relay.Setup.v1.6.0.exe'
 $portable=Join-Path $PublicStage 'RDC.Relay.v1.6.0.Portable.zip'
 $m=[IO.File]::ReadAllText((Join-Path $package 'owner-source-manifest.json'))|ConvertFrom-Json
-if($m.kind -cne 'FULL_HOST_GUI_V16_PUBLIC' -or $m.candidate -cne '1.6.0' -or !$m.publishable -or $m.files.Count -ne 29){throw 'PUBLIC_PACKAGE_IDENTITY'}
-$bridge=Join-Path $BridgeStage 'Source'
-$b=[IO.File]::ReadAllText((Join-Path $bridge 'update-manifest.json'))|ConvertFrom-Json
-if($b.version -cne '1.5.18' -or $b.migration.ready -or $b.files.Count -ne 11){throw 'BRIDGE_IDENTITY'}
+if($m.kind -cne 'FULL_HOST_GUI_V16_PUBLIC' -or $m.candidate -cne '1.6.0' -or !$m.publishable -or $m.files.Count -ne 28 -or @($m.files|Where-Object name -ceq 'Source/update.ps1').Count){throw 'PUBLIC_PACKAGE_IDENTITY'}
+# Clean public tree: no archive or bridge from any legacy tag. Keep the
+# full-host feed at the already shipped path for 1.6.0 client compatibility.
 $stage=Join-Path $repo ('dist\RDC-PublicSource-QA-'+[Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($stage)
-$base='5b1fdf58a8873d6cd781b0a835f8e208eb46dbfb'
-if((git -C $repo rev-parse 'v1.5.18^{commit}').Trim() -cne $base){throw 'BASE_CHANGED'}
-$baseZip=Join-Path $stage 'baseline.zip'
-& git -C $repo archive --format=zip "--output=$baseZip" $base
-if($LASTEXITCODE -ne 0){throw 'BASE_EXPORT'}
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $tree=Join-Path $stage 'tree'
-[IO.Compression.ZipFile]::ExtractToDirectory($baseZip,$tree)
-# Legacy path must remain 1.5.18 flat files. The offer stays inactive until
-# the verified exact asset is publicly accessible.
-foreach($row in $b.files){
- $src=Join-Path $bridge $row.name
- if((Get-FileHash -LiteralPath $src).Hash -cne $row.sha256){throw 'BRIDGE_HASH'}
- [IO.File]::Copy($src,(Join-Path $tree ('Source/'+$row.name)),$true)
-}
-$b.migration.setupSha256=(Get-FileHash -LiteralPath $setup).Hash
-[IO.File]::WriteAllText((Join-Path $tree 'Source\update-manifest.json'),($b|ConvertTo-Json -Depth 8),(New-Object Text.UTF8Encoding($false)))
+[void][IO.Directory]::CreateDirectory((Join-Path $tree 'Source'))
+[void][IO.Directory]::CreateDirectory((Join-Path $tree 'Scripts'))
 $feed=[ordered]@{schema=1;architecture='full-host-gui';ready=$false;version='1.6.0';tag='v1.6.0';asset='RDC.Relay.Setup.v1.6.0.exe';sha256=(Get-FileHash -LiteralPath $setup).Hash;bytes=(Get-Item -LiteralPath $setup).Length}
 [IO.File]::WriteAllText((Join-Path $tree 'Source\full-host-update-manifest.json'),($feed|ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))
 # Exact transformed source used to build the candidate, not development
@@ -48,8 +34,8 @@ foreach($name in @('AssemblyInfo.cs','Rc1CandidateSetup.cs','Rc1CandidateLaunche
 }
 # Store the intended package identity separately from the inactive feed.
 [IO.File]::Copy((Join-Path $package 'owner-source-manifest.json'),(Join-Path $full 'verified-package-manifest.json'),$false)
-# Public README accurately describes the new package and the deliberate
-# compatibility channel; do not expose development worktree details.
+# Public README accurately describes the new package and its sole
+# update channel; do not expose development worktree details.
 $readme=@'
 # RDC Relay
 
@@ -58,7 +44,7 @@ Desktop Commander Remote mode. It is not affiliated with the upstream project.
 
 ## Install
 
-Download the installer from [GitHub Releases](https://github.com/1rubass1/RDC-Relay/releases).
+Download the installer from [GitHub Releases](https://github.com/Rubo-Facility/RDC-Relay/releases).
 RDC Relay 1.6.0 uses an independent background Host and graphical interface.
 Setup installs per user and offers Node.js 24 LTS if a supported Node.js,
 npm and npx installation is missing. The Windows dependency installer may
@@ -75,15 +61,17 @@ official upstream device approval flow; approve only devices you recognize.
 
 ## Architecture and updates
 
-1.5.x uses the flat legacy update feed in Source/. Its final architecture
-transition is 1.6.0. Full Host releases use a separate installer feed,
-Source/full-host-update-manifest.json. FullHost/ contains the selected
-runtime and installer sources for the new architecture. The retained
-internal storage namespace preserves compatibility with prior local data.
+RDC Relay 1.6.0 is the supported Full Host/GUI baseline. The installer
+update feed is Source/full-host-update-manifest.json. FullHost/ contains
+the selected runtime and installer sources. The retained internal
+storage namespace preserves existing Full Host settings and installation
+identity. Automatic migration from the retired 1.5.x architecture is not
+supported. Uninstall an old 1.5.x installation using its own supported
+uninstall route before installing the current release.
 
-The migration offer and full Host feed must remain inactive until the
-corresponding exact public release assets are verified. Do not treat a
-source snapshot with an inactive feed as an available automatic update.
+The full Host feed must remain inactive until the corresponding exact
+public release asset is verified. Do not treat a source snapshot with
+an inactive feed as an available automatic update.
 '@
 [IO.File]::WriteAllText((Join-Path $tree 'README.md'),$readme,(New-Object Text.UTF8Encoding($false)))
 [IO.File]::Copy((Join-Path $PSScriptRoot 'build-v16-public-source.ps1'),(Join-Path $tree 'Scripts\build-release.ps1'),$true)
@@ -127,16 +115,17 @@ $export=Join-Path $stage 'git-export.zip'
 if($LASTEXITCODE -ne 0){throw 'GIT_ARCHIVE'}
 $verify=Join-Path $stage 'verify'
 [IO.Compression.ZipFile]::ExtractToDirectory($export,$verify)
-foreach($row in $b.files){
- if((Get-FileHash -LiteralPath (Join-Path $verify ('Source/'+$row.name))).Hash -cne $row.sha256){throw 'GIT_RAW_BRIDGE_HASH'}
-}
+$feedFiles=@(Get-ChildItem -LiteralPath (Join-Path $verify 'Source') -Force)
+if($feedFiles.Count -ne 1 -or $feedFiles[0].Name -cne 'full-host-update-manifest.json' -or $feedFiles[0].PSIsContainer){throw 'PUBLIC_LEGACY_FEED_PRESENT'}
+$verifiedFeed=[IO.File]::ReadAllText($feedFiles[0].FullName)|ConvertFrom-Json
+if($verifiedFeed.schema -ne 1 -or $verifiedFeed.architecture -cne 'full-host-gui' -or $verifiedFeed.ready -ne $false -or $verifiedFeed.sha256 -cne (Get-FileHash -LiteralPath $setup).Hash){throw 'PUBLIC_FULL_FEED_VERIFY'}
 foreach($row in @($m.files|Where-Object{$_.name.StartsWith('Source/')})){
  if((Get-FileHash -LiteralPath (Join-Path $verify ('FullHost/'+$row.name))).Hash -cne $row.sha256){throw 'GIT_RAW_FULL_HASH'}
 }
 'PUBLIC_SOURCE_TREE='+$treeHash
 'PUBLIC_SOURCE_FILES='+$all.Count
 'PUBLIC_SOURCE_STAGE='+$stage
-'LEGACY_FEED_READY=FALSE'
+'LEGACY_FEED_ABSENT=TRUE'
 'FULL_HOST_FEED_READY=FALSE'
 'PUBLIC_SOURCE_PREFLIGHT_PASS'
 'NO_PUBLICATION=TRUE'

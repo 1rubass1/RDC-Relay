@@ -72,9 +72,29 @@ function Set-RdcV16QualificationIdentity {
 '@
   $s=Replace-Exact $s 'RdcOwnerStartup.InitializeFreshInstalled(Path.Combine(release,"Source"));' 'RdcOwnerStartup.FinishFreshIntent(release,local);'
   $s=Replace-Exact $s 'static bool NodeEnglish(bool existing)' 'internal static bool NodeEnglish(bool existing)'
-  $s=Replace-Exact $s 'static void ValidateSource(string root){' ('internal static void ValidateSource(string root){ValidateInstalledSource(root);if(RdcV16MetadataTransaction.ReleaseVersion(root)!="'+$version+'")throw new InvalidOperationException("V16_SETUP_WRONG_VERSION");}'+[Environment]::NewLine+' internal static void ValidateInstalledSource(string root){')
+  $s=Replace-Exact $s 'static void ValidateSource(string root){' ('internal static void ValidateSource(string root){ValidateInstalledSource(root);if(RdcV16MetadataTransaction.ReleaseVersion(root)!="'+$version+'")throw new InvalidOperationException("V16_SETUP_WRONG_VERSION");RdcV16MetadataTransaction.AssertNewPayloadNoRetiredUpdater(root);}'+[Environment]::NewLine+' internal static void ValidateInstalledSource(string root){')
+  $s=Replace-Exact $s '  if(listed.Count!=Required.Length' @'
+  string[] validationRequired=Required;
+  validationRequired=RdcV16MetadataTransaction.InstalledPayloadMembers(validationRequired,listed,RdcV16MetadataTransaction.ReleaseVersion(root));
+  if(listed.Count!=validationRequired.Length
+'@
+  $s=Replace-Exact $s 'foreach(string required in Required)' 'foreach(string required in validationRequired)'
   $s=Replace-Exact $s 'bool registered=HasRegisteredStableInstallation(local);' ('RdcV16IntegratedMaintenance.AssertNoDowngrade(local,source);'+[Environment]::NewLine+'    bool registered=HasRegisteredStableInstallation(local);')
   $s=Replace-Exact $s 'string stable=Path.Combine(localRoot,"RemoteDesktopCommanderLauncher");' ('if(RdcV16IntegratedMaintenance.IsRegistered(localRoot))return true;'+[Environment]::NewLine+'  string stable=Path.Combine(localRoot,"RemoteDesktopCommanderLauncher");')
+  # Legacy ARP is no longer an eligible predecessor. Unknown installations
+  # and orphaned shortcuts refuse before prerequisite installation.
+  $a=$s.IndexOf('   string diskVersion=File.Exists(versionFile)?')
+  $b=$s.IndexOf(' // Resolve the displayed version',$a)
+  if($a -lt 0 -or $b -le $a){throw 'V16_LEGACY_REGISTRATION_DRIFT'}
+  $replacement=@'
+   throw new InvalidOperationException("V16_LEGACY_OR_UNKNOWN_INSTALL_REFUSED");
+  }
+ }
+'@
+  $s=$s.Substring(0,$a)+$replacement+[Environment]::NewLine+$s.Substring($b)
+  $s=Replace-Exact $s 'RC1_UNREGISTERED_STABLE_PAYLOAD_REFUSED' 'V16_LEGACY_OR_UNKNOWN_INSTALL_REFUSED'
+  $s=Replace-Exact $s 'bool priorShortcut=HasPrimaryDesktopShortcut(desktop);' ('bool priorShortcut=HasPrimaryDesktopShortcut(desktop);'+[Environment]::NewLine+'    if(!registered)RdcV16IntegratedMaintenance.AssertFreshShellState(desktop);')
+  $s=Replace-Exact $s 'e.Message+Environment.NewLine+(NodeEnglish(false)?' '(e.Message=="V16_LEGACY_OR_UNKNOWN_INSTALL_REFUSED"?(NodeEnglish(false)?"An older or unverified RDC Relay installation was found. If it is a known 1.5.x installation, use its own uninstall route first. No automatic migration or removal was performed.":"Обнаружена старая или неподтверждённая установка RDC Relay. Если установлена известная версия 1.5.x, сначала воспользуйтесь её штатным удалением. Автоматическая миграция или удаление не выполнялись."):e.Message)+Environment.NewLine+(NodeEnglish(false)?'
   $s=Replace-Exact $s 'string extracted=null; RdcReleaseLegacyMigrationLease legacyLease=null;' 'string extracted=null; RdcReleaseLegacyMigrationLease legacyLease=null; IDisposable maintenanceLease=null;'
   $s=Replace-Exact $s 'bool privateSideBySide=args.Length==1' ('if(args.Length==1&&args[0]=="--uninstall")return RdcV16IntegratedMaintenance.RunRemoval(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),Required);'+[Environment]::NewLine+'   bool privateSideBySide=args.Length==1')
   $s=Replace-Exact $s 'string desktop=Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);' ('maintenanceLease=RdcV16IntegratedMaintenance.Acquire(local);'+[Environment]::NewLine+'    using(var recoveryLease=new RdcReleaseLegacyMigrationLease(Path.Combine(local,"RemoteDesktopCommanderLauncher"))){RdcV16IntegratedMaintenance.RecoverActivation(local);}'+[Environment]::NewLine+'    string desktop=Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);')
@@ -86,6 +106,16 @@ function Set-RdcV16QualificationIdentity {
   foreach($method in @('string OldHostMutexName','void CheckPath','bool NoPinnedRemoteVerified','string ReadShortcut','object OpenShortcut')){
    $s=Replace-Exact $s ('static '+$method) ('internal static '+$method)
   }
+  $a=$s.IndexOf('  string legacy=Path.Combine(localRoot,')
+  $b=$s.IndexOf('  string desktopLink=',$a)
+  if($a -lt 0 -or $b -le $a){throw 'V16_LEGACY_PATH_DRIFT'}
+  $s=$s.Substring(0,$a)+$s.Substring($b)
+  $a=$s.IndexOf('    string powershell=Path.Combine(Environment.SystemDirectory,')
+  $b=$s.IndexOf('    string oldFull=',$a)
+  if($a -lt 0 -or $b -le $a){throw 'V16_LEGACY_LINK_DRIFT'}
+  $s=$s.Substring(0,$a)+$s.Substring($b)
+  $s=Replace-Exact $s 'if(!isStable&&!isOldRc1)' 'if(!isOldRc1)'
+  $s=Replace-Exact $s 'switchedFromStable=isStable;' 'switchedFromStable=false;'
   $a=$s.IndexOf('   if(firstInstall){')
   $b=$s.IndexOf('  }finally{',$a)
   if($a -lt 0 -or $b -le $a){throw 'V16_ACTIVATION_DRIFT'}
@@ -176,7 +206,7 @@ $script:rdcNoticeControl.Add_Click({
  foreach($name in @('Rc1CandidateSetup.cs','Rc1CandidateLauncher.cs')){
   Change-StagedText (Join-Path $InstallerStage $name) {
    param($s)
-   Replace-Exact $s '"Source/update-notice.ps1","Source/update.ps1",' '"Source/update-notice.ps1","Source/update.ps1","Source/version.txt","Source/THIRD_PARTY_NOTICES.txt",'
+   Replace-Exact $s '"Source/update-notice.ps1","Source/update.ps1",' '"Source/update-notice.ps1","Source/version.txt","Source/THIRD_PARTY_NOTICES.txt",'
   }
  }
  [IO.File]::WriteAllText((Join-Path $Payload 'version.txt'),$version+[Environment]::NewLine,(New-Object Text.UTF8Encoding($false)))

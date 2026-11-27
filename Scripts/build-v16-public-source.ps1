@@ -11,7 +11,7 @@ $identity=[IO.File]::ReadAllText((Join-Path $full 'verified-package-manifest.jso
 $v=[IO.File]::ReadAllText((Join-Path $src 'version.txt')).Trim()
 if($v -cnotmatch '^\d+\.\d+\.\d+$' -or [Version]$v -lt [Version]'1.6.0' -or $identity.candidate -cne $v -or $identity.kind -cne 'FULL_HOST_GUI_V16_PUBLIC' -or !$identity.publishable){throw 'PUBLIC_BUILD_IDENTITY'}
 $runtime=@('RdcOwnerWire.cs','RdcOwnerProcess.cs','RdcOwnerTicketStore.cs','RdcOwnerRemoteState.cs','RdcOwnerManagedProcess.cs','RdcOwnerLogParts.cs','RdcOwnerStartup.cs','RdcUiLanguage.cs','RdcOwnerRuntime.cs')
-$sourceNames=@('remote-window.ps1','rc1-tray-host.ps1','rc1-owner-gui.ps1','rc1-remote-observer.ps1','rc1-quota-client.ps1')+$runtime+@('lang/ru-RU.json','lang/en-US.json','rc1-candidate.json','RDCRelay.ico','RdcTrayV04.bin','divider-caustic.ps','divider-caustic-detail.ps','divider-particles.ps','divider-particles-core.ps','update-notice.ps1','update.ps1','version.txt','THIRD_PARTY_NOTICES.txt')
+$sourceNames=@('remote-window.ps1','rc1-tray-host.ps1','rc1-owner-gui.ps1','rc1-remote-observer.ps1','rc1-quota-client.ps1')+$runtime+@('lang/ru-RU.json','lang/en-US.json','rc1-candidate.json','RDCRelay.ico','RdcTrayV04.bin','divider-caustic.ps','divider-caustic-detail.ps','divider-particles.ps','divider-particles-core.ps','update-notice.ps1','version.txt','THIRD_PARTY_NOTICES.txt')
 $members=@($sourceNames|ForEach-Object{'Source/'+$_})+@('RdcOwnerRuntime.dll','RDC Relay.exe')
 if($identity.files.Count -ne $members.Count -or @($identity.files.name|Select-Object -Unique).Count -ne $members.Count -or @($identity.files.name|Where-Object{$members -cnotcontains $_}).Count){throw 'PUBLIC_BUILD_ALLOWLIST'}
 function Safe($path){
