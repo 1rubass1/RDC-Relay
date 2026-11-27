@@ -33,4 +33,19 @@ Check ($list.Count -eq 4 -and $list[1].Contains('0.3.4')) 'real header survives 
 [void]$accept.Invoke($r,@('Received tool call fixture: read_file {}'))
 [void]$accept.Invoke($r,@('   - Version: 9.9.9'))
 Check ($list.Count -eq 4) 'tool activity closes header capture'
+$normalize=$t.GetMethod('ManagedConsoleLine',$static)
+function Normalize([string]$line){return [string]$normalize.Invoke($null,@($line))}
+$ready=[char]0x2705+' Device ready:'
+Check ((Normalize ('[23:27:08] '+$ready)) -ceq $ready) 'observed timestamp framing removed'
+Check ((Normalize $ready) -ceq $ready) 'legacy framing unchanged'
+Check ((Normalize '[24:27:08] Device ready:') -ceq '[24:27:08] Device ready:') 'invalid timestamp rejected'
+Check ((Normalize '[23:60:08] Device ready:') -ceq '[23:60:08] Device ready:') 'invalid minute rejected'
+Check ((Normalize '[23:27:08] [23:27:08] Device ready:') -ceq '[23:27:08] Device ready:') 'only one prefix removed'
+Marker (Normalize ('[23:27:08] '+$ready)) 'Ready'
+Marker (Normalize '[23:24:07] Authenticating with Remote MCP server...') 'AuthPending'
+Marker (Normalize '[23:27:09] Device registered, but NOT reachable') 'Fault'
+Marker (Normalize '[23:27:08] {"output":"Device ready:"}') ''
+Marker (Normalize '[23:27:08] [23:27:08] Device ready:') ''
+Header (Normalize '[23:27:08]    - Version:      0.3.4') $true
+Header (Normalize '[23:27:08]    - Version: 0.3.4 secret=fixture') $false
 'RDC_LATEST_CONTRACT_PASS='+$pass

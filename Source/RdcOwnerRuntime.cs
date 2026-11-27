@@ -2619,13 +2619,23 @@ void RefreshTrayMenu(){
    remoteSupervisor.ManagedStatus(managedProcess.Pid,true,managedState,managedDetail);
   }
  }
+ // 0.3.4 prefixes console lines with one local HH:mm:ss timestamp.
+ // Strip only that exact framing in the derived parser view. Original
+ // captured bytes, ownership, and status/identity allowlists remain intact.
+ static string ManagedConsoleLine(string raw){
+  string line=(raw??"").TrimEnd('\r');
+  if(line.Length>=11 && System.Text.RegularExpressions.Regex.IsMatch(line,
+   @"\A\[(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\] "))
+   return line.Substring(11);
+  return line;
+ }
  void AcceptManagedBytes(byte[] buffer,int read){
     string[] lines=managedLogStream.Feed(buffer,0,read);
     if(lines.Length==0)return;
     // Process every bounded log-chunk marker, including concurrent calls.
     // The store keeps only the last 64 sanitized entries for the GUI.
     for(int i=0;i<lines.Length;i++){
-     string cleanLine=lines[i].TrimEnd('\r');
+     string cleanLine=ManagedConsoleLine(lines[i]);
      AcceptManagedBannerArt(cleanLine);
      AcceptManagedIdentityLine(cleanLine);
      AcceptManagedStartupLine(cleanLine);

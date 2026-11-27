@@ -119,6 +119,13 @@ try{
  Check ((GetPrivate $reader.Runtime 'managedReadyEvidenceUtc').Ticks -eq $now.Ticks) 'managed completion does not extend still-valid ready lease'
  $reader=OwnedCase 'new connection after loss legitimately restores Ready' ("Channel closed`n"+$completed+"`nDesktop Commander Remote is connected`n") 'Ready' $now 'Ready' 3
  Check ((GetPrivate $reader.Runtime 'managedReadyEvidenceUtc') -gt [DateTime]::UtcNow.AddSeconds(-20)) 'managed new channel evidence renews proof'
+ # Replay the observed 0.3.4 console framing through actual managed UTF-8 parsing.
+ $stamp='[23:27:08] '
+ $ready=[char]0x2705+' Device ready:'
+ $null=OwnedCase 'timestamped authorization pending' ($stamp+"Waiting for authorization"+[Environment]::NewLine) 'Connecting' ([DateTime]::MinValue) 'AuthPending' 1
+ $null=OwnedCase 'timestamped ready' ($stamp+$ready+[Environment]::NewLine) 'AuthPending' ([DateTime]::MinValue) 'Ready' 1
+ $null=OwnedCase 'timestamped ready then channel closed' ($stamp+$ready+[Environment]::NewLine+$stamp+'Channel closed'+[Environment]::NewLine) 'Connecting' ([DateTime]::MinValue) 'Fault' 2
+ $null=OwnedCase 'timestamped tool completion never restores ready' ($stamp+$completed+[Environment]::NewLine) 'Connecting' ([DateTime]::MinValue) 'Connecting' 1
  # Observe the actual PowerShell file-poll path. The only stub replaces
  # the OS identity detector; the mounted user Remote is never queried.
  Set-Item Function:\Test-Rc1ObservedRemoteIdentity {param([hashtable]$record) return $true}
