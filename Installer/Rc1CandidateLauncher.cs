@@ -240,7 +240,8 @@ internal static class RdcRc1CandidateLauncher {
    }
    // Explicit Explorer double-click only, after package validation and existing
    // Host activation. Installed --full and background routes never install.
-   if(RequiresPortablePreflight(args,RdcOwnerStartup.IsActiveSource(source))){
+   bool portablePreflight=RequiresPortablePreflight(args,RdcOwnerStartup.IsActiveSource(source));
+   if(portablePreflight){
     bool en=RdcNodePrerequisite.NodeEnglish(false);
     try{
      if(!RdcNodePrerequisite.EnsureNodePrerequisite(false,true))return 1;
@@ -265,6 +266,8 @@ internal static class RdcRc1CandidateLauncher {
    psi.CreateNoWindow=true;
    psi.RedirectStandardError=true;
    psi.WorkingDirectory=source;
+   // Diagnostic hint only. Never grants ownership or installation privileges.
+   psi.EnvironmentVariables["RDC_RELAY_DIAGNOSTIC_MODE"]=portablePreflight?"portable":"unknown";
    using(var child=Process.Start(psi)){
     if(child==null)throw new InvalidOperationException("RC1_HOST_START_FAILED");
     // Observe bounded host diagnostics without exposing a raw PowerShell

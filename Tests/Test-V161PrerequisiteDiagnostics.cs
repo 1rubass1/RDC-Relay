@@ -59,6 +59,13 @@ public static class TestV161PrerequisiteDiagnostics {
    var system=RdcOwnerEnvironmentDiagnostics.ObserveSystem();
    Check(Regex.IsMatch(system[0],@"\Awindows_version=[0-9]+\.[0-9]+\.[0-9]+ native_arch=(x86|x64|arm64|arm) host_bits=(32|64)\z"),"Windows build and native architecture actually observed");
    Check(system[1]=="remote_requested=0.2.52 remote_actual_version=unknown","pinned request not mistaken for installed version");
+   string relay=RdcOwnerEnvironmentDiagnostics.RelayObservation("portable",false);
+   Check(relay=="relay_version=1.6.0 RC1 relay_mode=portable","launcher portable hint reported");
+   Check(RdcOwnerEnvironmentDiagnostics.RelayObservation("portable",true)=="relay_version=1.6.0 RC1 relay_mode=installed","verified installed identity takes precedence");
+   Check(RdcOwnerEnvironmentDiagnostics.RelayObservation("private_path",false)=="relay_version=1.6.0 RC1 relay_mode=unknown","untrusted mode not exposed");
+   var extra=RdcOwnerLogSessions.AttemptDiagnostics("startup_observation",false,new RdcOwnerFailedSessionInfo{
+    PrerequisiteObservations=new[]{relay,"runtime_selected=ProgramFiles","runtime_selected=private_path","relay_version=private_version relay_mode=installed"}});
+   Check(Array.IndexOf(extra,relay)>=0&&Array.IndexOf(extra,"runtime_selected=ProgramFiles")>=0&&!String.Join("\n",extra).Contains("private"),"relay identity and resolver category strictly allowlisted");
    var summary=RdcOwnerLogSessions.AttemptDiagnostics("startup_observation",false,new RdcOwnerFailedSessionInfo{
     PrerequisiteObservations=new[]{system[0],system[1],"runtime ProgramFiles: npm_package=present(10.9.4)","runtime AppDataNpm: npm_package=present(10.9.4-secret)" }});
    Check(Array.IndexOf(summary,system[0])>=0&&Array.IndexOf(summary,system[1])>=0&&Array.IndexOf(summary,"runtime ProgramFiles: npm_package=present(10.9.4)")>=0&&!String.Join("\n",summary).Contains("secret"),"environment data exported through strict summary allowlist");

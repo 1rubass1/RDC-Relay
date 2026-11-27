@@ -1077,6 +1077,12 @@ public static class RdcOwnerEnvironmentDiagnostics {
   return new[]{"windows_version="+version+" native_arch="+arch+" host_bits="+(Environment.Is64BitProcess?"64":"32"),
    "remote_requested=0.2.52 remote_actual_version=unknown"};
  }
+ // Build identity is transformed together with the authenticated GUI/Host contract.
+ public const string RelayBuild="1.6.0 RC1";
+ public static string RelayObservation(string launchMode,bool verifiedInstalled){
+  string mode=verifiedInstalled?"installed":launchMode=="portable"?"portable":"unknown";
+  return "relay_version="+RelayBuild+" relay_mode="+mode;
+ }
  public static string NpmPackageState(string root,Action<string> checkPath){
   try{
    string path=Path.Combine(root,"node_modules","npm","package.json");
@@ -1979,6 +1985,7 @@ void RefreshTrayMenu(){
    var version=FileVersionInfo.GetVersionInfo(node);
    if(version.FileMajorPart<22||(version.FileMajorPart==22&&version.FileMinorPart<12))
     throw new FileNotFoundException("RC1_PINNED_NPX_MISSING");
+   if(observations!=null)observations.Add("runtime_selected="+locations[i]);
    return file;
   }
   throw new FileNotFoundException("RC1_PINNED_NPX_MISSING");
@@ -2025,6 +2032,12 @@ void RefreshTrayMenu(){
    throw new InvalidOperationException("RC1_EXISTING_REMOTE_ADOPTED_NO_DUPLICATE");
   string logRoot=Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(stateRoot)),"Logs");
   var observations=new List<string>(RdcOwnerEnvironmentDiagnostics.ObserveSystem());
+  string launcherMode=null;bool verifiedInstalled=false;
+  try{
+   launcherMode=Environment.GetEnvironmentVariable("RDC_RELAY_DIAGNOSTIC_MODE");
+   verifiedInstalled=RdcOwnerStartup.VerifiedRelease(Path.GetDirectoryName(sourceRoot),Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+  }catch{launcherMode=null;verifiedInstalled=false;}
+  observations.Add(RdcOwnerEnvironmentDiagnostics.RelayObservation(launcherMode,verifiedInstalled));
   string npx;
   try{npx=ResolvePinnedNpxWithDiagnostics(observations);}
   catch(Exception problem){
