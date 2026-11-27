@@ -44,4 +44,4 @@ RDC Relay is an independent project and is not officially affiliated with the de
 
 [Desktop Commander](https://github.com/wonderwhy-er/DesktopCommanderMCP)
 
-[Changelog](CHANGELOG.en.md)
+[Changelog](CHANGELOG.md)
