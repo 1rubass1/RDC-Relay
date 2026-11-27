@@ -183,7 +183,7 @@ foreach($row in $rows){
 # Verify the *compiled PE native icon*, not just an embedded payload file.
 # Uses Windows icon extraction and exact pixels from the 32px ICO PNG frame.
 # It never executes Setup, Launcher, Host, GUI or Remote.
-& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repo 'Tests\Test-V16AppIconV04.ps1') -SetupPath $setup -LauncherPath $launcher
+& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File (Join-Path $repo 'Tests\Test-V16AppIconV04.ps1') -SetupPath $setup -LauncherPath $launcher
 if($LASTEXITCODE -ne 0){throw 'RC1_FULL_NATIVE_APP_ICON_V04_FAILED'}
 Add-Type -AssemblyName System.IO.Compression,System.IO.Compression.FileSystem
 $portableName=if($PublicPreflight){'RDC.Relay.v'+$QualificationVersion+'.Portable.zip'}elseif($ReleaseQualification){'RDCRelay-'+$QualificationVersion+'-Qualification-Portable.zip'}else{'RDCRelay-1.6.0-RC1-Full-Portable.zip'}

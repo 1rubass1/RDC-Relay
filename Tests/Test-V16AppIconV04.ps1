@@ -47,9 +47,12 @@ $gui=[IO.File]::ReadAllText((Join-Path $repo 'Source\remote-window.ps1'),[Text.E
 $upgrader=[IO.File]::ReadAllText((Join-Path $repo 'Installer\Rc1ManualUpgrade.cs'),[Text.Encoding]::UTF8)
 $compilerIconArg="('/win32icon:'+(Join-Path "+'$payload'+ " 'RDCRelay.ico'))"
 Check (@([regex]::Matches($builder,[regex]::Escape($compilerIconArg))).Count -eq 2) 'private RC1 compiler embeds exactly one approved native icon in Setup EXE and Launcher EXE'
+$oldBuilderTokens=$null;$oldBuilderErrors=$null
+$oldBuilderAst=[Management.Automation.Language.Parser]::ParseInput($release,[ref]$oldBuilderTokens,[ref]$oldBuilderErrors)
 Check ($builder.Contains('RC1_APPROVED_APP_ICON_V04_MISMATCH') -and
- $release.Contains('RDC_RELEASE_APPROVED_APP_ICON_V04_MISMATCH') -and
- -not $release.Contains("& (Join-Path "+'$assetsDir'+ " 'build-icon.ps1')")) 'both builders reject mismatches and release builder no longer regenerates old icon'
+ $oldBuilderErrors.Count -eq 0 -and $oldBuilderAst.EndBlock.Statements.Count -eq 1 -and
+ $oldBuilderAst.EndBlock.Statements[0] -is [Management.Automation.Language.ThrowStatementAst] -and
+ $oldBuilderAst.EndBlock.Statements[0].Extent.Text -match 'RDC_LEGACY_BUILDER_RETIRED_USE_FULL_HOST_PIPELINE') 'active builder rejects icon mismatches; retired builder cannot regenerate or publish'
 Check ($upgrader.Contains('SetShortcut(newLink,"IconLocation",Path.Combine(release,"Source","RDCRelay.ico")+",0")') -and
  $gui.Contains('$form.Icon = New-Object Drawing.Icon($iconPath)')) 'Owner shortcut and GUI already use same runtime ICO'
 Check ($builder.Contains("'RDCRelay.ico'") -and
