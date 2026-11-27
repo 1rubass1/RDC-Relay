@@ -29,7 +29,7 @@ foreach($nl in @([string][char]10,[Environment]::NewLine)){
  Check ((Convert-Rc1OwnerStartupGlyphs ($rocket+' Starting MCP Device... unexpected')) -ceq ($rocket+' Starting MCP Device... unexpected')) 'unrecognized suffix unchanged'
  Check ((Convert-Rc1OwnerStartupGlyphs $out) -ceq $out) 'idempotent'
 }
-Check ($gui.Contains("         '','Remote Connection','',") -and !$gui.Contains("         "+'$safeArt'+",'','Remote Connection','',")) 'single fallback leading blank'
+Check ($gui.Contains("         'Remote Connection','',") -and !$gui.Contains("         '','Remote Connection','',") -and !$gui.Contains("         "+'$safeArt'+",'','Remote Connection','',")) 'no fallback leading blank'
 Check ($raw.Contains('$headerDisplay=Convert-Rc1OwnerStartupGlyphs $headerDisplay') -and $raw.Contains('if($OwnerGui){Apply-Rc1OwnerStartupGlyphs $headerLog}')) 'real Owner renderer invokes conversion and style'
 $accentNetwork=[Drawing.Color]::FromArgb(89,172,220)
 $accentOrange=[Drawing.Color]::FromArgb(191,118,67)
