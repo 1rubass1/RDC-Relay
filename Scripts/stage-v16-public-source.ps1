@@ -57,7 +57,7 @@ an explicitly approved runtime installation when missing; it does not install
 RDC Relay itself. Do not move the executable away from its supporting files. Installed copies have Desktop/Start Menu shortcuts and an entry in
 Windows Installed apps. Stop Remote and exit RDC Relay before uninstalling.
 
-RDC Relay pins @wonderwhy-er/desktop-commander to 0.2.52. Pairing uses the
+RDC Relay requests the official @wonderwhy-er/desktop-commander@latest channel. Pairing uses the
 official upstream device approval flow; approve only devices you recognize.
 
 ## Architecture and updates

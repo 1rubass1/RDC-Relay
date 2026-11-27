@@ -1,6 +1,6 @@
 # RDC Relay — development
 
-RDC Relay is an independent Windows companion GUI and supervisor for official Desktop Commander Remote, pinned to `@wonderwhy-er/desktop-commander@0.2.52`. The 1.6.0 architecture separates background Host from the replaceable GUI.
+RDC Relay is an independent Windows companion GUI and supervisor for official Desktop Commander Remote, using the official `@wonderwhy-er/desktop-commander@latest` channel. The 1.6.0 architecture separates background Host from the replaceable GUI.
 
 - [Current public README](https://github.com/Rubo-Facility/RDC-Relay/blob/main/README.md)
 - [Current 1.6.0 release](https://github.com/Rubo-Facility/RDC-Relay/releases/tag/v1.6.0)

@@ -9,7 +9,7 @@ $failed=$false
 $remoteBefore=$null
 function RemoteSnapshot {
  $rows=@(Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" |
-  Where-Object {$_.CommandLine -match '@wonderwhy-er/desktop-commander@0\.2\.52 remote'})
+  Where-Object {$_.CommandLine -match '@wonderwhy-er/desktop-commander@(0\.2\.52|latest) remote'})
  return @($rows|ForEach-Object {
   [PSCustomObject]@{Pid=[int]$_.ProcessId;Birth=([datetime]$_.CreationDate).ToUniversalTime().Ticks}
  })

@@ -45,17 +45,17 @@ try{
  Add-Type -Path (Join-Path $repo 'Source\RdcOwnerManagedProcess.cs')
  $job=New-Object RdcOwnerManagedProcess
  $blocked=$false
- try{$job.Start($fake,'--yes @wonderwhy-er/desktop-commander@0.2.52 remote --logout --extra',
+ try{$job.Start($fake,'--yes @wonderwhy-er/desktop-commander@latest remote --logout --extra',
   $root,(Join-Path $root 'invalid.log'))}catch{$blocked=$true}
  Check $blocked 'logout accepts only exact pinned package and arguments'
- $job.Start($fake,'--yes @wonderwhy-er/desktop-commander@0.2.52 remote --logout',
+ $job.Start($fake,'--yes @wonderwhy-er/desktop-commander@latest remote --logout',
   $root,(Join-Path $root 'logout-success.log'))
  $result=Wait-OwnCompletion $job
  Check ($result.Finished -and $result.ExitCode -eq 0 -and -not $job.Running) 'fake logout exit 0, Job fully drained'
  $job.Dispose();$job=$null
  [IO.File]::WriteAllLines($fake,@('@echo off','exit /b 23'),[Text.Encoding]::ASCII)
  $second=New-Object RdcOwnerManagedProcess
- $second.Start($fake,'--yes @wonderwhy-er/desktop-commander@0.2.52 remote --logout',
+ $second.Start($fake,'--yes @wonderwhy-er/desktop-commander@latest remote --logout',
   $root,(Join-Path $root 'logout-fail.log'))
  $result=Wait-OwnCompletion $second
  Check ($result.Finished -and $result.ExitCode -eq 23 -and -not $second.Running) 'fake logout failure exit 23 cannot be mistaken for success'

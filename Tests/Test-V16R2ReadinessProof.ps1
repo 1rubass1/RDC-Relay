@@ -102,7 +102,7 @@ try{
   [Text.Encoding]::ASCII)
  [IO.File]::WriteAllText($observedLog,'',$utf8)
  $job=New-Object RdcOwnerManagedProcess
- $job.Start($dummy,'--yes @wonderwhy-er/desktop-commander@0.2.52 remote',$root,$jobLog)
+ $job.Start($dummy,'--yes @wonderwhy-er/desktop-commander@latest remote',$root,$jobLog)
  if(-not $job.Running){throw 'FAKE_ONLY_JOB_FAILED'}
  $ownerReady=$true
  $now=[DateTime]::UtcNow

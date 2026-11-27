@@ -118,7 +118,7 @@ try {
  $shortHeight=$shortHelp.ClientSize.Height
 }finally{$shortHelp.Dispose()}
 $realManaged='RDC Relay 1.6.0 RC1'+[Environment]::NewLine+[Environment]::NewLine+
- 'Host запускает Desktop Commander Remote 0.2.52.'+[Environment]::NewLine+[Environment]::NewLine+
+ 'Host запускает Desktop Commander Remote (latest).'+[Environment]::NewLine+[Environment]::NewLine+
  'Закрытие окна закрывает только GUI; Host и Remote продолжают работать.'+[Environment]::NewLine+
  'Повторное открытие через трей восстанавливает состояние и журнал.'+[Environment]::NewLine+
  'Статистику вызовов при необходимости можно подключить повторно в меню «Аккаунт».'+
@@ -272,7 +272,7 @@ if($helpHandler){
   return [Windows.Forms.DialogResult]::OK
  }
  Show-RdcAbout
-  Check ($script:capturedHelp.Contains('Host запускает Desktop Commander Remote 0.2.52.') -and
+  Check ($script:capturedHelp.Contains('Host запускает Desktop Commander Remote (latest).') -and
    $script:capturedHelp.Contains('PID Remote: —')) 'existing managed-Host Help content and diagnostics preserved'
 }
 Write-Output ('RC1_OWNER_STOP_HELP_DIALOGS_PASS='+$pass+' FAIL='+$fail)

@@ -485,7 +485,7 @@ $nl=[Environment]::NewLine;$appVersion='1.6.0'
 $script:ownerRemotePid=0;$script:ownerObservedMode=$false;$script:ownerManagedMode=$true
 $script:capturedHelp=''
 Show-RdcAbout
-Check ($script:capturedHelp.Contains('Host starts Desktop Commander Remote 0.2.52.') -and
+Check ($script:capturedHelp.Contains('Host starts Desktop Commander Remote (latest).') -and
  $script:capturedHelp.Contains('Closing the window closes only the GUI') -and
  $script:capturedHelp.Contains('PID Remote:')) 'English managed-mode About preserves correct Host/Remote lifecycle'
 $script:ownerObservedMode=$true;$script:ownerManagedMode=$false
@@ -499,7 +499,7 @@ Check ($script:capturedHelp.Contains('Test mode: Desktop Commander Remote is not
 $script:ownerUiTexts=[RdcUiLanguage]::LoadResources((Join-Path (Split-Path -Parent $PSScriptRoot) 'Source'),'ru-RU')
 $script:ownerManagedMode=$true
 Show-RdcAbout
-Check ($script:capturedHelp.Contains('Host запускает Desktop Commander Remote 0.2.52.') -and
+Check ($script:capturedHelp.Contains('Host запускает Desktop Commander Remote (latest).') -and
  $script:capturedHelp.Contains('Закрытие окна закрывает только GUI')) 'Russian About retains original approved Owner copy'
 $OwnerGui=$false
 Write-Output ('RC1_HELP_JOURNAL_ROUTE_PASS='+$pass+' FAIL='+$fail)

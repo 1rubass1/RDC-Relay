@@ -254,10 +254,10 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
   // Only the verified Node npx.cmd shim may be used to start pinned Remote.
   // No arbitrary shell command or user string enters this launcher.
   if(!String.Equals(Path.GetFileName(executable),"npx.cmd",StringComparison.OrdinalIgnoreCase)||
-     (arguments!="--yes @wonderwhy-er/desktop-commander@0.2.52 remote" &&
-      arguments!="--yes @wonderwhy-er/desktop-commander@0.2.52 remote --logout"))
+     (arguments!="--yes @wonderwhy-er/desktop-commander@latest remote" &&
+      arguments!="--yes @wonderwhy-er/desktop-commander@latest remote --logout"))
    throw new InvalidOperationException("RC1_OWNED_PIN_REFUSED");
-  if(capture&&arguments!="--yes @wonderwhy-er/desktop-commander@0.2.52 remote")
+  if(capture&&arguments!="--yes @wonderwhy-er/desktop-commander@latest remote")
    throw new InvalidOperationException("RC1_CAPTURE_REMOTE_ONLY");
   string cmdExe=Path.Combine(Environment.SystemDirectory,"cmd.exe");
   SafePath(cmdExe);

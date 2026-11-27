@@ -85,7 +85,7 @@ function Set-RdcAutoUpdateEnabled([string]$path,[bool]$enabled) {
         if([IO.File]::Exists($backup)){[IO.File]::Delete($backup)}
     }
 }
-$desktopCommanderPackage = '@wonderwhy-er/desktop-commander@0.2.52'
+$desktopCommanderPackage = '@wonderwhy-er/desktop-commander@latest'
 $logPath = Join-Path $root 'remote-session.log'
 $iconPath = Join-Path $root 'RDCRelay.ico'
 
@@ -7392,7 +7392,7 @@ function Get-RdcOwnerJournalText {
         $runtimePattern='\Aruntime (ProgramFiles|AppDataNpm|ProgramFilesX86): (check_unknown|node='+$nodeState+' npm='+$fileState+' npx='+$fileState+'|npm-cli='+$fileState+' npx-cli='+$fileState+')\z'
         $fixedPattern='\A(attempt_phase=(startup_observation|completed|preflight_failed|launch_failed)|completion_kind=(unknown|preflight_failed|launch_failed|exit_before_ready|startup_stop_requested|authorization_stop_requested|stop_requested_after_ready|unexpected_after_ready)|preflight_reason=(none|runtime_unavailable|inspection_failed)|cmd_exit=(unknown|-?[0-9]{1,10})|(stop_requested|accepted_session|auth_pending_observed|eof|read_fault|storage_fault|parser_fault)=(yes|no|unknown)|(capture_read|write_ack|retained|parser_pending)=(unknown|[0-9]{1,19})|prerequisite_observations=unknown)\z'
         $packagePattern='\Aruntime (ProgramFiles|AppDataNpm|ProgramFilesX86): npm_package=(missing|unknown|not_file|present\(version_unknown\)|present\([0-9]{1,9}(\.[0-9]{1,9}){2}\))\z'
-        $systemPattern='\A(windows_version=(unknown|[0-9]{1,10}(\.[0-9]{1,10}){2}) native_arch=(unknown|x86|x64|arm64|arm) host_bits=(32|64)|remote_requested=0\.2\.52 remote_actual_version=unknown|relay_version=[0-9]{1,9}(\.[0-9]{1,9}){2}( RC[1-9][0-9]*)? relay_mode=(installed|portable|unknown)|runtime_selected=(ProgramFiles|AppDataNpm|ProgramFilesX86))\z'
+        $systemPattern='\A(windows_version=(unknown|[0-9]{1,10}(\.[0-9]{1,10}){2}) native_arch=(unknown|x86|x64|arm64|arm) host_bits=(32|64)|remote_requested=(0\.2\.52|latest) remote_actual_version=unknown|relay_version=[0-9]{1,9}(\.[0-9]{1,9}){2}( RC[1-9][0-9]*)? relay_mode=(installed|portable|unknown)|runtime_selected=(ProgramFiles|AppDataNpm|ProgramFilesX86))\z'
         foreach($entry in @($script:ownerAttemptDiagnostics | Select-Object -First 30)){
             if($entry -is [string] -and $entry.Length -le 120 -and
                 ($entry -cmatch $fixedPattern -or $entry -cmatch $runtimePattern -or
@@ -7923,7 +7923,7 @@ function Show-RdcAbout {
               'Полное завершение RDC Relay через трей не отключает ранее запущенный Remote.'
         }elseif($script:ownerManagedMode){
             $helpText = 'RDC Relay 1.6.0 RC1' + $nl + $nl +
-              'Host запускает Desktop Commander Remote 0.2.52.' + $nl + $nl +
+              'Host запускает Desktop Commander Remote (latest).' + $nl + $nl +
               'Закрытие окна закрывает только GUI; Host и Remote продолжают работать.' + $nl +
               'Повторное открытие через трей восстанавливает состояние и журнал.' + $nl +
               'Статистику вызовов при необходимости можно подключить повторно в меню «Аккаунт».'
@@ -8410,7 +8410,7 @@ if ($SelfTest) {
     if ($runtimeSep.Text -ne '|') { throw 'Runtime separator missing' }
     $npxProbe = Resolve-NpxPath
     if (-not $npxProbe -or -not (Test-Path -LiteralPath $npxProbe)) { throw 'npx resolver failed' }
-    if ($desktopCommanderPackage -ne '@wonderwhy-er/desktop-commander@0.2.52') { throw 'Unexpected Desktop Commander package pin' }
+    if ($desktopCommanderPackage -ne '@wonderwhy-er/desktop-commander@latest') { throw 'Unexpected Desktop Commander package pin' }
     if ($hintSep.ForeColor.ToArgb() -ne $accentOrange.ToArgb()) { throw 'Bottom separator color mismatch' }
     if ($runtimeSep.ForeColor.ToArgb() -ne $accentOrange.ToArgb()) { throw 'Runtime separator color mismatch' }
     if ($script:enableUpdateNotice) {

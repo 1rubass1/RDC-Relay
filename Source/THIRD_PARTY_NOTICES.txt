@@ -1,7 +1,7 @@
 RDC Relay — Third-party notices
 
 Desktop Commander local MCP server / Remote Device
-Package: @wonderwhy-er/desktop-commander (pinned version: 0.2.52)
+Package: @wonderwhy-er/desktop-commander (release channel: latest; previously pinned to 0.2.52)
 Repository: https://github.com/wonderwhy-er/DesktopCommanderMCP
 License: MIT
 Copyright (c) 2024-2025 Eduard Ruzga and Desktop Commander Contributors

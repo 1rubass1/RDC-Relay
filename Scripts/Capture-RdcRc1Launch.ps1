@@ -31,7 +31,7 @@ function Classify([string]$name,[string]$line){
   if($line -match '(?i)-File\s+"?[^"]*remote-window\.ps1' -and $line -match '(?i)-OwnerGui'){return 'RC1_GUI'}
   if($line -match '(?i)-File\s+"?[^"]*RemoteDesktopCommanderLauncher\remote-window\.ps1'){return 'STABLE_GUI'}
  }
- if($name -ieq 'cmd.exe' -and $line -match '(?i)@wonderwhy-er/desktop-commander@0\.2\.52\s+remote'){return 'REMOTE_LAUNCHER'}
+ if($name -ieq 'cmd.exe' -and $line -match '(?i)@wonderwhy-er/desktop-commander@(0\.2\.52|latest)\s+remote'){return 'REMOTE_LAUNCHER'}
  if($name -ieq 'node.exe' -and $line -match '(?i)desktop-commander'){return 'REMOTE_NODE'}
  return ''
 }

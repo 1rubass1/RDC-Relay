@@ -254,7 +254,7 @@
     "help.dialog.showJournalAccessible": "Show event journal",
     "help.dialog.close": "Close",
     "help.owner.observed": "RDC Relay 1.6.0 RC1{nl}{nl}An existing Desktop Commander Remote is running. Its status is shown without interrupting the connection.{nl}Closing the window closes only the GUI; Host and Remote keep running.{nl}Reopening from the tray restores the state and journal.{nl}Exiting RDC Relay completely from the tray does not disconnect a previously started Remote.",
-    "help.owner.managed": "RDC Relay 1.6.0 RC1{nl}{nl}Host starts Desktop Commander Remote 0.2.52.{nl}Closing the window closes only the GUI; Host and Remote keep running.{nl}Reopening from the tray restores the state and journal.{nl}Call statistics can be reconnected from the “Account” menu if needed.",
+    "help.owner.managed": "RDC Relay 1.6.0 RC1{nl}{nl}Host starts Desktop Commander Remote (latest).{nl}Closing the window closes only the GUI; Host and Remote keep running.{nl}Reopening from the tray restores the state and journal.{nl}Call statistics can be reconnected from the “Account” menu if needed.",
     "help.owner.fake": "RDC Relay 1.6.0 RC1{nl}{nl}Test mode: Desktop Commander Remote is not connected.{nl}Closing the window closes only the GUI; Host keeps running.{nl}Reopening from the tray restores the state and journal.",
     "journal.owner.heading": "Journal",
     "journal.owner.dialogTitle": "RDC Relay - Journal",

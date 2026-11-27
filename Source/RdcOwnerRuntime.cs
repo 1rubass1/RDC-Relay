@@ -1075,7 +1075,7 @@ public static class RdcOwnerEnvironmentDiagnostics {
    switch(n.Architecture){case 0:arch="x86";break;case 9:arch="x64";break;case 12:arch="arm64";break;case 5:arch="arm";break;}
   }catch{}
   return new[]{"windows_version="+version+" native_arch="+arch+" host_bits="+(Environment.Is64BitProcess?"64":"32"),
-   "remote_requested=0.2.52 remote_actual_version=unknown"};
+   "remote_requested=latest remote_actual_version=unknown"};
  }
  // Build identity is transformed together with the authenticated GUI/Host contract.
  public const string RelayBuild="1.6.0 RC1";
@@ -2088,7 +2088,7 @@ void RefreshTrayMenu(){
    sessions=new RdcOwnerLogSessions(logRoot);sessions.Recover();
    sink=sessions.Begin();began=true;
    if(WindowsEnding)throw new InvalidOperationException("RC1_WINDOWS_ENDING");
-   child.StartCaptured(npx,"--yes @wonderwhy-er/desktop-commander@0.2.52 remote",sourceRoot);
+   child.StartCaptured(npx,"--yes @wonderwhy-er/desktop-commander@latest remote",sourceRoot);
    managedProcess=child;managedLogSessions=sessions;
    managedLogPump=new RdcOwnerLogPump(child.ReadCaptured,sink);
    sink=null;sessions=null;
@@ -2213,7 +2213,7 @@ void RefreshTrayMenu(){
    var worker=new RdcOwnerManagedProcess();
    try{
     if(WindowsEnding)throw new InvalidOperationException("RC1_WINDOWS_ENDING");
-    worker.Start(npx,"--yes @wonderwhy-er/desktop-commander@0.2.52 remote --logout",sourceRoot,file);
+    worker.Start(npx,"--yes @wonderwhy-er/desktop-commander@latest remote --logout",sourceRoot,file);
     accountLogoutProcess=worker;
    }catch{worker.Dispose();throw;}
    accountLogoutDeadlineUtc=DateTime.UtcNow.AddSeconds(60);
@@ -2302,6 +2302,8 @@ void RefreshTrayMenu(){
   }
   string field,value;
   if(TrySafeIdentityLine(line,out field,out value)){visible=line;return true;}
+  // Display only bounded numeric upstream version metadata.
+  if(System.Text.RegularExpressions.Regex.IsMatch(line,@"\A[ \t]{1,10}-[ \t]*Version:[ \t]*[0-9]{1,9}(\.[0-9]{1,9}){2}[ \t]*\z")){visible=line;return true;}
   // Fixed instructions, lifecycle markers and command syntax; never accept
   // arbitrary suffixes or commands returned by untrusted Remote output.
   const string staticLabels=@"Remote Connection|Starting MCP Device\.\.\.|Connected to Desktop Commander MCP|Connected to Remote MCP|Session restored|Channel subscribed|Device marked as online|Device ready:|Desktop Commander Remote is connected|Next|Commands|Return to ChatGPT or Claude and continue your conversation\.|Keep this Terminal running\. You can minimize it\.|Press Ctrl\+C to disconnect\.|Run these in a new Terminal, or after disconnecting\.|Help:\s+npx @wonderwhy-er/desktop-commander@latest remote --help|Log out:\s+npx @wonderwhy-er/desktop-commander@latest remote --logout";
@@ -2367,7 +2369,7 @@ void RefreshTrayMenu(){
   if(managedStartupScanned>=90)return;
   string line;
   if(!TrySafeStartupLine(raw,out line)){
-   managedStartupScanned++;return;
+   return; // Discard npm/browser download noise without exhausting header budget.
   }
   if(!ShouldKeepStartupLine(managedStartupHeader,line))return;
   // A single visual separator counts; an arbitrary number of extra blank
@@ -2473,10 +2475,12 @@ void RefreshTrayMenu(){
    next="Fault";return "Remote start failed";
   }
   if(HasRemoteStatus(statusLine,"Authenticating with Remote MCP server")||
-     HasRemoteStatus(statusLine,"waiting for authentication")){
+     HasRemoteStatus(statusLine,"waiting for authentication")||
+     HasRemoteStatus(statusLine,"waiting for authorization")){
    next="AuthPending";return "Authentication pending";
   }
-  if(HasRemoteStatus(statusLine,"Desktop Commander Remote is connected")||
+  if(String.Equals(statusLine.TrimEnd(),"Device ready:",StringComparison.OrdinalIgnoreCase)||
+     HasRemoteStatus(statusLine,"Desktop Commander Remote is connected")||
      HasRemoteStatus(statusLine,"Presence tracked (device ")){
    next="Ready";return "Remote connected";
   }

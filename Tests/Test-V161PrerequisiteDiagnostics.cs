@@ -58,7 +58,7 @@ public static class TestV161PrerequisiteDiagnostics {
    Check(RdcOwnerEnvironmentDiagnostics.NpmPackageState(root,allow)=="unknown","malformed metadata check unknown");
    var system=RdcOwnerEnvironmentDiagnostics.ObserveSystem();
    Check(Regex.IsMatch(system[0],@"\Awindows_version=[0-9]+\.[0-9]+\.[0-9]+ native_arch=(x86|x64|arm64|arm) host_bits=(32|64)\z"),"Windows build and native architecture actually observed");
-   Check(system[1]=="remote_requested=0.2.52 remote_actual_version=unknown","pinned request not mistaken for installed version");
+   Check(system[1]=="remote_requested=latest remote_actual_version=unknown","pinned request not mistaken for installed version");
    string relay=RdcOwnerEnvironmentDiagnostics.RelayObservation("portable",false);
    Check(relay=="relay_version=1.6.0 RC1 relay_mode=portable","launcher portable hint reported");
    Check(RdcOwnerEnvironmentDiagnostics.RelayObservation("portable",true)=="relay_version=1.6.0 RC1 relay_mode=installed","verified installed identity takes precedence");

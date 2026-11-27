@@ -20,13 +20,13 @@ try{
  Check $blocked 'OWNED reject unexpected Remote/credential arguments'
  $blocked=$false
  try{$owner.Start((Join-Path $env:WINDIR 'System32\cmd.exe'),
-  '--yes @wonderwhy-er/desktop-commander@0.2.52 remote',$root,$log)}catch{$blocked=$true}
+  '--yes @wonderwhy-er/desktop-commander@latest remote',$root,$log)}catch{$blocked=$true}
  Check $blocked 'OWNED reject unapproved executable identity'
- $owner.Start($fake,'--yes @wonderwhy-er/desktop-commander@0.2.52 remote',$root,$log)
+ $owner.Start($fake,'--yes @wonderwhy-er/desktop-commander@latest remote',$root,$log)
  Start-Sleep -Milliseconds 600
  Check ($owner.Pid -gt 0 -and $owner.Running) 'OWNED kernel Job includes live disposable process'
  $blocked=$false
- try{$owner.Start($fake,'--yes @wonderwhy-er/desktop-commander@0.2.52 remote',$root,$log)}catch{$blocked=$true}
+ try{$owner.Start($fake,'--yes @wonderwhy-er/desktop-commander@latest remote',$root,$log)}catch{$blocked=$true}
  Check $blocked 'OWNED deny duplicate second spawn'
  Check ($owner.StopOwnedOnly(10000) -and -not $owner.Running) 'OWNED stop drains verified private Job'
  $blocked=$false

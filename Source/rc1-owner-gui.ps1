@@ -799,7 +799,7 @@ function Start-RdcOwnerGui {
         # fallback, including Adopted/read-only cases with no owned log.
         $script:startupBlock=[string]::Join($nl,@(
          $safeArt,'','Remote Connection','',
-         'RDC Relay 1.6.0 RC1 / Desktop Commander 0.2.52','',
+         'RDC Relay 1.6.0 RC1 / Desktop Commander (latest)','',
          ((Get-RdcOwnerUiText 'owner.fallback.label.status' 'Status: ')+$safeDisplayState),
          ((Get-RdcOwnerUiText 'owner.fallback.label.user' '- User: ')+$(if($safeUser){$safeUser}else{Get-RdcOwnerUiText 'owner.fallback.value.notReported' 'not reported'})),
          ((Get-RdcOwnerUiText 'owner.fallback.label.deviceName' '- Device Name: ')+$(if($safeDeviceName){$safeDeviceName}else{Get-RdcOwnerUiText 'owner.fallback.value.notReported' 'not reported'})),

@@ -39,9 +39,9 @@ exit 0
  $clock=[Delegate]::CreateDelegate([Func[DateTime]],[DateTime].GetProperty('Now').GetGetMethod())
  $sink=New-Object RdcOwnerLogParts -ArgumentList @($parts,4096,[long]200000,$clock)
  $denied=$false
- try{$owner.StartCaptured($fake,'--yes @wonderwhy-er/desktop-commander@0.2.52 remote --logout',$root)}catch{$denied=$true}
+ try{$owner.StartCaptured($fake,'--yes @wonderwhy-er/desktop-commander@latest remote --logout',$root)}catch{$denied=$true}
  Check $denied 'capture excludes logout'
- $owner.StartCaptured($fake,'--yes @wonderwhy-er/desktop-commander@0.2.52 remote',$root)
+ $owner.StartCaptured($fake,'--yes @wonderwhy-er/desktop-commander@latest remote',$root)
  Check ($owner.Pid -gt 0 -and $owner.HasStarted) 'captured child created under existing verified Job'
  $reader=[Delegate]::CreateDelegate([RdcOwnerLogReader],$owner,'ReadCaptured')
  $pump=New-Object RdcOwnerLogPump -ArgumentList @($reader,$sink)
@@ -75,7 +75,7 @@ exit 0
  # Delay only to keep the disposable root alive during identity acquisition.
  [IO.File]::WriteAllText($actor,'Start-Sleep -Milliseconds 700; exit 23')
  $owner=New-Object RdcOwnerManagedProcess
- $owner.StartCaptured($fake,'--yes @wonderwhy-er/desktop-commander@0.2.52 remote',$root)
+ $owner.StartCaptured($fake,'--yes @wonderwhy-er/desktop-commander@latest remote',$root)
  $eof=$false;$code=0;$completed=$false;$seen=0;$watch.Restart()
  while($watch.ElapsedMilliseconds -lt 10000){
   if(-not $eof){$seen+=$owner.ReadCaptured($buf,[ref]$eof)}
