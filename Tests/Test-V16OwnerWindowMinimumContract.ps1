@@ -1,4 +1,4 @@
-# G117: main-window floor is dictated by the complete text panes.
+﻿# G117: main-window floor is dictated by the complete text panes.
 # Hidden WinForms only; no installed app, Host, Remote or registry access.
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
@@ -19,7 +19,7 @@ Check (-not $src.Contains('function Get-Rc1CompressedActivityHeight') -and
  -not $src.Contains('78+38+7+2+$windowFrameHeight')) 'unsafe almost-zero-sized G116 pane collapse removed'
 Check ($src.Contains('$minimumWindowHeight=[Math]::Min($windowHeight,$preferredMinimumHeight)') -and
  $src.Contains('Set-ActivityPaneHeight (Get-EffectivePaneMinHeight)')) 'legacy mode and Owner initial divider keep original behavior'
-foreach($name in @('Get-Rc1HeaderBannerMinimum','Get-Rc1ActivityRowReserve',
+foreach($name in @('Get-Rc1HeaderBannerMinimum','Get-Rc1ActivityRowReserve','Sync-Rc1HeaderMinimum',
  'Get-EffectivePaneMinHeight','Get-ClampedActivityPaneHeight','Set-ActivityPaneHeight')){
  $def=$ast.Find({param($n)
   $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name
@@ -37,8 +37,15 @@ $headerPitch=($headerPaneMinHeightPreferred-9)/6
 $activityPitch=[int]$script:ownerJournalLinePitch
 Check ($headerPitch -ge 10 -and $activityPitch -ge 10 -and
  $activityPaneMinHeightPreferred -eq 8*$activityPitch+17) 'real six-header-line and eight-journal-row text baselines preserved'
+$anchor=$src.IndexOf('public sealed class RdcOwnerHeaderViewport : Panel {')
+$a=$src.LastIndexOf("Add-Type -TypeDefinition @'",$anchor)+("Add-Type -TypeDefinition @'").Length
+$b=$src.IndexOf("'@ -ReferencedAssemblies",$a)
+Add-Type -ReferencedAssemblies System.Drawing,System.Windows.Forms -TypeDefinition $src.Substring($a,$b-$a)
 $form=New-Object Windows.Forms.Form
-$headerVScroll=New-Object Windows.Forms.Panel
+$headerVScroll=New-Object RdcOverlayScrollBar
+$headerVScroll.Vertical=$true
+$headerVScroll.Dock='Fill'
+$headerVScroll.Margin=[Windows.Forms.Padding]::new(0)
 try{
  $form.Size=[Drawing.Size]::new(900,850)
  $form.FormBorderStyle=[Windows.Forms.FormBorderStyle]::Sizable
@@ -64,17 +71,31 @@ try{
  $topPane.RowCount=2
  [void]$topPane.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
  [void]$topPane.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,7))
- $topText=New-Object Windows.Forms.RichTextBox
+ $topText=New-Object RdcLogBox
  $topText.Dock=[Windows.Forms.DockStyle]::Fill
  $topText.Margin=[Windows.Forms.Padding]::new(0)
  $topText.BorderStyle=[Windows.Forms.BorderStyle]::None
  $topText.Font=[Drawing.Font]::new('Consolas',9)
  $topText.WordWrap=$false
- $topText.Text=[string]::Join([char]10,@('One','Two','Three','Four','Five','Six'))
+ $topText.Text=[string]::Join([char]10,@(1..18|ForEach-Object{"Line $_"}))
+ $topText.ScrollBars='None'
+ $headerLog=$topText
+ $headerVScroll.Target=$headerLog
+ $headerHost=$topPane
+ $headerTextHost=New-Object Windows.Forms.TableLayoutPanel
+ $headerTextHost.Dock='Fill';$headerTextHost.Margin=[Windows.Forms.Padding]::new(0)
+ $headerTextHost.ColumnCount=2;$headerTextHost.RowCount=1
+ [void]$headerTextHost.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent,100))
+ [void]$headerTextHost.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute,17))
+ [void]$headerTextHost.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
+ $a=$src.IndexOf('# Owner bitmap and RichEdit scroll together under the full-height track.')
+ $b=$src.IndexOf('$headerHost.Controls.Add($headerTextHost,0,0)',$a)
+ if($a -lt 0 -or $b -le $a){throw 'LAYOUT_BOUNDARY'}
+ . ([scriptblock]::Create($src.Substring($a,$b-$a)))
  $divider=New-Object Windows.Forms.Panel
  $divider.Dock=[Windows.Forms.DockStyle]::Fill
  $divider.Margin=[Windows.Forms.Padding]::new(0)
- $topPane.Controls.Add($topText,0,0)
+ $topPane.Controls.Add($headerTextHost,0,0)
  $topPane.Controls.Add($divider,0,1)
  $bottomPane=New-Object Windows.Forms.Panel
  $bottomPane.Dock=[Windows.Forms.DockStyle]::Fill
@@ -104,6 +125,11 @@ try{
   $contentHost.Add_Resize($resize)
  }
  $form.PerformLayout()
+ [void]$ownerHeaderViewport.Handle
+ $ownerHeaderViewport.Reflow($true)
+ Sync-Rc1HeaderMinimum
+ $min=$form.MinimumSize.Height
+ Check ($headerPaneMinHeightPreferred -eq ($ownerHeaderViewport.BannerHeight+7)) 'actual image height determines header minimum'
  $correct=$true
  foreach($requested in @(700,500,440,410,401,394,385,$min,($min-15),($min-100))){
   $form.Height=$requested
@@ -127,9 +153,15 @@ try{
   $free -eq ($headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred) -and
   $lower -eq $activityPaneMinHeightPreferred -and
   $upper -eq $headerPaneMinHeightPreferred) 'window floor meets both text minima exactly, with zero surplus divider slack'
+ $ownerHeaderViewport.ScrollTo(0)
  Check ($divider.Height -eq 7 -and
-  $topText.ClientSize.Height -ge 6*$headerPitch -and
-  $bottomText.ClientSize.Height -ge 8*$activityPitch) 'all six header lines and eight journal slots fit with preserved 7px divider'
+  $ownerHeaderViewport.Height -eq $ownerHeaderViewport.BannerHeight -and
+  $ownerWordmark.Bottom -eq $ownerHeaderViewport.Height -and
+  $headerLog.Top -ge $ownerHeaderViewport.Height -and
+  $headerVScroll.Top -eq 0 -and $headerVScroll.Height -eq $ownerHeaderViewport.Height -and
+  $bottomText.ClientSize.Height -ge 8*$activityPitch) 'collapsed header shows only artwork with full-height track and eight journal slots'
+ $headerVScroll.ScrollToEnd()
+ Check ($ownerHeaderViewport.ScrollOffset -eq $ownerHeaderViewport.MaximumOffset -and $ownerWordmark.Bottom -le 0) 'scrollbar scrolls collapsed banner away'
  $form.Height=$min-100
  Check ($form.Height -eq $min) 'WinForms rejects sizing below text minima'
  $oldFloor=78+38+$headerPaneMinHeightPreferred+$activityPaneMinHeightPreferred+7+48

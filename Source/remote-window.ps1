@@ -1497,6 +1497,108 @@ public class RdcStatusIndicator : Control {
 }
 
 // Resource-only Owner banner: one paint surface, no RichEdit glyph rows.
+// A single clipped, pixel-scrollable surface for the bitmap and styled text.
+// The RichEdit is measured at its full document height; its own scroll
+// position remains at zero. The outer viewport owns the vertical offset.
+public sealed class RdcOwnerHeaderViewport : Panel {
+    private readonly RdcOwnerWordmark banner;
+    private readonly RdcLogBox log;
+    private int offset, contentHeight, bannerHeight, textHeight;
+    private int measuredWidth=-1, measuredDpi=-1, previousViewportHeight=-1;
+    private int wheelRemainder;
+    private bool reflowing;
+    public event EventHandler ScrollChanged;
+    public RdcOwnerHeaderViewport(RdcOwnerWordmark artwork,RdcLogBox text) {
+        if(artwork==null||text==null)throw new ArgumentNullException();
+        banner=artwork; log=text;
+        AutoScroll=false; TabStop=false;
+        SetStyle(ControlStyles.OptimizedDoubleBuffer|ControlStyles.AllPaintingInWmPaint,true);
+        banner.Dock=DockStyle.None; log.Dock=DockStyle.None;
+        banner.Margin=Padding.Empty;
+        Controls.Add(banner); Controls.Add(log);
+        log.ExternalVerticalWheel=ScrollWheel;
+        banner.MouseWheel+=delegate(object sender,MouseEventArgs e){
+            HandledMouseEventArgs handled=e as HandledMouseEventArgs;
+            if(handled!=null)handled.Handled=true;
+            ScrollWheel(e.Delta);
+        };
+    }
+    public int ScrollOffset {get{return offset;}}
+    public int BannerHeight {get{return bannerHeight;}}
+    public int ContentHeight {get{return contentHeight;}}
+    public int MaximumOffset {get{return Math.Max(0,contentHeight-ClientSize.Height);}}
+    public int LineStep {get{return Math.Max(1,log.Font.Height);}}
+    public int[] ScrollMetrics(){
+        int visible=Math.Max(1,ClientSize.Height);
+        int total=Math.Max(visible,contentHeight);
+        return new[]{total,visible,offset,Math.Max(0,total-visible)};
+    }
+    protected override void OnHandleCreated(EventArgs e){base.OnHandleCreated(e);Reflow(true);}
+    protected override void OnSizeChanged(EventArgs e){base.OnSizeChanged(e);Reflow(false);}
+    protected override void OnMouseWheel(MouseEventArgs e){
+        HandledMouseEventArgs handled=e as HandledMouseEventArgs;
+        if(handled!=null)handled.Handled=true;
+        ScrollWheel(e.Delta);
+    }
+    public void ScrollWheel(int delta){
+        wheelRemainder+=delta;
+        int notches=wheelRemainder/120;wheelRemainder%=120;
+        int lines=SystemInformation.MouseWheelScrollLines;
+        if(lines==0||notches==0)return;
+        int step=lines<0?Math.Max(LineStep,ClientSize.Height-LineStep):LineStep*Math.Min(120,lines);
+        ScrollTo(offset-notches*step);
+    }
+    public void ScrollTo(int value){
+        int next=Math.Max(0,Math.Min(MaximumOffset,value));
+        offset=next;PositionChildren();
+        if(ScrollChanged!=null)ScrollChanged(this,EventArgs.Empty);
+    }
+    private void PositionChildren(){
+        if(banner==null||log==null||reflowing)return;
+        SuspendLayout();
+        try{
+            banner.SetBounds(0,-offset,Math.Max(1,ClientSize.Width),bannerHeight);
+            log.SetBounds(log.Margin.Left,bannerHeight-offset+log.Margin.Top,
+                Math.Max(1,ClientSize.Width-log.Margin.Horizontal),textHeight);
+            if(log.IsHandleCreated)log.SetViewPosition(0,0);
+        }finally{ResumeLayout(false);}
+    }
+    public void Reflow(bool forceMeasure){
+        if(banner==null||log==null||reflowing||IsDisposed||ClientSize.Width<=0||!IsHandleCreated)return;
+        int width=ClientSize.Width;
+        int dpi;using(Graphics g=CreateGraphics())dpi=(int)Math.Round(g.DpiX);
+        int height=ClientSize.Height;
+        int nextBanner=RdcOwnerWordmark.NaturalRowHeight(width,dpi);
+        bool collapse=previousViewportHeight>bannerHeight&&height<=nextBanner;
+        reflowing=true;
+        try{
+            bannerHeight=nextBanner;
+            if(forceMeasure||width!=measuredWidth||dpi!=measuredDpi){
+                measuredWidth=width;measuredDpi=dpi;
+                int textWidth=Math.Max(1,width-log.Margin.Horizontal);
+                // Use actual wrapped RichEdit layout (including emoji and
+                // explicit paragraph spacing), not an estimated row count.
+                log.SetBounds(log.Margin.Left,bannerHeight,textWidth,30000);
+                log.SetViewPosition(0,0);
+                int tail=log.TextLength;
+                if(tail==0)textHeight=0;
+                else{
+                    Point last=log.GetPositionFromCharIndex(tail);
+                    if(last.Y<0)last=log.GetPositionFromCharIndex(tail-1);
+                    textHeight=Math.Max(log.Font.Height+2,
+                        Math.Min(30000,Math.Max(0,last.Y)+log.Font.Height*2+2));
+                }
+            }
+            contentHeight=bannerHeight+(textHeight==0?0:log.Margin.Vertical+textHeight);
+            previousViewportHeight=height;
+            if(collapse)offset=0;
+            offset=Math.Max(0,Math.Min(MaximumOffset,offset));
+        }finally{reflowing=false;}
+        PositionChildren();
+        if(ScrollChanged!=null)ScrollChanged(this,EventArgs.Empty);
+    }
+}
+
 public sealed class RdcOwnerWordmark : Control {
     private readonly Bitmap[] images;
     // RDC_WORDMARK_RESOURCES_BEGIN
@@ -1524,24 +1626,25 @@ public sealed class RdcOwnerWordmark : Control {
     private static int Px(float dpi,int value){
         return Math.Max(1,(int)Math.Round(value*dpi/96.0));
     }
+    public static int NaturalRowHeight(int width,float dpi) {
+        int w=Math.Max(1,Math.Min(width-2*Px(dpi,8),Px(dpi,997)));
+        return (int)Math.Ceiling(w*74.0/997.0)+Px(dpi,8);
+    }
     public static int PreferredRowHeight(int width,int available,float dpi) {
-        int inset=Px(dpi,17)+Px(dpi,3);
-        int w=Math.Max(1,Math.Min(width-inset,Px(dpi,997)));
-        int natural=(int)Math.Ceiling(w*74.0/997.0)+Px(dpi,8);
-        return Math.Max(0,Math.Min(natural,available-Px(dpi,16)));
+        return Math.Max(0,Math.Min(NaturalRowHeight(width,dpi),available));
     }
     public int RowHeight(int width,int available){
         using(Graphics g=CreateGraphics())return PreferredRowHeight(width,available,g.DpiX);
     }
     public static Rectangle ImageBounds(int width,int height,float dpi){
-        int x=Px(dpi,17),y=Px(dpi,5);
-        int w=Math.Min(width-x-Px(dpi,3),Px(dpi,997));
+        int x=Px(dpi,8),y=Px(dpi,5);
+        int w=Math.Min(width-2*x,Px(dpi,997));
         int h=height-y-Px(dpi,3);
         if(w<=0||h<=0)return Rectangle.Empty;
         w=Math.Min(w,(int)Math.Floor(h*997.0/74.0));
         h=Math.Max(1,(int)Math.Round(w*74.0/997.0));
         if(w<=0)return Rectangle.Empty;
-        return new Rectangle(x,y,w,h);
+        return new Rectangle((width-w)/2,y,w,h);
     }
     protected override void OnPaint(PaintEventArgs e){
         base.OnPaint(e);
@@ -2229,6 +2332,7 @@ public class RdcLogBox : RichTextBox {
     // The read-only Journal is an interactive document, unlike the two
     // telemetry panes: native selection/copy and wheel navigation are allowed.
     public bool JournalNativeInteraction { get; set; }
+    public Action<int> ExternalVerticalWheel { get; set; }
     private int journalWheelRemainder;
     private const int EM_LINESCROLL = 0x00B6;
     private bool preserveViewAfterFocusClick;
@@ -2527,6 +2631,10 @@ public class RdcLogBox : RichTextBox {
     }
 
     protected override void WndProc(ref Message m) {
+        if(ExternalVerticalWheel!=null&&m.Msg==WM_MOUSEWHEEL){
+            ExternalVerticalWheel(unchecked((short)((m.WParam.ToInt64() >> 16) & 0xFFFF)));
+            m.Result=IntPtr.Zero;return;
+        }
         // RichEdit with native scrollbars hidden is controlled by our overlay
         // tracks. Give the Journal its own deterministic physical wheel route.
         // Do not alter the main telemetry-pane focus and wheel contract.
@@ -2843,6 +2951,10 @@ public class RdcOverlayScrollBar : Control {
         new System.Diagnostics.Stopwatch();
     public Control Target { get; set; }
     public bool Vertical { get; set; }
+    // Optional pixel metrics for the combined Owner header viewport.
+    public Func<int[]> VerticalMetricsProvider {get;set;}
+    public Action<int> VerticalPositionSetter {get;set;}
+    public Func<int> VerticalStepProvider {get;set;}
     // Opt-in for the compact lower Owner activity pane ONLY. The orange
     // capsule fills the entire track, irrespective of live text line count.
     // Keep the control/bitmap for the divider animation; it is not a scrollbar.
@@ -2903,6 +3015,10 @@ public class RdcOverlayScrollBar : Control {
         visibleLines = 1;
         firstVisible = 0;
         maxFirst = 0;
+        if(VerticalMetricsProvider!=null){
+            int[] m=VerticalMetricsProvider();
+            totalLines=m[0];visibleLines=m[1];firstVisible=m[2];maxFirst=m[3];return;
+        }
         if (Target == null || !Target.IsHandleCreated) return;
 
         totalLines = Math.Max(1,(int)SendMessage(Target.Handle,EM_GETLINECOUNT,IntPtr.Zero,IntPtr.Zero));
@@ -2948,7 +3064,7 @@ public class RdcOverlayScrollBar : Control {
             ReadVerticalMetrics(out totalLines,out visibleLines,out firstVisible,out maxFirst);
             thumbLen = maxFirst <= 0
                 ? trackLen
-                : Math.Max(26,(int)Math.Round(trackLen * Math.Min(1.0,(double)visibleLines/totalLines)));
+                : Math.Max(VerticalMetricsProvider==null?26:8,(int)Math.Round(trackLen * Math.Min(1.0,(double)visibleLines/totalLines)));
             thumbLen = Math.Min(trackLen,thumbLen);
             travel = Math.Max(0,trackLen-thumbLen);
             offset = (travel == 0 || maxFirst <= 0)
@@ -3042,6 +3158,7 @@ public class RdcOverlayScrollBar : Control {
         int totalLines,visibleLines,firstVisible,maxFirst;
         ReadVerticalMetrics(out totalLines,out visibleLines,out firstVisible,out maxFirst);
         targetLine = Math.Max(0,Math.Min(maxFirst,targetLine));
+        if(VerticalPositionSetter!=null){VerticalPositionSetter(targetLine);Invalidate();return;}
         int delta = targetLine-firstVisible;
         if (delta != 0)
             SendMessage(Target.Handle,EM_LINESCROLL,IntPtr.Zero,new IntPtr(delta));
@@ -3055,12 +3172,13 @@ public class RdcOverlayScrollBar : Control {
             int totalLines,visibleLines,firstVisible,maxFirst;
             ReadVerticalMetrics(out totalLines,out visibleLines,out firstVisible,out maxFirst);
 
+            int verticalStep=VerticalStepProvider==null?1:Math.Max(1,VerticalStepProvider());
             if (code == SB_THUMBTRACK || code == SB_THUMBPOSITION)
                 SetVerticalLinePosition(pos);
             else if (code == SB_LINEUP)
-                SetVerticalLinePosition(firstVisible-1);
+                SetVerticalLinePosition(firstVisible-verticalStep);
             else if (code == SB_LINEDOWN)
-                SetVerticalLinePosition(firstVisible+1);
+                SetVerticalLinePosition(firstVisible+verticalStep);
             else if (code == SB_PAGEUP)
                 SetVerticalLinePosition(firstVisible-visibleLines);
             else if (code == SB_PAGEDOWN)
@@ -5000,31 +5118,22 @@ $headerLog.Add_KeyUp({
     try { [void]$headerLog.BeginInvoke([Windows.Forms.MethodInvoker]{ $headerVScroll.Invalidate() }) } catch {}
 })
 
-# The Owner banner is a fixed graphic in the header, independent of RichEdit.
-# Keep the existing scroll target and the divider layout for ordinary text.
+# Owner bitmap and RichEdit scroll together under the full-height track.
 $ownerWordmark=$null
+$ownerHeaderViewport=$null
 if($OwnerGui){
     $ownerWordmark=New-Object RdcOwnerWordmark
     $ownerWordmark.BackColor=$headerTextHost.BackColor
-    $ownerWordmark.Dock='Fill'
-    $ownerWordmark.Margin=[Windows.Forms.Padding]::new(0)
-    $headerTextHost.RowCount=2
-    $headerTextHost.RowStyles.Clear()
-    [void]$headerTextHost.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute,0))
-    [void]$headerTextHost.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent,100))
-    $headerTextHost.Controls.Add($ownerWordmark,0,0)
-    $headerTextHost.Controls.Add($headerLog,0,1)
-    $headerTextHost.Controls.Add($headerVScroll,1,1)
-    $headerTextHost.Add_Layout({
-        if($ownerWordmark -and -not $ownerWordmark.IsDisposed){
-            $width=[Math]::Max(1,$headerTextHost.GetColumnWidths()[0])
-            $height=$ownerWordmark.RowHeight($width,$headerTextHost.ClientSize.Height)
-            if([Math]::Abs($headerTextHost.RowStyles[0].Height-$height) -gt 0.1){
-                $headerTextHost.RowStyles[0].Height=$height
-            }
-            $ownerWordmark.Invalidate()
-        }
-    })
+    $ownerHeaderViewport=New-Object RdcOwnerHeaderViewport($ownerWordmark,$headerLog)
+    $ownerHeaderViewport.BackColor=$headerTextHost.BackColor
+    $ownerHeaderViewport.Dock='Fill'
+    $ownerHeaderViewport.Margin=[Windows.Forms.Padding]::new(0)
+    $headerTextHost.Controls.Add($ownerHeaderViewport,0,0)
+    $headerTextHost.Controls.Add($headerVScroll,1,0)
+    $headerVScroll.VerticalMetricsProvider=[Func[int[]]]{return ,$ownerHeaderViewport.ScrollMetrics()}
+    $headerVScroll.VerticalPositionSetter=[Action[int]]{param($value)$ownerHeaderViewport.ScrollTo($value)}
+    $headerVScroll.VerticalStepProvider=[Func[int]]{return $ownerHeaderViewport.LineStep}
+    $ownerHeaderViewport.Add_ScrollChanged({$headerVScroll.Invalidate()})
 }else{
     $headerTextHost.Controls.Add($headerLog,0,0)
     $headerTextHost.Controls.Add($headerVScroll,1,0)
@@ -5135,6 +5244,19 @@ function Stop-LogResizeInteraction {
     $logHost.Invalidate($true)
     try { $log.RefreshViewport() } catch {}
 }
+# The old six-line estimate is only an initial pre-layout floor.
+# Once the real viewport exists, use the image's actual height plus rail.
+function Sync-Rc1HeaderMinimum {
+    if(!$OwnerGui -or !$ownerHeaderViewport -or !$ownerHeaderViewport.IsHandleCreated -or $ownerHeaderViewport.BannerHeight -le 0){return}
+    $next=[int]($ownerHeaderViewport.BannerHeight+$headerHost.RowStyles[1].Height)
+    if($script:headerPaneMinHeightPreferred -eq $next){return}
+    $script:headerPaneMinHeightPreferred=$next
+    $frame=[Math]::Max(0,$form.Height-$form.ClientSize.Height)
+    $minimum=[int]($top.Height+$bottom.Height+$next+$activityPaneMinHeightPreferred+$frame)
+    if($form.MinimumSize.Height -ne $minimum){
+        $form.MinimumSize=[Drawing.Size]::new($form.MinimumSize.Width,$minimum)
+    }
+}
 function Get-EffectivePaneMinHeight {
     $available=[Math]::Max(1,$contentHost.ClientSize.Height)
     # Keep the six-line Owner logo (or legacy 125px header) visible.
@@ -5183,6 +5305,7 @@ $logHost.Add_Resize({
     if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
 })
 $contentHost.Add_Resize({
+    Sync-Rc1HeaderMinimum
     Set-ActivityPaneHeight $contentHost.RowStyles[1].Height
 })
 $scrollCorner.Add_MouseDown({
@@ -5322,6 +5445,7 @@ $form.Controls.Add($bottom)
 $form.Controls.Add($top)
 $form.Controls.Add($dividerDragPreview)
 $form.PerformLayout()
+if($ownerHeaderViewport){[void]$ownerHeaderViewport.Handle;$ownerHeaderViewport.Reflow($true);Sync-Rc1HeaderMinimum}
 Set-ActivityPaneHeight (Get-EffectivePaneMinHeight)
 $dividerDragPreview.BringToFront()
 
@@ -6032,7 +6156,7 @@ function Render-CompactLog {
     $headerLayoutKey=if($OwnerGui -and $headerDisplay){$headerLog.BannerLayoutKey}else{''}
     if ($script:lastRenderedHeader -cne $headerDisplay -or $script:lastHeaderLayoutKey -cne $headerLayoutKey) {
         $headerView = $null
-        try { $headerView = $headerLog.GetViewPosition() } catch {}
+        try { $headerView = if($ownerHeaderViewport){[Drawing.Point]::new(0,$ownerHeaderViewport.ScrollOffset)}else{$headerLog.GetViewPosition()} } catch {}
         $headerSelectionStart = $headerLog.SelectionStart
         $headerSelectionLength = $headerLog.SelectionLength
         $headerHadSelection = ($headerLog.Focused -and $headerSelectionLength -gt 0)
@@ -6082,14 +6206,14 @@ function Render-CompactLog {
                 $headerLog.SelectionColor = $headerLog.ForeColor
             }
 
-            try { $headerLog.SetViewPosition($headerX,$headerY) } catch {}
+            try { if(!$ownerHeaderViewport){$headerLog.SetViewPosition($headerX,$headerY)} } catch {}
             $script:lastRenderedHeader = $headerDisplay
             $script:lastHeaderLayoutKey = $headerLayoutKey
         } finally {
             $headerLog.EndUpdate()
             try { $headerLog.SetSelectionHidden($false) } catch {}
         }
-        try { $headerLog.SetViewPosition($headerX,$headerY) } catch {}
+        try { if($ownerHeaderViewport){$ownerHeaderViewport.Reflow($true);$ownerHeaderViewport.ScrollTo($headerY)}else{$headerLog.SetViewPosition($headerX,$headerY)} } catch {}
         $headerVScroll.Invalidate()
     }
 
@@ -8263,7 +8387,7 @@ if (-not $SelfTest -and -not $Preview) {
 
 $form.Add_Activated({
     try {
-        $headerLog.SetViewPosition(0,0)
+        if($ownerHeaderViewport){$ownerHeaderViewport.ScrollTo(0)}else{$headerLog.SetViewPosition(0,0)}
         $headerVScroll.Invalidate()
     } catch {}
 })
@@ -8273,6 +8397,7 @@ $form.Add_ResizeBegin({
 })
 $form.Add_ResizeEnd({
     $script:uiInteracting = $false
+    if($ownerHeaderViewport){$ownerHeaderViewport.Reflow($true);Sync-Rc1HeaderMinimum;Set-ActivityPaneHeight $contentHost.RowStyles[1].Height}
     if($OwnerGui -and $script:startupBlock -and $script:lastHeaderLayoutKey -cne $headerLog.BannerLayoutKey){Render-CompactLog}
     Layout-LogScrollbars
     if($script:ownerCompactJournal){Refresh-Rc1JournalOnResize}
