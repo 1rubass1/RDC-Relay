@@ -58,7 +58,7 @@ Desktop Commander Remote mode. It is not affiliated with the upstream project.
 
 ## Install
 
-Download the installer from [GitHub Releases](https://github.com/1rubass1/RDC-Relay/releases).
+Download the installer from [GitHub Releases](https://github.com/Rubo-Facility/RDC-Relay/releases).
 RDC Relay 1.6.0 uses an independent background Host and graphical interface.
 Setup installs per user and offers Node.js 24 LTS if a supported Node.js,
 npm and npx installation is missing. The Windows dependency installer may

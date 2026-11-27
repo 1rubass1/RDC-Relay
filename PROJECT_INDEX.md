@@ -1,8 +1,8 @@
 # RDC Relay — project index (development)
 
-**Repository:** https://github.com/1rubass1/RDC-Relay
+**Repository:** https://github.com/Rubo-Facility/RDC-Relay
 
-**Current release:** [1.6.0](https://github.com/1rubass1/RDC-Relay/releases/tag/v1.6.0); [1.5.18](https://github.com/1rubass1/RDC-Relay/releases/tag/v1.5.18) remains the legacy anchor.
+**Current release:** [1.6.0](https://github.com/Rubo-Facility/RDC-Relay/releases/tag/v1.6.0); [1.5.18](https://github.com/Rubo-Facility/RDC-Relay/releases/tag/v1.5.18) remains the legacy anchor.
 
 **Methodology:** external read-only [AI DevBook](https://github.com/1rubass1/AI-DevBook), dynamic main. See [AGENTS.md](AGENTS.md) for the current reading checkpoint and task boundaries.
 

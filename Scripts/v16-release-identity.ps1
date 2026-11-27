@@ -126,7 +126,7 @@ function Get-RdcAvailableVersionFromManifest([string]$Raw) {
             Version=[string]$manifest.version
             Digest=([string]$manifest.sha256).ToUpperInvariant()
             Bytes=[long]$manifest.bytes
-            Uri=[Uri]('https://github.com/1rubass1/RDC-Relay/releases/download/'+$manifest.tag+'/'+$manifest.asset)
+            Uri=[Uri]('https://github.com/Rubo-Facility/RDC-Relay/releases/download/'+$manifest.tag+'/'+$manifest.asset)
         }
         return $script:rdcFullHostOffer.Version
     }catch{return $null}

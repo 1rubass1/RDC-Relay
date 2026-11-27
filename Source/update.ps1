@@ -1,7 +1,7 @@
 ﻿param(
     [string]$InstallRoot,
     [string]$CurrentVersion,
-    [string]$Repository = '1rubass1/RDC-Relay',
+    [string]$Repository = 'Rubo-Facility/RDC-Relay',
     [string]$Branch = 'stable',
     [switch]$Force,
     [switch]$Uninstall,

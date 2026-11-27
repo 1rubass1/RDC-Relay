@@ -394,7 +394,7 @@ internal static class SetupProgram
             key.SetValue("Publisher", "RUBASS", RegistryValueKind.String);
             key.SetValue("InstallLocation", installRoot, RegistryValueKind.String);
             key.SetValue("DisplayIcon", iconPath, RegistryValueKind.String);
-            key.SetValue("URLInfoAbout", "https://github.com/1rubass1/RDC-Relay", RegistryValueKind.String);
+            key.SetValue("URLInfoAbout", "https://github.com/Rubo-Facility/RDC-Relay", RegistryValueKind.String);
             key.SetValue("UninstallString", Quote(powershell) + " " + baseArgs, RegistryValueKind.String);
             key.SetValue("QuietUninstallString", Quote(powershell) + " " + baseArgs + " -Silent", RegistryValueKind.String);
             key.SetValue("NoModify", 1, RegistryValueKind.DWord);
