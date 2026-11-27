@@ -8,6 +8,9 @@ function Set-RdcV16PublicIdentity {
   if([regex]::Matches($s,[regex]::Escape($old)).Count -ne 1){throw ('PUBLIC_IDENTITY_DRIFT '+[IO.Path]::GetFileName($path)+' '+$old)}
   [IO.File]::WriteAllText($path,$s.Replace($old,$new),(New-Object Text.UTF8Encoding(($raw[0] -eq 239 -and $raw[1] -eq 187 -and $raw[2] -eq 191))))
  }
+ # Public GUI is Host-only, regardless of the presence of the old marker.
+ $gui=Join-Path $Payload 'remote-window.ps1'
+ Edit $gui '# Branch-only RC1 source marker blocks accidental legacy GUI execution against' ('if(-not $OwnerGui){throw ''RDC_PUBLIC_HOST_GUI_REQUIRED''}'+[Environment]::NewLine+'# Branch-only RC1 source marker blocks accidental legacy GUI execution against')
  $startup=Join-Path $Payload 'RdcOwnerStartup.cs'
  # Accept qualified installed predecessors only for migration. Public
  # startup dispatch must resolve the exact active immutable package.
@@ -18,6 +21,7 @@ function Set-RdcV16PublicIdentity {
  Edit $launcher 'Convert.ToBoolean(manifest["publishable"]))' '!Convert.ToBoolean(manifest["publishable"]))'
  Edit $launcher 'Convert.ToBoolean(values["publishable"]) ||' '!Convert.ToBoolean(values["publishable"]) ||'
  $setup=Join-Path $InstallerStage 'Rc1CandidateSetup.cs'
+ Edit $setup 'bool privateSideBySide=args.Length==1 && args[0]=="--owner-approved-side-by-side";' 'bool privateSideBySide=false; // Public setup has no private staging mode.'
  # Installed predecessor can be qualification or public; a package used
  # as this Setup's own embedded input MUST be public and version exact.
  Edit $setup '(string)manifest["kind"]!="FULL_HOST_GUI_V16_QUALIFICATION"||Convert.ToBoolean(manifest["publishable"])' '((string)manifest["kind"]!="FULL_HOST_GUI_V16_PUBLIC"&&(string)manifest["kind"]!="FULL_HOST_GUI_V16_QUALIFICATION")||Convert.ToBoolean(manifest["publishable"])!=((string)manifest["kind"]=="FULL_HOST_GUI_V16_PUBLIC")'
