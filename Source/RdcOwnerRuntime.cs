@@ -838,45 +838,138 @@ public static class RdcOwnerTrayAutoUpdatePreference {
 }
  // Display-only read of the same short-lived official who_am_i cache as Owner GUI.
  // No OAuth, browser or Remote IPC calls. Account changes and invalid input fail closed.
+ // Quota account evidence is independent of transport readiness. Only the exact
+ // idle-lease transition with unchanged identity is permitted for existing grants.
+ public static class RdcOwnerQuotaIdentity {
+  public static string Select(bool owned,bool running,bool ending,bool switching,
+   string state,string detail,string account,string idleAccount,bool freshOnly){
+   if(!owned||!running||ending||switching)return "";
+   if(state!="Ready"&&(freshOnly||state!="Reconnecting"||
+      detail!="Remote channel unconfirmed; awaiting new connectivity evidence"||
+      !String.Equals(account,idleAccount,StringComparison.OrdinalIgnoreCase)))return "";
+   return System.Text.RegularExpressions.Regex.IsMatch(account??"",
+    @"\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z")?account:"";
+  }
+ }
+ // Host-only monotonic scheduler. An open-window hint can accelerate a
+ // normal poll, never an authorization or failure backoff.
+ public sealed class RdcOwnerQuotaRefreshPolicy {
+  public const long MinimumGapSeconds=300,NormalSeconds=1800,FailureSeconds=900;
+  string account="",attemptAccount="";
+  long nextAllowed=0,nextDue=0,lastOpen=-1;
+  bool enabledBefore=false,openPending=false,attemptOutstanding=false;
+  readonly HashSet<string> consentTried=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+  public string Decide(long now,bool enabled,string eligible,string ready,long openGeneration,
+    string cacheState,bool recent,bool vaultPresent,bool busy){
+   if(!enabled){
+    if(enabledBefore)consentTried.Clear();
+    enabledBefore=false;account="";openPending=false;nextDue=now;
+    lastOpen=openGeneration;return "";
+   }
+   if(!enabledBefore){enabledBefore=true;nextDue=now;}
+   if(!String.Equals(account,eligible,StringComparison.OrdinalIgnoreCase)){
+    account=eligible??"";nextDue=recent?now+NormalSeconds:now;openPending=false;
+   }
+   if(openGeneration!=lastOpen){lastOpen=openGeneration;openPending=true;}
+   if(String.IsNullOrEmpty(account)||busy||attemptOutstanding)return "";
+   if(recent)openPending=false;
+   if(now<nextAllowed||(now<nextDue&&!openPending))return "";
+   if(cacheState!="match"&&cacheState!="missing"&&cacheState!="other")return "";
+   bool canAuthorize=now>=nextDue&&String.Equals(account,ready,StringComparison.OrdinalIgnoreCase)&&
+    !consentTried.Contains(account)&&consentTried.Count<128;
+   string mode="";
+   if(!vaultPresent||cacheState=="other"){
+    if(canAuthorize){consentTried.Add(account);mode="-Authorize";}
+   }else mode="-Poll";
+   if(mode=="")return "";
+   nextAllowed=now+MinimumGapSeconds;nextDue=now+NormalSeconds;openPending=false;attemptOutstanding=true;attemptAccount=account;
+   return mode;
+  }
+  public void Complete(long now,bool success){
+   if(!attemptOutstanding)return;
+   attemptOutstanding=false;
+   if(String.Equals(account,attemptAccount,StringComparison.OrdinalIgnoreCase))nextDue=now+(success?NormalSeconds:FailureSeconds);
+   if(!success){nextAllowed=Math.Max(nextAllowed,now+FailureSeconds);openPending=false;}
+  }
+ }
+ public sealed class RdcOwnerQuotaCacheObservation {
+  public readonly string State;
+  public readonly int? Percent;
+  public readonly DateTime ObservedUtc;
+  internal RdcOwnerQuotaCacheObservation(string state,int? percent,DateTime observed){
+   State=state;Percent=percent;ObservedUtc=observed;
+  }
+  public bool Fresh(DateTime nowUtc,int minutes){
+   double age=(nowUtc.ToUniversalTime()-ObservedUtc).TotalMinutes;
+   return State=="match"&&age>=-2&&age<minutes;
+  }
+ }
  public static class RdcOwnerTrayQuotaSnapshot {
   public static string CachePath {
    get{return Path.Combine(Environment.GetFolderPath(
     Environment.SpecialFolder.LocalApplicationData),"RDCRelayOwnerPilot","remote-usage-cache.json");}
   }
-  public static int? Read(string path,string account,DateTime nowUtc){
-   if(String.IsNullOrWhiteSpace(path)||String.IsNullOrWhiteSpace(account))return null;
+  static RdcOwnerQuotaCacheObservation Empty(string state){
+   return new RdcOwnerQuotaCacheObservation(state,null,DateTime.MinValue);
+  }
+  public static string VaultState(string path){
    try{
-    var f=new FileInfo(path);
-    if(!f.Exists||f.Length<40||f.Length>512||
-       (f.Attributes&FileAttributes.ReparsePoint)!=0)return null;
+    string folder=Path.GetDirectoryName(Path.GetFullPath(path));
+    if((File.GetAttributes(folder)&FileAttributes.ReparsePoint)!=0)return "unknown";
+    var attrs=File.GetAttributes(path);
+    if((attrs&(FileAttributes.Directory|FileAttributes.ReparsePoint))!=0)return "unknown";
+    return "present"; // do not read or decrypt credentials in Host
+   }catch(FileNotFoundException){return "missing";}
+    catch(DirectoryNotFoundException){return "missing";}
+    catch{return "unknown";}
+  }
+  public static RdcOwnerQuotaCacheObservation Inspect(string path,string account,DateTime nowUtc){
+   if(String.IsNullOrWhiteSpace(path)||String.IsNullOrWhiteSpace(account))return Empty("unknown");
+   try{
     string folder=Path.GetDirectoryName(Path.GetFullPath(path));
     if(String.IsNullOrEmpty(folder)||
-       (File.GetAttributes(folder)&FileAttributes.ReparsePoint)!=0)return null;
-    byte[] bytes=File.ReadAllBytes(path);
-    if(bytes.Length<40||bytes.Length>512)return null; // file can change after FileInfo
+       (File.GetAttributes(folder)&FileAttributes.ReparsePoint)!=0)return Empty("unknown");
+    var attrs=File.GetAttributes(path);
+    if((attrs&(FileAttributes.Directory|FileAttributes.ReparsePoint))!=0)return Empty("unknown");
+    byte[] bytes;
+    using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read|FileShare.Delete)){
+     if(stream.Length<40||stream.Length>512)return Empty("unknown");
+     bytes=new byte[(int)stream.Length];
+     int offset=0;
+     while(offset<bytes.Length){int n=stream.Read(bytes,offset,bytes.Length-offset);if(n==0)return Empty("unknown");offset+=n;}
+     if(stream.ReadByte()!=-1)return Empty("unknown");
+    }
     string json=new UTF8Encoding(false,true).GetString(bytes);
-    var values=new System.Web.Script.Serialization.JavaScriptSerializer().
+    var values=new System.Web.Script.Serialization.JavaScriptSerializer{MaxJsonLength=512,RecursionLimit=8}.
       Deserialize<Dictionary<string,object>>(json);
     if(values==null||!values.ContainsKey("source")||
        !String.Equals(Convert.ToString(values["source"]),"official-remote-who-am-i",StringComparison.Ordinal)||
        !values.ContainsKey("accountEmail")||
-       !String.Equals(Convert.ToString(values["accountEmail"]),account.Trim(),StringComparison.OrdinalIgnoreCase)||
-       !values.ContainsKey("remainingPercent")||!values.ContainsKey("observedAtUtc"))return null;
+       !values.ContainsKey("remainingPercent")||!values.ContainsKey("observedAtUtc"))return Empty("unknown");
+    string email=values["accountEmail"] as string;
+    if(!System.Text.RegularExpressions.Regex.IsMatch(email??"",
+       @"\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z"))return Empty("unknown");
     int percent;
     if(!Int32.TryParse(Convert.ToString(values["remainingPercent"],
        System.Globalization.CultureInfo.InvariantCulture),
        System.Globalization.NumberStyles.None,
        System.Globalization.CultureInfo.InvariantCulture,out percent)||
-       percent<0||percent>100)return null;
+       percent<0||percent>100)return Empty("unknown");
     DateTime observed;
     if(!DateTime.TryParseExact(Convert.ToString(values["observedAtUtc"]),
        "yyyy-MM-ddTHH:mm:ssZ",System.Globalization.CultureInfo.InvariantCulture,
        System.Globalization.DateTimeStyles.AssumeUniversal|
-       System.Globalization.DateTimeStyles.AdjustToUniversal,out observed))return null;
-    double age=(nowUtc.ToUniversalTime()-observed).TotalMinutes;
-    if(age < -2 || age >= 60)return null;
-    return percent;
-   }catch{return null;}
+       System.Globalization.DateTimeStyles.AdjustToUniversal,out observed)||
+       (nowUtc.ToUniversalTime()-observed).TotalMinutes < -2)return Empty("unknown");
+    if(!String.Equals(email,account.Trim(),StringComparison.OrdinalIgnoreCase))return Empty("other");
+    return new RdcOwnerQuotaCacheObservation("match",percent,observed);
+   }catch(FileNotFoundException){return Empty("missing");}
+    catch(DirectoryNotFoundException){return Empty("missing");}
+    catch{return Empty("unknown");}
+  }
+  public static int? Read(string path,string account,DateTime nowUtc){
+   var observation=Inspect(path,account,nowUtc);
+   return observation.Fresh(nowUtc,60)?observation.Percent:null;
   }
  }
 // Hidden top-level (not message-only) Host window: Windows broadcasts
@@ -1133,19 +1226,17 @@ public sealed class RdcOwnerRuntime : IDisposable {
  public string Generation { get {return generation;} }
  public string Status { get {lock(gate){return guiState;}} }
  public string LastGuiError {get{lock(gate){return lastGuiError;}}}
- // Only a ready Remote launched into THIS Host's private Job can select
- // the quota OAuth account. External/observed/fake identity never triggers login.
- public string ActiveManagedAccount {
-  get {
-   lock(gate){
-    if(!managedMode||observedMode||trialRoot!=null||managedState!="Ready"||
-       managedProcess==null||!managedProcess.Running)return "";
-    return System.Text.RegularExpressions.Regex.IsMatch(managedAccount??"",
-      @"\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z")?
-      managedAccount:"";
-   }
-  }
+ // Strict Ready is retained for initial OAuth consent.
+ string managedQuotaIdleAccount="";
+ string SelectQuotaAccount(bool freshOnly){
+  if(!managedMode||observedMode||trialRoot!=null||disposed||exitRequested||WindowsEnding||
+     accountLogoutProcess!=null||accountSwitchFaultLatched||managedProcess==null)return "";
+  return RdcOwnerQuotaIdentity.Select(true,managedProcess.Running,false,false,
+   managedState,managedDetail,managedAccount,managedQuotaIdleAccount,freshOnly);
  }
+ public string ActiveManagedAccount {get{lock(gate){return SelectQuotaAccount(true);}}}
+ public string QuotaManagedAccount {get{lock(gate){return SelectQuotaAccount(false);}}}
+ public int QuotaGuiOpenGeneration {get{lock(gate){return guiStarts;}}}
  public RdcOwnerRuntime(string root,bool fakeOnly):this(root,fakeOnly,null,false,0,false){}
  public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot):this(root,fakeOnly,isolatedTrialRoot,false,30,false){}
  public RdcOwnerRuntime(string root,bool fakeOnly,string isolatedTrialRoot,bool failOnce,int exitSeconds,bool reopenOnce):
@@ -1325,7 +1416,7 @@ public sealed class RdcOwnerRuntime : IDisposable {
      // Reuse the official, account-bound cache; the Host's existing 30m who_am_i
      // poll is the only network source. Read locally at most once every 15s.
      // Identity/opt-out loss immediately removes a formerly shown percentage.
-     string quotaAccount=ActiveManagedAccount;
+     string quotaAccount=QuotaManagedAccount;
      if(!RdcOwnerTrayQuotaPreference.Enabled(RdcOwnerTrayQuotaPreference.CurrentPath))
       quotaAccount="";
      if(!String.Equals(quotaAccount,lastTrayQuotaAccount,StringComparison.OrdinalIgnoreCase)){
@@ -1992,7 +2083,7 @@ void RefreshTrayMenu(){
    managedLogPath="";managedLogOffset=0;
    accountSwitchFaultLatched=false;
    toolJournal.Reset();
-   managedLogStream.Reset();managedAccount="";managedDeviceName="";managedDeviceId="";
+   managedLogStream.Reset();managedAccount="";managedQuotaIdleAccount="";managedDeviceName="";managedDeviceId="";
    managedBornUtcTicks=child.BornUtcTicks;managedBannerArt.Clear();managedBannerScanned=0;
    managedStartupHeader.Clear();managedStartupComplete=false;managedStartupScanned=0;
    managedState="Connecting";managedDetail="Starting pinned Desktop Commander Remote";
@@ -2319,7 +2410,10 @@ void RefreshTrayMenu(){
   string field,value;
   if(!TrySafeIdentityLine(line,out field,out value))return;
   bool changed=false;
-  if(field=="user" && managedAccount!=value){managedAccount=value;changed=true;}
+  if(field=="user" && managedAccount!=value){
+   if(!String.Equals(managedAccount,value,StringComparison.OrdinalIgnoreCase))managedQuotaIdleAccount="";
+   managedAccount=value;changed=true;
+  }
   else if(field=="deviceName" && managedDeviceName!=value){managedDeviceName=value;changed=true;}
   else if(field=="deviceId" && managedDeviceId!=value){managedDeviceId=value;changed=true;}
   if(changed)remoteSupervisor.NoteHostEvent("Owned Remote identity metadata received: "+field);
@@ -2417,9 +2511,11 @@ void RefreshTrayMenu(){
  }
  void ExpireManagedReadyEvidence(){
   if(managedState=="Ready" &&
-     ManagedReadyEvidenceExpired(DateTime.UtcNow,managedReadyEvidenceUtc))
+     ManagedReadyEvidenceExpired(DateTime.UtcNow,managedReadyEvidenceUtc)){
+   managedQuotaIdleAccount=SelectQuotaAccount(true);
    MarkManagedReadinessUnconfirmed(
     "Remote channel unconfirmed; awaiting new connectivity evidence",false);
+  }
  }
  void RefreshManagedRemote(){
   if(accountLogoutProcess!=null||accountSwitchFaultLatched)return;
@@ -2607,6 +2703,7 @@ void RefreshTrayMenu(){
    {"remoteMode",observedMode?"OBSERVED_READ_ONLY_RC1":managedMode?"MANAGED_OWNER_RC1":"FAKE_ONLY_RC1"},{"remoteId",remoteSupervisor.SessionId},
    {"remote",observed},{"remoteCompletionKind",managedMode?(managedCompletionKind??"unknown"):"unknown"},
    {"remoteAttemptDiagnostics",managedMode?(managedAttemptSummary??new string[0]):new string[0]},
+   {"quotaAccountEligible",!String.IsNullOrEmpty(SelectQuotaAccount(false))},
    {"remoteConnected",(managedMode||observedMode) && (string)observed["state"]=="Ready"},
    {"account",observedMode?"Existing Remote / read-only":managedMode?"RC1 Host-owned Remote":"DEMO: disabled"},
    {"remoteBornUtcTicks",managedMode?managedBornUtcTicks:0L},
