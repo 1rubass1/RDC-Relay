@@ -3037,15 +3037,20 @@ public class RdcOverlayScrollBar : Control {
     }
 
     private void Geometry(out Rectangle dec, out Rectangle inc, out Rectangle track, out Rectangle thumb) {
-        int arrow = 16;
+        // Reserve room for at least a circular thumb on short tracks.
+        int axis=Math.Max(1,Vertical?Height:Width);
+        int cross=Math.Max(1,Vertical?Width:Height);
+        int thickness=Math.Min(axis,Math.Max(1,cross-4));
+        int arrow=Math.Min(16,Math.Max(0,(axis-thickness-1)/2));
+        int inset=(cross-thickness)/2;
         if (Vertical) {
             dec = new Rectangle(0,0,Width,arrow);
-            inc = new Rectangle(0,Math.Max(0,Height-arrow),Width,arrow);
-            track = new Rectangle(2,arrow,Math.Max(1,Width-4),Math.Max(1,Height-arrow*2));
+            inc = new Rectangle(0,axis-arrow,Width,arrow);
+            track = new Rectangle(inset,arrow,thickness,axis-arrow*2);
         } else {
             dec = new Rectangle(0,0,arrow,Height);
-            inc = new Rectangle(Math.Max(0,Width-arrow),0,arrow,Height);
-            track = new Rectangle(arrow,2,Math.Max(1,Width-arrow*2),Math.Max(1,Height-4));
+            inc = new Rectangle(axis-arrow,0,arrow,Height);
+            track = new Rectangle(arrow,inset,axis-arrow*2,thickness);
         }
 
         // A display-only activity rail never gets shorter at specific text
@@ -3055,6 +3060,7 @@ public class RdcOverlayScrollBar : Control {
             return;
         }
         int trackLen = Vertical ? track.Height : track.Width;
+        int trackThickness = Vertical ? track.Width : track.Height;
         int thumbLen;
         int travel;
         int offset;
@@ -3064,7 +3070,7 @@ public class RdcOverlayScrollBar : Control {
             ReadVerticalMetrics(out totalLines,out visibleLines,out firstVisible,out maxFirst);
             thumbLen = maxFirst <= 0
                 ? trackLen
-                : Math.Max(VerticalMetricsProvider==null?26:8,(int)Math.Round(trackLen * Math.Min(1.0,(double)visibleLines/totalLines)));
+                : Math.Max(Math.Max(trackThickness,VerticalMetricsProvider==null?26:0),(int)Math.Round(trackLen * Math.Min(1.0,(double)visibleLines/totalLines)));
             thumbLen = Math.Min(trackLen,thumbLen);
             travel = Math.Max(0,trackLen-thumbLen);
             offset = (travel == 0 || maxFirst <= 0)
@@ -3076,7 +3082,7 @@ public class RdcOverlayScrollBar : Control {
             long contentWidth = Math.Max((long)viewportWidth,(long)viewportWidth+maxOffset);
             thumbLen = maxOffset <= 0
                 ? trackLen
-                : Math.Max(26,(int)Math.Round(trackLen*Math.Min(1.0,(double)viewportWidth/contentWidth)));
+                : Math.Max(Math.Max(trackThickness,26),(int)Math.Round(trackLen*Math.Min(1.0,(double)viewportWidth/contentWidth)));
             thumbLen = Math.Min(trackLen,thumbLen);
             travel = Math.Max(0,trackLen-thumbLen);
             offset = (travel == 0 || maxOffset <= 0)
@@ -3093,14 +3099,24 @@ public class RdcOverlayScrollBar : Control {
             thumb = new Rectangle(track.X + offset, track.Y, thumbLen, track.Height);
     }
 
-    private GraphicsPath Rounded(Rectangle r, int radius) {
+    private GraphicsPath Rounded(Rectangle r, float radius) {
         GraphicsPath p = new GraphicsPath();
-        int d = radius * 2;
-        if (d <= 0 || r.Width <= d || r.Height <= d) { p.AddRectangle(r); return p; }
-        p.AddArc(r.Left,r.Top,d,d,180,90);
-        p.AddArc(r.Right-d,r.Top,d,d,270,90);
-        p.AddArc(r.Right-d,r.Bottom-d,d,d,0,90);
-        p.AddArc(r.Left,r.Bottom-d,d,d,90,90);
+        float d = Math.Min(radius*2f,Math.Min(r.Width,r.Height));
+        if (d <= 0f) { p.AddRectangle(r); return p; }
+        // A square at the limiting diameter is an ellipse, never a rectangle.
+        if(r.Width==r.Height && d>=r.Width){p.AddEllipse(r);return p;}
+        if(d>=r.Width){
+            p.AddArc(r.Left,r.Top,d,d,180,180);
+            p.AddArc(r.Left,r.Bottom-d,d,d,0,180);
+        }else if(d>=r.Height){
+            p.AddArc(r.Left,r.Top,d,d,90,180);
+            p.AddArc(r.Right-d,r.Top,d,d,270,180);
+        }else{
+            p.AddArc(r.Left,r.Top,d,d,180,90);
+            p.AddArc(r.Right-d,r.Top,d,d,270,90);
+            p.AddArc(r.Right-d,r.Bottom-d,d,d,0,90);
+            p.AddArc(r.Left,r.Bottom-d,d,d,90,90);
+        }
         p.CloseFigure();
         return p;
     }
@@ -3111,7 +3127,7 @@ public class RdcOverlayScrollBar : Control {
         Rectangle dec,inc,track,thumb;
         Geometry(out dec,out inc,out track,out thumb);
 
-        using (GraphicsPath tp = Rounded(track, Math.Min(6, Math.Min(track.Width,track.Height)/2)))
+        using (GraphicsPath tp = Rounded(track, Math.Min(6f, Math.Min(track.Width,track.Height)/2f)))
         using (SolidBrush tb = new SolidBrush(TrackBackground))
             e.Graphics.FillPath(tb,tp);
 
@@ -3123,7 +3139,7 @@ public class RdcOverlayScrollBar : Control {
             : hoverThumb
                 ? Color.FromArgb(207,132,75)
                 : Color.FromArgb(191,118,67);
-        using (GraphicsPath hp = Rounded(thumb, Math.Min(7, Math.Min(thumb.Width,thumb.Height)/2)))
+        using (GraphicsPath hp = Rounded(thumb, Math.Min(thumb.Width,thumb.Height)/2f))
         using (SolidBrush hb = new SolidBrush(thumbColor))
             e.Graphics.FillPath(hb,hp);
 
@@ -3132,11 +3148,12 @@ public class RdcOverlayScrollBar : Control {
         Color arrowColor = DecorativeFullTrack
             ? TrackBackground : Color.FromArgb(112,115,120);
         using (SolidBrush ab = new SolidBrush(arrowColor)) {
-            if (Vertical) {
+            // Compact arrow hit areas must not paint over the thumb.
+            if (Vertical && dec.Height>=11 && Width>=9) {
                 Point[] up = { new Point(Width/2,5), new Point(Width/2-4,10), new Point(Width/2+4,10) };
                 Point[] dn = { new Point(Width/2,Height-5), new Point(Width/2-4,Height-10), new Point(Width/2+4,Height-10) };
                 e.Graphics.FillPolygon(ab,up); e.Graphics.FillPolygon(ab,dn);
-            } else {
+            } else if (!Vertical && dec.Width>=11 && Height>=9) {
                 Point[] lt = { new Point(5,Height/2), new Point(10,Height/2-4), new Point(10,Height/2+4) };
                 Point[] rt = { new Point(Width-5,Height/2), new Point(Width-10,Height/2-4), new Point(Width-10,Height/2+4) };
                 e.Graphics.FillPolygon(ab,lt); e.Graphics.FillPolygon(ab,rt);
