@@ -140,6 +140,25 @@ try{
  Check ((GetPrivate $reader.Runtime 'managedReadyEvidenceUtc') -eq [DateTime]::MinValue) 'local completion still cannot renew transport proof'
  $reader=OwnedCase 'new receipt then fresh connection proof' ("Channel closed"+[char]10+$receipt+[char]10+"Desktop Commander Remote is connected"+[char]10) 'Ready' $now 'Ready' 3
  Check ($reader.Runtime.ActiveManagedAccount -eq 'fixture@example.org') 'only explicit new proof restores fresh authorization eligibility'
+ # SR-01: replay actual upstream presence / dispatchability ordering.
+ $presence=[char]::ConvertFromUtf32(0x1F44B)+' Presence tracked (device aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee)'
+ $rowReady=[char]0x2705+' Device ready (device aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee)'
+ $rowFailed=[char]0x274C+' Channel joined but the device row could not be updated - not ready'
+ $startupReady=[char]0x2705+' Device ready:'
+ $lf=[string][char]10
+ $reader=OwnedCase 'presence before registration result' ($presence+$lf) 'Connecting' ([DateTime]::MinValue) 'Connecting' 0
+ Check ($reader.Runtime.ActiveManagedAccount -eq '' -and $reader.Runtime.QuotaManagedAccount -eq '') 'presence does not authorize fresh or existing quota'
+ $reader=OwnedCase 'presence then failed device row then late presence' ($presence+$lf+'Failed to update device status: fixture'+$lf+$rowFailed+$lf+$presence+$lf) 'Connecting' ([DateTime]::MinValue) 'Fault' 2
+ Check ((GetPrivate $reader.Runtime 'managedReadyEvidenceUtc') -eq [DateTime]::MinValue -and $reader.Runtime.ActiveManagedAccount -eq '') 'failed registration never acquires readiness'
+ $reader=OwnedCase 'row ready could represent offline executor' ($presence+$lf+$rowReady+$lf) 'Connecting' ([DateTime]::MinValue) 'Connecting' 0
+ Check ($reader.Runtime.ActiveManagedAccount -eq '') 'row status alone does not authorize new consent'
+ $reader=OwnedCase 'presence and row ready then real successful startup' ($presence+$lf+$rowReady+$lf+$startupReady+$lf) 'Connecting' ([DateTime]::MinValue) 'Ready' 1
+ Check ($reader.Runtime.ActiveManagedAccount -eq 'fixture@example.org') 'explicit success authorizes fresh quota'
+ $reader=OwnedCase 'presence while ready never renews lease' ($presence+$lf+$rowReady+$lf) 'Ready' $now 'Ready' 0
+ Check ((GetPrivate $reader.Runtime 'managedReadyEvidenceUtc').Ticks -eq $now.Ticks) 'presence and row status cannot extend readiness proof'
+ $reader=OwnedCase 'ready then failed row and late presence' ($startupReady+$lf+'Failed to update device status: fixture'+$lf+$presence+$lf) 'Connecting' ([DateTime]::MinValue) 'Fault' 2
+ Check ($reader.Runtime.QuotaManagedAccount -eq '') 'failed row immediately removes quota eligibility'
+ $null=OwnedCase 'failed row then fresh explicit connection' ($rowFailed+$lf+$presence+$lf+'Desktop Commander Remote is connected'+$lf) 'Ready' $now 'Ready' 2
  # Replay the observed 0.3.4 console framing through actual managed UTF-8 parsing.
  $stamp='[23:27:08] '
  $ready=[char]0x2705+' Device ready:'

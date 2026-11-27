@@ -42,13 +42,17 @@ foreach($line in $faults){
 }
 foreach($line in @(
  'Desktop Commander Remote is connected',
- 'Presence tracked (device fixture online)'
+ 'Device ready:'
 )){
  $argsForParser=[object[]]@($line,'')
  Check ([string]$method.Invoke($null,$argsForParser) -ceq 'Remote connected' -and
   [string]$argsForParser[1] -ceq 'Ready') ('managed genuine ready evidence '+$line)
 }
 foreach($line in @(
+ 'Presence tracked (device fixture online)',
+ 'Device ready (device aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee)',
+ 'Channel subscribed',
+ 'Desktop Commander Remote is connected but fixture suffix',
  '{"message":"Presence tracked (device fixture online)"}',
  'tool output: Presence tracked (device fixture online)',
  'PRIVATE Channel closed inside tool output'

@@ -2466,7 +2466,10 @@ void RefreshTrayMenu(){
      HasRemoteStatus(statusLine,"Realtime channel is not open")||
      HasRemoteStatus(statusLine,"Channel subscription timed out")||
      HasRemoteStatus(statusLine,"Presence track remained unavailable")||
-     HasRemoteStatus(statusLine,"Presence published but the device row could not be updated")){
+     HasRemoteStatus(statusLine,"Presence published but the device row could not be updated")||
+     HasRemoteStatus(statusLine,"Channel joined but the device row could not be updated")||
+     HasRemoteStatus(statusLine,"Failed to update device status:")||
+     HasRemoteStatus(statusLine,"[DEBUG] Failed to set status online:")){
    next="Fault";return "Remote channel unavailable";
   }
   if(HasRemoteStatus(statusLine,"Local Desktop Commander MCP went away")||
@@ -2481,9 +2484,12 @@ void RefreshTrayMenu(){
      HasRemoteStatus(statusLine,"waiting for authorization")){
    next="AuthPending";return "Authentication pending";
   }
+  // v0.3.4 publishes presence independently of the dispatchable device row.
+  // "Device ready (device UUID)" also follows a status write which can be
+  // offline when the local executor is unavailable. Neither grants Ready.
+  // Require the explicit successful startup report, not a prefix or presence.
   if(String.Equals(statusLine.TrimEnd(),"Device ready:",StringComparison.OrdinalIgnoreCase)||
-     HasRemoteStatus(statusLine,"Desktop Commander Remote is connected")||
-     HasRemoteStatus(statusLine,"Presence tracked (device ")){
+     String.Equals(statusLine.TrimEnd(),"Desktop Commander Remote is connected",StringComparison.OrdinalIgnoreCase)){
    next="Ready";return "Remote connected";
   }
   // Exact top-level pinned Remote tool markers only. Never forward raw
@@ -2514,8 +2520,8 @@ void RefreshTrayMenu(){
  }
  // A completed tool call is only a local execution marker. Pinned Remote
  // 0.2.52 emits it before updateCallResult reaches the transport, which may
- // fail or be swallowed internally. Only channel/presence status markers
- // classified by SafeRemoteMarker may establish Ready.
+ // fail or be swallowed internally. Only explicit successful startup
+ // markers classified by SafeRemoteMarker may establish Ready.
  static bool ManagedReadyEvidenceExpired(DateTime nowUtc,DateTime proofUtc){
   return proofUtc==DateTime.MinValue || proofUtc>nowUtc ||
     nowUtc-proofUtc>ReadyEvidenceLease;
