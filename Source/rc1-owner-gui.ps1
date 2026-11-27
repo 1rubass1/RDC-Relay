@@ -689,7 +689,11 @@ function Start-RdcOwnerGui {
       $script:ownerLastLogCursor=$lineCursor
       $hasNewLog=$true
      }
-     if($hasNewLog){Render-CompactLog}
+     # Refit an unchanged startup header when its measured layout changes.
+     # Reuse the existing authenticated snapshot tick; no additional timer.
+     $headerLayoutChanged=($script:startupBlock -and -not $script:uiInteracting -and
+       -not $script:logRedrawFrozen -and $script:lastHeaderLayoutKey -cne $headerLog.BannerLayoutKey)
+     if($hasNewLog -or $headerLayoutChanged){Render-CompactLog}
      # The Remote store increments its own revision when the connection
      # state changes. Host event sequence is independent and may not move.
      $remoteRevision=[long]$remoteSnapshot.revision
