@@ -1,4 +1,4 @@
-﻿// Qualification-only integration of the real Setup with reversible shell metadata.
+// Qualification-only integration of the real Setup with reversible shell metadata.
 // Never removes shared Node, pairing, logs or the legacy rollback installation.
 using System;
 using System.IO;
@@ -53,13 +53,11 @@ internal static class RdcV16IntegratedMaintenance {
  static bool PointsTo(string[] link,string release){
   return link!=null&&Same(link[0],Path.Combine(release,RdcOwnerStartup.ReleaseLauncher(release)))&&link[1].Trim()=="--full";
  }
- static bool LegacyLink(string[] link,string local){
-  if(link==null)return false;
-  string ps=Path.Combine(Environment.SystemDirectory,@"WindowsPowerShell\v1.0\powershell.exe");
-  string legacy=Path.Combine(local,"RemoteDesktopCommanderLauncher","remote-window.ps1");
-  string args="-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File \""+legacy+"\"";
-  string older="-NoProfile -STA -ExecutionPolicy Bypass -File \""+legacy+"\"";
-  return File.Exists(legacy)&&Same(link[0],ps)&&(String.Equals(link[1].Trim(),args,StringComparison.OrdinalIgnoreCase)||String.Equals(link[1].Trim(),older,StringComparison.OrdinalIgnoreCase));
+ internal static void AssertFreshShellState(string desktop){
+  foreach(string path in new[]{Link(desktop),Link(Programs())}){
+   Safe(path);
+   if(File.Exists(path)||Directory.Exists(path))throw new IOException("V16_LEGACY_OR_UNKNOWN_INSTALL_REFUSED");
+  }
  }
  static string RegisteredRelease(string local){
   using(var key=Registry.CurrentUser.OpenSubKey(Parent+"\\"+Product,false)){
@@ -250,27 +248,26 @@ internal static class RdcV16IntegratedMaintenance {
    Safe(marker);File.Move(mt,marker);
   }finally{if(File.Exists(tmp))File.Delete(tmp);if(File.Exists(mt))File.Delete(mt);}
  }
- internal static void Publish(string release,string local,string desktop,string stagedLink,bool deferred){
+ internal static void Publish(string release,string local,string desktop,byte[] link,bool deferred){
   if(deferred)throw new IOException("V16_OLD_HOST_NOT_STOPPED");
+  if(link==null||link.Length==0||link.Length>65536)throw new IOException("V16_METADATA_INPUT");
   if(!RdcRc1ManualUpgrade.NoPinnedRemoteVerified())throw new IOException("V16_REMOTE_ACTIVE");
   RdcRc1CandidateSetup.ValidateInstalledSource(release);
   string prior=RegisteredRelease(local);
   string[] oldMenu=Shortcut(Link(Programs()));
   string[] oldDesktop=Shortcut(Link(desktop));
-  // Existing legacy Start Menu entry or the exact existing active launcher
-  // is accepted, never a foreign shortcut.
-  if(oldMenu!=null&&!LegacyLink(oldMenu,local)&&
-    !(prior!=null&&PointsTo(oldMenu,prior))&&
-    !(oldDesktop!=null&&Same(oldMenu[0],oldDesktop[0])&&oldMenu[1].Trim()==oldDesktop[1].Trim()))
-   throw new IOException("V16_FOREIGN_START_MENU");
+  // No legacy or unregistered shortcut can be overwritten by the new Setup.
+  if((oldMenu!=null&&(prior==null||!PointsTo(oldMenu,prior)))||
+     (oldDesktop!=null&&(prior==null||!PointsTo(oldDesktop,prior))))
+   throw new IOException("V16_LEGACY_OR_UNKNOWN_INSTALL_REFUSED");
   string maintenance=Maintenance(local,release);SaveMaintenance(local,release,maintenance);
   string journal=Path.Combine(Path.GetDirectoryName(maintenance),"activation.pending");
   string committed=Path.Combine(Path.GetDirectoryName(maintenance),"activation.committed");
   Safe(journal);Safe(committed);
   if(File.Exists(committed))throw new IOException("V16_ALREADY_COMMITTED");
-  byte[] link=File.ReadAllBytes(stagedLink);
+
   using(var parent=Registry.CurrentUser.CreateSubKey(Parent)){
-   RdcV16MetadataTransaction.Prepare(parent,desktop,Programs(),release,maintenance,journal,link,link);
+   RdcV16MetadataTransaction.PrepareActivation(parent,desktop,Programs(),release,maintenance,journal,link,link,prior==null);
    try{
     RdcV16MetadataTransaction.Apply(parent,journal,desktop,Programs());
     if(RegisteredRelease(local)==null)throw new IOException("V16_REGISTRATION_VERIFY");
@@ -281,7 +278,7 @@ internal static class RdcV16IntegratedMaintenance {
     throw;
    }
   }
-  File.Delete(stagedLink);
+
  }
  static void Walk(string dir,List<string> files){
   Safe(dir);
@@ -332,7 +329,7 @@ internal static class RdcV16IntegratedMaintenance {
      var files=new List<string>();Walk(release,files);
      foreach(string f in files)if(!expected.Remove(f.Substring(release.Length+1).Replace('\\','/')))throw new IOException("V16_UNINSTALL_FOREIGN_FILE");
      if(expected.Count!=0)throw new IOException("V16_UNINSTALL_INCOMPLETE_RELEASE");
-     if(MessageBox.Show(RdcRc1CandidateSetup.NodeEnglish(true)?"Remove RDC Relay "+RdcV16MetadataTransaction.ReleaseVersion(release)+"? Settings, logs and the legacy rollback files will be retained.":"Удалить RDC Relay "+RdcV16MetadataTransaction.ReleaseVersion(release)+"? Настройки, журналы и файлы для отката к прежней версии будут сохранены.","RDC Relay",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)!=DialogResult.Yes)return 1;
+     if(MessageBox.Show(RdcRc1CandidateSetup.NodeEnglish(true)?"Remove RDC Relay "+RdcV16MetadataTransaction.ReleaseVersion(release)+"? Settings and logs will be retained; unrelated files are not removed.":"Удалить RDC Relay "+RdcV16MetadataTransaction.ReleaseVersion(release)+"? Настройки и журналы будут сохранены; посторонние файлы не удаляются.","RDC Relay",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)!=DialogResult.Yes)return 1;
      if(!RdcRc1ManualUpgrade.NoPinnedRemoteVerified())throw new IOException("V16_REMOTE_ACTIVE");
      string maintenance=Maintenance(local,release);
      string journal=Path.Combine(Path.GetDirectoryName(maintenance),"removal.pending");

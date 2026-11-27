@@ -1,10 +1,10 @@
 {
     "schema":  1,
     "architecture":  "full-host-gui",
-    "ready":  true,
+    "ready":  false,
     "version":  "1.6.0",
     "tag":  "v1.6.0",
     "asset":  "RDC.Relay.Setup.v1.6.0.exe",
-    "sha256":  "14E1BFA375100DAD1086F5FF06B18F7C996B146AC91F669CC7176332B21EEF95",
-    "bytes":  1555456
+    "sha256":  "78DC76BB4E08DD3B4AC5F1934F9087F753F0ABC0A0E6AF806D61D206FD554FE5",
+    "bytes":  1750528
 }

@@ -24,7 +24,7 @@ internal static class RdcRc1CandidateSetup {
   "Source/rc1-candidate.json","Source/RDCRelay.ico","Source/RdcTrayV04.bin",
   "Source/divider-caustic.ps","Source/divider-caustic-detail.ps",
   "Source/divider-particles.ps","Source/divider-particles-core.ps",
-  "Source/update-notice.ps1","Source/update.ps1","Source/version.txt","Source/THIRD_PARTY_NOTICES.txt","RdcOwnerRuntime.dll",
+  "Source/update-notice.ps1","Source/version.txt","Source/THIRD_PARTY_NOTICES.txt","RdcOwnerRuntime.dll",
   "RDC Relay.exe"
  };
  static void PathSafe(string path){
@@ -46,7 +46,7 @@ internal static class RdcRc1CandidateSetup {
   using(var input=File.OpenRead(file))
    return BitConverter.ToString(sha.ComputeHash(input)).Replace("-","");
  }
- internal static void ValidateSource(string root){ValidateInstalledSource(root);if((string)ReadJson(Path.Combine(root,"owner-source-manifest.json"))["kind"]!="FULL_HOST_GUI_V16_PUBLIC")throw new InvalidOperationException("V16_PUBLIC_SETUP_KIND");if(RdcV16MetadataTransaction.ReleaseVersion(root)!="1.6.0")throw new InvalidOperationException("V16_SETUP_WRONG_VERSION");}
+ internal static void ValidateSource(string root){ValidateInstalledSource(root);if((string)ReadJson(Path.Combine(root,"owner-source-manifest.json"))["kind"]!="FULL_HOST_GUI_V16_PUBLIC")throw new InvalidOperationException("V16_PUBLIC_SETUP_KIND");if(RdcV16MetadataTransaction.ReleaseVersion(root)!="1.6.0")throw new InvalidOperationException("V16_SETUP_WRONG_VERSION");RdcV16MetadataTransaction.AssertNewPayloadNoRetiredUpdater(root);}
  internal static void ValidateInstalledSource(string root){
   PathSafe(root);
   if(!File.Exists(Path.Combine(root,"owner-source-manifest.json")))
@@ -65,11 +65,12 @@ internal static class RdcRc1CandidateSetup {
      Convert.ToBoolean(candidate["autoUpdateEnabled"]) ||
      (string)candidate["ownerMode"]!="FULL_HOST_GUI_RC1")
    throw new InvalidOperationException("RC1_NOT_ISOLATED_FULL_CANDIDATE");
-  string[] validationRequired=(string)manifest["kind"]=="FULL_HOST_GUI_V16_PUBLIC"?Required:Required.Select(x=>x=="RDC Relay.exe"?"RC1 Pilot Launcher.exe":x).ToArray();
   var listed=new List<string>();
   var rows=(System.Collections.ArrayList)manifest["files"];
   foreach(Dictionary<string,object> item in rows)
     listed.Add((string)item["name"]);
+  string[] validationRequired=(string)manifest["kind"]=="FULL_HOST_GUI_V16_PUBLIC"?Required:Required.Select(x=>x=="RDC Relay.exe"?"RC1 Pilot Launcher.exe":x).ToArray();
+  validationRequired=RdcV16MetadataTransaction.InstalledPayloadMembers(validationRequired,listed,RdcV16MetadataTransaction.ReleaseVersion(root));
   if(listed.Count!=validationRequired.Length || listed.Count!=listed.Distinct(StringComparer.Ordinal).Count())
    throw new InvalidOperationException("RC1_MANIFEST_NOT_EXACT_UNIQUE_SET");
   foreach(string required in validationRequired){
@@ -191,17 +192,10 @@ internal static class RdcRc1CandidateSetup {
     // A leftover stable payload without an uninstall entry is not a
     // clean first install; leave it untouched and ask for review.
     if((File.Exists(gui)||File.Exists(updater)||File.Exists(versionFile))&&!RdcV16IntegratedMaintenance.HasRetainedRollback(localRoot))
-     throw new InvalidOperationException("RC1_UNREGISTERED_STABLE_PAYLOAD_REFUSED");
+     throw new InvalidOperationException("V16_LEGACY_OR_UNKNOWN_INSTALL_REFUSED");
     return false;
    }
-   string diskVersion=File.Exists(versionFile)?
-    File.ReadAllText(versionFile,Encoding.UTF8).Trim():"";
-   return ValidateInstalledRegistration(
-    Convert.ToString(key.GetValue("DisplayName","")),
-    Convert.ToString(key.GetValue("Publisher","")),
-    Convert.ToString(key.GetValue("DisplayVersion","")),
-    Convert.ToString(key.GetValue("InstallLocation","")),
-    stable,diskVersion,File.Exists(gui),File.Exists(updater));
+   throw new InvalidOperationException("V16_LEGACY_OR_UNKNOWN_INSTALL_REFUSED");
   }
  }
  // Resolve the displayed version from the exact validated payload manifest,
@@ -214,223 +208,15 @@ internal static class RdcRc1CandidateSetup {
    throw new InvalidOperationException("RC1_DISPLAY_VERSION_INVALID");
   return version;
  }
- // Node is an external shared runtime, not a Relay-owned file. Only an
- // interactive, explicitly accepted prerequisite install can change it.
- // The pinned upstream release is the LTS major used by the vendor's
- // Windows launcher. Never run a downloaded script or resolve "latest".
- const string NodeMsiUrl="https://nodejs.org/dist/v24.22.3/node-v24.22.3-x64.msi";
- const string NodeMsiSha256="4A1AB5BDEC5434BAE58EFAE6C3E5077A011F6F1E76D2B47B7B10AF043F7DB545";
- internal static bool SupportedNodeVersion(int major,int minor){
-  return major>22||(major==22&&minor>=12);
- }
- static string[] NodeRuntimeRoots(){
-  return new[]{
-   Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"nodejs"),
-   Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"npm"),
-   Path.Combine(Environment.GetEnvironmentVariable("ProgramFiles(x86)")??@"C:\Program Files (x86)","nodejs")
-  }.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
- }
- // Same shim search order as the private Host. An already present but
- // incomplete/custom runtime is not permission to replace shared Node.
- internal static string ClassifyNodePrerequisite(string[] roots){
-  bool foundAny=false;
-  foreach(string root in roots){
-   PathSafe(root);
-   string shim=Path.Combine(root,"npx.cmd");
-   string node=Path.Combine(root,"node.exe");
-   string npm=Path.Combine(root,"npm.cmd");
-   foreach(string file in new[]{shim,node,npm})PathSafe(file);
-   if(File.Exists(shim)||File.Exists(node)||File.Exists(npm))foundAny=true;
-   if(!File.Exists(shim))continue;
-   string cli=Path.Combine(root,"node_modules","npm","bin","npx-cli.js");
-   string npmCli=Path.Combine(root,"node_modules","npm","bin","npm-cli.js");
-   PathSafe(cli);PathSafe(npmCli);
-   if(!File.Exists(node)||!File.Exists(npm)||!File.Exists(cli)||!File.Exists(npmCli))
-    return "EXISTING_UNSUPPORTED";
-   var version=FileVersionInfo.GetVersionInfo(node);
-   return SupportedNodeVersion(version.FileMajorPart,version.FileMinorPart)?
-    "READY":"EXISTING_UNSUPPORTED";
-  }
-  return foundAny?"EXISTING_UNSUPPORTED":"MISSING";
- }
- static bool OtherNodeOnPath(){
-  foreach(string entry in (Environment.GetEnvironmentVariable("PATH")??"").Split(';')){
-   string dir=entry.Trim().Trim('"');
-   // Never consult a relative/network PATH entry or execute PATH programs.
-   if(dir.Length<3||dir[1]!=':'||dir[2]!='\\')continue;
-   try{
-    if(File.Exists(Path.Combine(dir,"node.exe"))||
-       File.Exists(Path.Combine(dir,"npm.cmd"))||
-       File.Exists(Path.Combine(dir,"npx.cmd")))return true;
-   }catch{}
-  }
-  return false;
- }
- // A custom MSI installation may not be in PATH or the standard folders.
- // Read uninstall identities only; never install over an existing registered
- // Node runtime merely because its executable was moved or removed.
- static bool OtherNodeRegistered(){
-  const string uninstall=@"Software\Microsoft\Windows\CurrentVersion\Uninstall";
-  foreach(RegistryHive hive in new[]{RegistryHive.LocalMachine,RegistryHive.CurrentUser})
-   foreach(RegistryView view in new[]{RegistryView.Registry64,RegistryView.Registry32})
-    using(var baseKey=RegistryKey.OpenBaseKey(hive,view))
-    using(var entries=baseKey.OpenSubKey(uninstall,false)){
-     if(entries==null)continue;
-     foreach(string name in entries.GetSubKeyNames())
-      using(var key=entries.OpenSubKey(name,false)){
-       if(key==null)continue;
-       string display=Convert.ToString(key.GetValue("DisplayName",""));
-       if(String.Equals(display,"Node.js",StringComparison.OrdinalIgnoreCase)||
-          display.StartsWith("Node.js ",StringComparison.OrdinalIgnoreCase))return true;
-      }
-    }
-  return false;
- }
- internal static bool NodeEnglish(bool existing){
-  try{
-   string pref=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-    "RDCRelay","ui-language.json");
-   PathSafe(pref);
-   if(File.Exists(pref)&&new FileInfo(pref).Length<=128){
-    string value=File.ReadAllText(pref,Encoding.UTF8).Trim();
-    if(value=="{\"version\":1,\"locale\":\"en-US\"}")return true;
-    if(value=="{\"version\":1,\"locale\":\"ru-RU\"}")return false;
-   }
-  }catch{}
-  return !existing && !System.Globalization.CultureInfo.CurrentUICulture.Name.StartsWith("ru",StringComparison.OrdinalIgnoreCase);
- }
- static void DownloadPinnedNode(string file,System.Threading.CancellationToken cancellation){
-  // The standalone .NET Framework Setup must negotiate a modern TLS session.
-  // The normal system certificate validation remains enabled.
-  System.Net.ServicePointManager.SecurityProtocol=System.Net.SecurityProtocolType.Tls12;
-  var request=(System.Net.HttpWebRequest)System.Net.WebRequest.Create(NodeMsiUrl);
-  request.AllowAutoRedirect=false;
-  request.Timeout=30000;request.ReadWriteTimeout=30000;
-  const long limit=64L*1024*1024;
-  using(cancellation.Register(()=>request.Abort()))
-  using(var response=(System.Net.HttpWebResponse)request.GetResponse()){
-   if(response.StatusCode!=System.Net.HttpStatusCode.OK||
-      response.ContentLength>limit)
-    throw new InvalidOperationException("RC1_NODE_DOWNLOAD_REFUSED");
-   using(var input=response.GetResponseStream())
-   using(var output=new FileStream(file,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
-    byte[] buffer=new byte[65536];long total=0;int count;
-    while((count=input.Read(buffer,0,buffer.Length))>0){
-     cancellation.ThrowIfCancellationRequested();
-     total+=count;
-     if(total>limit)throw new InvalidOperationException("RC1_NODE_DOWNLOAD_LIMIT");
-     output.Write(buffer,0,count);
-    }
-   }
-  }
-  cancellation.ThrowIfCancellationRequested();
-  if(!String.Equals(Hash(file),NodeMsiSha256,StringComparison.Ordinal))
-   throw new InvalidOperationException("RC1_NODE_MSI_HASH_MISMATCH");
- }
- static void DownloadPinnedNodeWithProgress(string file,bool en){
-  // The Setup is a WinExe, not a console. Keep a small cancellable progress
-  // window responsive while downloading, with no extra confirmation at completion.
-  using(var cancel=new System.Threading.CancellationTokenSource())
-  using(var dialog=new System.Windows.Forms.Form())
-  using(var timer=new System.Windows.Forms.Timer()){
-   dialog.Text="RDC Relay";
-   dialog.Width=440;dialog.Height=130;
-   dialog.StartPosition=System.Windows.Forms.FormStartPosition.CenterScreen;
-   dialog.FormBorderStyle=System.Windows.Forms.FormBorderStyle.FixedDialog;
-   dialog.MaximizeBox=false;dialog.MinimizeBox=false;
-   var label=new System.Windows.Forms.Label();
-   label.Text=en?"Downloading Node.js 24 LTS...":"Загрузка Node.js 24 LTS...";
-   label.Dock=System.Windows.Forms.DockStyle.Fill;
-   var progress=new System.Windows.Forms.ProgressBar();
-   progress.Style=System.Windows.Forms.ProgressBarStyle.Marquee;
-   progress.MarqueeAnimationSpeed=30;
-   progress.Height=20;progress.Dock=System.Windows.Forms.DockStyle.Bottom;
-   dialog.Controls.Add(label);dialog.Controls.Add(progress);
-   var task=System.Threading.Tasks.Task.Factory.StartNew(
-    ()=>DownloadPinnedNode(file,cancel.Token),
-    System.Threading.CancellationToken.None,System.Threading.Tasks.TaskCreationOptions.None,
-    System.Threading.Tasks.TaskScheduler.Default);
-   timer.Interval=100;
-   timer.Tick+=delegate{
-    if(task.IsCompleted){timer.Stop();dialog.Close();}
-   };
-   dialog.FormClosing+=delegate(object sender,System.Windows.Forms.FormClosingEventArgs e){
-    if(!task.IsCompleted){
-     e.Cancel=true;
-     label.Text=en?"Cancelling download...":"Отмена загрузки...";
-     cancel.Cancel();
-    }
-   };
-   timer.Start();
-   dialog.ShowDialog();
-   timer.Stop();
-   task.GetAwaiter().GetResult();
-  }
- }
- static bool EnsureNodePrerequisite(bool existing){
-  string[] roots=NodeRuntimeRoots();
-  string state=ClassifyNodePrerequisite(roots);
-  if(state=="READY")return true;
-  bool en=NodeEnglish(existing);
-  if(state!="MISSING"||OtherNodeOnPath()||OtherNodeRegistered()){
-   System.Windows.Forms.MessageBox.Show(en?
-    "An existing Node.js installation is incomplete, unsupported or outside the standard location. Repair it (Node.js 22.12 or newer, with npm/npx), then run Setup again. RDC Relay will not replace a shared runtime automatically.":
-    "Обнаружена неполная, неподдерживаемая или нестандартная установка Node.js. Восстановите Node.js 22.12 или новее с npm/npx и повторите запуск Setup. RDC Relay не заменяет общую среду автоматически.",
-    "RDC Relay",System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Warning);
-   return false;
-  }
-  string arch=Environment.GetEnvironmentVariable("PROCESSOR_ARCHITEW6432")??
-   Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE")??"";
-  if(!Environment.Is64BitOperatingSystem||!String.Equals(arch,"AMD64",StringComparison.OrdinalIgnoreCase)){
-   System.Windows.Forms.MessageBox.Show(en?
-    "Automatic Node.js installation is available for x64 Windows only. Install a supported Node.js with npm/npx and run Setup again.":
-    "Автоматическая установка Node.js пока доступна только для Windows x64. Установите поддерживаемый Node.js с npm/npx и повторите запуск Setup.",
-    "RDC Relay",System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Warning);
-   return false;
-  }
-  var answer=System.Windows.Forms.MessageBox.Show(en?
-   "Desktop Commander Remote requires Node.js and npm/npx. Download and install the official Node.js 24 LTS runtime now? Windows may request administrator approval.":
-   "Desktop Commander Remote требует Node.js и npm/npx. Скачать и установить официальный Node.js 24 LTS? Windows может запросить разрешение администратора.",
-   "RDC Relay",System.Windows.Forms.MessageBoxButtons.YesNo,
-   System.Windows.Forms.MessageBoxIcon.Question,System.Windows.Forms.MessageBoxDefaultButton.Button2);
-  if(answer!=System.Windows.Forms.DialogResult.Yes)return false;
-  string temp=Path.Combine(Path.GetTempPath(),"RDC-NodePrerequisite-"+Guid.NewGuid().ToString("N"));
-  PathSafe(temp);
-  if(Directory.Exists(temp)||File.Exists(temp))throw new InvalidOperationException("RC1_NODE_TEMP_COLLISION");
-  Directory.CreateDirectory(temp);
-  string msi=Path.Combine(temp,"node-v24.22.3-x64.msi");
-  try{
-   Console.WriteLine("RC1_NODE_DOWNLOAD_START");
-   DownloadPinnedNodeWithProgress(msi,en);
-   // Recheck after the download, before asking Windows Installer to run.
-   state=ClassifyNodePrerequisite(roots);
-   if(state=="READY")return true;
-   if(state!="MISSING"||OtherNodeOnPath()||OtherNodeRegistered())throw new InvalidOperationException("RC1_NODE_STATE_CHANGED");
-   if(Hash(msi)!=NodeMsiSha256)throw new InvalidOperationException("RC1_NODE_MSI_HASH_MISMATCH");
-   string msiexec=Path.Combine(Environment.SystemDirectory,"msiexec.exe");
-   PathSafe(msiexec);
-   var start=new ProcessStartInfo(msiexec,"/i \""+msi+"\" /passive /norestart");
-   start.UseShellExecute=true;start.Verb="runas";start.WorkingDirectory=temp;
-   Console.WriteLine("RC1_NODE_INSTALL_START");
-   using(Process child=Process.Start(start)){
-    if(child==null)throw new InvalidOperationException("RC1_NODE_MSI_NOT_STARTED");
-    child.WaitForExit();
-    Console.WriteLine("RC1_NODE_MSI_EXIT="+child.ExitCode);
-    if(child.ExitCode==3010)throw new InvalidOperationException("RC1_NODE_RESTART_REQUIRED");
-    if(child.ExitCode!=0)throw new InvalidOperationException("RC1_NODE_MSI_FAILED_"+child.ExitCode);
-   }
-   if(ClassifyNodePrerequisite(roots)!="READY")
-    throw new InvalidOperationException("RC1_NODE_POSTINSTALL_NOT_READY");
-   Console.WriteLine("RC1_NODE_PREREQUISITE_READY");
-   return true;
-  }finally{
-   // Do not touch any shared Node installation or npm cache on failure.
-   // Only clean this attempt's unique downloaded MSI and empty directory.
-   try{PathSafe(temp);PathSafe(msi);if(File.Exists(msi))File.Delete(msi);
-    if(Directory.Exists(temp)&&Directory.GetFileSystemEntries(temp).Length==0)Directory.Delete(temp,false);
-   }catch{}
-  }
- }
+#if !RDC_RC1_BLOCKED
+ // Keep the Setup entrypoints for staged identity and existing fixture callers.
+ const string NodeMsiUrl=RdcNodePrerequisite.NodeMsiUrl;
+ const string NodeMsiSha256=RdcNodePrerequisite.NodeMsiSha256;
+ internal static bool SupportedNodeVersion(int major,int minor){return RdcNodePrerequisite.SupportedNodeVersion(major,minor);}
+ internal static string ClassifyNodePrerequisite(string[] roots){return RdcNodePrerequisite.ClassifyNodePrerequisite(roots);}
+ internal static bool NodeEnglish(bool existing){return RdcNodePrerequisite.NodeEnglish(existing);}
+ static bool EnsureNodePrerequisite(bool existing){return RdcNodePrerequisite.EnsureNodePrerequisite(existing,false);}
+#endif
  static void StartPrivateFull(string release){
   // Open only our pinned read-only GUI launcher. The launcher returns after
   // spawning the private Host; never wait for or signal persistent descendants.
@@ -470,7 +256,7 @@ internal static class RdcRc1CandidateSetup {
   string extracted=null; RdcReleaseLegacyMigrationLease legacyLease=null; IDisposable maintenanceLease=null;
   try{
    if(args.Length==1&&args[0]=="--uninstall")return RdcV16IntegratedMaintenance.RunRemoval(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),Required);
-   bool privateSideBySide=args.Length==1 && args[0]=="--owner-approved-side-by-side";
+   bool privateSideBySide=false; // Public setup has no private staging mode.
    bool manualUpgrade=args.Length==0 ||
     (args.Length==1 && args[0]=="--owner-approved-manual-upgrade");
    if(!privateSideBySide&&!manualUpgrade)
@@ -498,6 +284,7 @@ internal static class RdcRc1CandidateSetup {
     RdcV16IntegratedMaintenance.AssertNoDowngrade(local,source);
     bool registered=HasRegisteredStableInstallation(local);
     bool priorShortcut=HasPrimaryDesktopShortcut(desktop);
+    if(!registered)RdcV16IntegratedMaintenance.AssertFreshShellState(desktop);
     bool english=NodeEnglish(registered||priorShortcut);
 #if RDC_RC1_FULL_SETUP
     // Missing Desktop link alone is not evidence of a new user. Preserve
@@ -630,7 +417,7 @@ internal static class RdcRc1CandidateSetup {
    Console.Error.WriteLine("RC1_INSTALL_DENIED:"+e.GetType().Name+":"+e.Message);
    if(args.Length==0)System.Windows.Forms.MessageBox.Show(
     (NodeEnglish(false)?"Could not install RDC Relay 1.6.0.":"Не удалось установить RDC Relay 1.6.0.")+Environment.NewLine+Environment.NewLine+
-    e.Message+Environment.NewLine+(NodeEnglish(false)?"Setup did not stop previous versions or Remote.":"Старые версии и Remote не отключались этим Setup."),
+    (e.Message=="V16_LEGACY_OR_UNKNOWN_INSTALL_REFUSED"?(NodeEnglish(false)?"An older or unverified RDC Relay installation was found. If it is a known 1.5.x installation, use its own uninstall route first. No automatic migration or removal was performed.":"Обнаружена старая или неподтверждённая установка RDC Relay. Если установлена известная версия 1.5.x, сначала воспользуйтесь её штатным удалением. Автоматическая миграция или удаление не выполнялись."):e.Message)+Environment.NewLine+(NodeEnglish(false)?"Setup did not stop previous versions or Remote.":"Старые версии и Remote не отключались этим Setup."),
     "RDC Relay 1.6.0",System.Windows.Forms.MessageBoxButtons.OK,
     System.Windows.Forms.MessageBoxIcon.Error);
    return 42;

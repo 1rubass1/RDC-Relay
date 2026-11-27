@@ -195,8 +195,11 @@ function Get-Rc1QuotaStatus([string]$path,[string]$expectedEmail,[DateTime]$nowU
  if(-not $path -or -not $expectedEmail -or -not [IO.File]::Exists($path)){return $missing}
  try {
   $file=Get-Item -LiteralPath $path -ErrorAction Stop
-  if($file.Length -lt 40 -or $file.Length -gt 512){return $missing}
+  if($file.Length -lt 40 -or $file.Length -gt 512 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $missing}
+  $folder=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($path))
+  if(([IO.File]::GetAttributes($folder) -band [IO.FileAttributes]::ReparsePoint) -ne 0){return $missing}
   $raw=[IO.File]::ReadAllText($path,[Text.Encoding]::UTF8)
+  if($raw.Length -gt 512){return $missing}
   $data=ConvertFrom-Json -InputObject $raw -ErrorAction Stop
   if([string]$data.source -cne 'official-remote-who-am-i'){return $missing}
   if(-not [string]::Equals([string]$data.accountEmail,$expectedEmail.Trim(),
@@ -219,7 +222,24 @@ function Get-Rc1QuotaStatus([string]$path,[string]$expectedEmail,[DateTime]$nowU
 # RC1 Owner-only presentation: translate the six Host state codes into a
 # short Russian title, with an independent, allowlisted explanation underneath.
 # Never render raw Host status/diagnostics or alter the actual Remote state.
-function Get-Rc1OwnerConnectionText([string]$state,[string]$detail,[bool]$observed,[string]$activity='idle') {
+function Get-Rc1OwnerCompletionKind([string]$value) {
+ if($value -cin @('preflight_failed','launch_failed','exit_before_ready','startup_stop_requested',
+    'authorization_stop_requested','stop_requested_after_ready','unexpected_after_ready')){return $value}
+ return 'unknown'
+}
+function Get-Rc1OwnerConnectionText([string]$state,[string]$detail,[bool]$observed,[string]$activity='idle',[string]$completion='unknown') {
+ # Presentation only: Host retains its technical state and permissions.
+ if(-not $observed -and $state -ceq 'Disconnected'){
+  switch -CaseSensitive ($completion){
+   'exit_before_ready' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.fault' 'Ошибка связи');Detail=(Get-RdcOwnerUiText 'owner.completion.beforeReady' 'Remote завершился до подключения');CompletionFault=$true}}
+   'unexpected_after_ready' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.fault' 'Ошибка связи');Detail=(Get-RdcOwnerUiText 'owner.completion.unexpected' 'Remote неожиданно завершился');CompletionFault=$true}}
+   'launch_failed' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.fault' 'Ошибка связи');Detail=(Get-RdcOwnerUiText 'owner.connection.detail.fault.start' 'Не удалось запустить Remote');CompletionFault=$true}}
+   'authorization_stop_requested' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.disconnected' 'Отключён');Detail=(Get-RdcOwnerUiText 'owner.completion.authStopped' 'Остановка при авторизации')}}
+   'startup_stop_requested' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.disconnected' 'Отключён');Detail=(Get-RdcOwnerUiText 'owner.completion.startStopped' 'Запуск остановлен')}}
+   'stop_requested_after_ready' {return @{Name=(Get-RdcOwnerUiText 'owner.connection.name.disconnected' 'Отключён');Detail=''}}
+  }
+ }
+
  # Quietness is not a positive proof of connectivity, nor a recovery event.
  # This trusted Host reason is display-only: never promote technical Ready.
  if(-not $observed -and $state -ceq 'Reconnecting' -and
@@ -272,7 +292,7 @@ function Get-Rc1OwnerConnectionText([string]$state,[string]$detail,[bool]$observ
     switch -CaseSensitive ($detail) {
      'Remote channel unavailable' {(Get-RdcOwnerUiText 'owner.connection.detail.fault.channel' 'Канал недоступен');break}
      'Remote start failed' {(Get-RdcOwnerUiText 'owner.connection.detail.fault.start' 'Не удалось запустить Remote');break}
-     'Required Node.js runtime is missing; run RDC Relay Setup' {(Get-RdcOwnerUiText 'owner.connection.detail.fault.nodeMissing' 'Требуется повторная установка RDC Relay');break}
+     'Required Node.js runtime is missing; run RDC Relay Setup' {(Get-RdcOwnerUiText 'owner.connection.detail.fault.nodeMissing' 'Нужен Node.js: Setup или выход из трея и запуск Portable');break}
      'Remote startup failed; inspect Host status and retry manually' {
       (Get-RdcOwnerUiText 'owner.connection.detail.fault.autoStart' 'Запустите Remote вручную');break
      }
@@ -369,7 +389,7 @@ function Apply-RdcOwnerLocale([switch]$Force){
  # Re-render only the last validated Host status; never re-read provider text or IPC.
  if($script:ownerLastSafePresentation){
   $safe=$script:ownerLastSafePresentation
-  $localized=Get-Rc1OwnerConnectionText ([string]$safe.State) ([string]$safe.Detail) ([bool]$safe.Observed) ([string]$safe.Activity)
+  $localized=Get-Rc1OwnerConnectionText ([string]$safe.State) ([string]$safe.Detail) ([bool]$safe.Observed) ([string]$safe.Activity) ([string]$safe.Completion)
   Set-State $localized.Name $localized.Detail $safe.Color
  }
  # The already-authorized periodic GET_SNAPSHOT rebuilds the sanitized fallback
@@ -520,6 +540,7 @@ function Start-RdcOwnerGui {
  $script:ownerLastSnapshotUtcTicks=0
  $script:ownerRemotePid=0
  $script:ownerLastUptimeText=''
+ $script:ownerQuotaAccount=''
  $script:ownerQuotaPath=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'remote-usage-cache.json'
  $script:ownerQuotaEnabledPath=Join-Path (Join-Path $env:LOCALAPPDATA 'RDCRelayOwnerPilot') 'quota-display.opt-in'
  $quotaAuthItem.Checked=[bool](Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath)
@@ -529,6 +550,7 @@ function Start-RdcOwnerGui {
  $script:ownerLastLogEpoch=-1
  $script:ownerDetailedJournal=New-Object 'System.Collections.Generic.List[string]'
  $script:ownerRecentDiagnostics=@()
+ $script:ownerAttemptDiagnostics=@()
  $script:ownerJournalRemoteState='Unknown'
  $script:ownerJournalRemotePid=0
  $script:ownerJournalOwnership='Unknown'
@@ -596,6 +618,17 @@ function Start-RdcOwnerGui {
         [bool]$remoteSnapshot.isActualRemote -ne $script:ownerRealMode){
       throw 'RC1_REMOTE_MODE_MISMATCH'
      }
+     # Quota eligibility comes from Host-owned identity, not the visual
+     # connection caption. Clear on loss/change, without waiting 15 seconds.
+     $quotaAccount=''
+     if($script:ownerManagedMode -and $snapshot.quotaAccountEligible -eq $true -and
+        [string]$snapshot.remoteIdentity.user -cmatch '\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,120}\.[A-Za-z]{2,20}\z'){
+      $quotaAccount=[string]$snapshot.remoteIdentity.user
+     }
+     if(-not [string]::Equals($quotaAccount,$script:ownerQuotaAccount,[StringComparison]::OrdinalIgnoreCase)){
+      $script:ownerQuotaAccount=$quotaAccount
+      $script:ownerQuotaNextCheckUtc=[DateTime]::MinValue
+     }
      # Unlike old monolithic GUI, live Remote output is owned by Host.
      # Authenticated snapshots carry only fixed tool activity categories.
      # Apply on every snapshot, even when Host/Remote revisions are unchanged:
@@ -620,6 +653,8 @@ function Start-RdcOwnerGui {
      $script:ownerJournalOwnership=[string]$remoteSnapshot.ownership
      $script:ownerJournalToolActivity=[string]$remoteSnapshot.toolActivity
      $script:ownerJournalLastSnapshotUtc=[DateTime]::UtcNow
+     $completion=Get-Rc1OwnerCompletionKind ([string]$snapshot.remoteCompletionKind)
+     $script:ownerAttemptDiagnostics=if($script:ownerManagedMode){@($snapshot.remoteAttemptDiagnostics | Select-Object -First 30)}else{@()}
      $script:ownerRecentDiagnostics=@($remoteSnapshot.diagnostics |
        Where-Object{
         $v=[string]$_
@@ -654,7 +689,11 @@ function Start-RdcOwnerGui {
       $script:ownerLastLogCursor=$lineCursor
       $hasNewLog=$true
      }
-     if($hasNewLog){Render-CompactLog}
+     # Refit an unchanged startup header when its measured layout changes.
+     # Reuse the existing authenticated snapshot tick; no additional timer.
+     $headerLayoutChanged=($script:startupBlock -and -not $script:uiInteracting -and
+       -not $script:logRedrawFrozen -and $script:lastHeaderLayoutKey -cne $headerLog.BannerLayoutKey)
+     if($hasNewLog -or $headerLayoutChanged){Render-CompactLog}
      # The Remote store increments its own revision when the connection
      # state changes. Host event sequence is independent and may not move.
      $remoteRevision=[long]$remoteSnapshot.revision
@@ -683,11 +722,12 @@ function Start-RdcOwnerGui {
         [Drawing.Color]::LightCoral
        }elseif([string]$remoteSnapshot.state -ceq 'Disconnected'){[Drawing.Color]::Gray
        }else{[Drawing.Color]::Khaki}
-       $presentation=Get-Rc1OwnerConnectionText ([string]$remoteSnapshot.state) ([string]$remoteSnapshot.status) $false $toolActivity
+       $presentation=Get-Rc1OwnerConnectionText ([string]$remoteSnapshot.state) ([string]$remoteSnapshot.status) $false $toolActivity $completion
        if($presentation.Waiting){$color=[Drawing.Color]::PaleGreen}
+       if($presentation.CompletionFault){$color=[Drawing.Color]::LightCoral}
        $script:ownerLastSafePresentation=@{
         State=[string]$remoteSnapshot.state;Detail=[string]$remoteSnapshot.status
-        Observed=$false;Color=$color;Activity=$toolActivity
+        Observed=$false;Color=$color;Activity=$toolActivity;Completion=$completion
        }
        Set-State $presentation.Name $presentation.Detail $color
        $script:ownerLastUptimeText=''  # Timer owns the original runtime footer.
@@ -758,8 +798,8 @@ function Start-RdcOwnerGui {
         # Before the first real Host log line, retain a minimal truthful
         # fallback, including Adopted/read-only cases with no owned log.
         $script:startupBlock=[string]::Join($nl,@(
-         $safeArt,'','Remote Connection','',
-         'RDC Relay 1.6.0 / Desktop Commander 0.2.52','',
+         'Remote Connection','',
+         'RDC Relay 1.6.0 / Desktop Commander (latest)','',
          ((Get-RdcOwnerUiText 'owner.fallback.label.status' 'Status: ')+$safeDisplayState),
          ((Get-RdcOwnerUiText 'owner.fallback.label.user' '- User: ')+$(if($safeUser){$safeUser}else{Get-RdcOwnerUiText 'owner.fallback.value.notReported' 'not reported'})),
          ((Get-RdcOwnerUiText 'owner.fallback.label.deviceName' '- Device Name: ')+$(if($safeDeviceName){$safeDeviceName}else{Get-RdcOwnerUiText 'owner.fallback.value.notReported' 'not reported'})),
@@ -822,6 +862,8 @@ function Start-RdcOwnerGui {
      $script:ownerNextVerb='GET_SNAPSHOT'
     }else{throw ('RC1_BAD_OR_DENIED_REPLY_'+[string]$reply.code)}
    }catch{
+    $script:ownerQuotaAccount=''
+    $script:ownerQuotaNextCheckUtc=[DateTime]::MinValue
     $script:ownerNextVerb='GET_SNAPSHOT'
     $script:ownerLastSafePresentation=$null
     if($script:ownerRequestedNavigation){
@@ -867,14 +909,21 @@ function Start-RdcOwnerGui {
   if($script:enableUpdateNotice){Update-RdcUpdateNoticePolling}
   # Poll only the private, short-lived official snapshot (no credential IO,
   # no network requests on the WinForms UI thread). Expired means unknown.
-  if([DateTime]::UtcNow -ge $script:ownerQuotaNextCheckUtc){
+  $quotaNow=[DateTime]::UtcNow
+  if($script:ownerQuotaAccount -and ($script:ownerLastSnapshotUtcTicks -le 0 -or
+     $quotaNow.Ticks -lt $script:ownerLastSnapshotUtcTicks -or
+     ($quotaNow.Ticks-$script:ownerLastSnapshotUtcTicks) -gt 50000000)){
+   $script:ownerQuotaAccount=''
+   $script:ownerQuotaNextCheckUtc=[DateTime]::MinValue
+  }
+  if($quotaNow -ge $script:ownerQuotaNextCheckUtc){
    $script:ownerQuotaNextCheckUtc=[DateTime]::UtcNow.AddSeconds(15)
    $quotaDisplayEnabled=Test-Rc1QuotaDisplayEnabled $script:ownerQuotaEnabledPath
    if($quotaAuthItem.Checked -ne $quotaDisplayEnabled){$quotaAuthItem.Checked=$quotaDisplayEnabled}
    $quotaPercent=$null
    # The quota validator remains invariant; only its verified numeric result is formatted.
    $quotaText=if($quotaDisplayEnabled){
-    [void](Get-Rc1QuotaStatus $script:ownerQuotaPath ([string]$script:accountEmail) ([DateTime]::UtcNow) -percentOut ([ref]$quotaPercent))
+    [void](Get-Rc1QuotaStatus $script:ownerQuotaPath ([string]$script:ownerQuotaAccount) $quotaNow -percentOut ([ref]$quotaPercent))
     if($null -ne $quotaPercent){
      (Get-RdcOwnerUiText 'gui.quota.value' 'Остаток вызовов: {percent}%').Replace(
       '{percent}',[string]$quotaPercent)

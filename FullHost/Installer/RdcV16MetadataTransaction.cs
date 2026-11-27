@@ -1,4 +1,4 @@
-﻿// Qualification-only durable metadata transaction. The production executor
+// Qualification-only durable metadata transaction. The production executor
 // must independently establish ownership and hold the install/Host leases.
 using System;
 using System.IO;
@@ -93,6 +93,24 @@ internal static class RdcV16MetadataTransaction {
   if(!IsFullVersion(v))throw new IOException("V16_METADATA_VERSION_FILE");
   return v;
  }
+ // Only the originally published 1.6.0 predecessor can contain the retired
+ // updater. Its exact manifest still must pass the normal per-member SHA checks.
+ // New candidates and future versions never accept that extra member.
+ internal static string[] InstalledPayloadMembers(string[] required,List<string> listed,string version){
+  if(required==null||listed==null||required.Contains("Source/update.ps1",StringComparer.Ordinal))
+   throw new IOException("V16_PAYLOAD_POLICY_INPUT");
+  string[] wanted=required;
+  if(listed.Contains("Source/update.ps1",StringComparer.Ordinal)&&version=="1.6.0")
+   wanted=required.Concat(new[]{"Source/update.ps1"}).ToArray();
+  if(listed.Count!=wanted.Length||listed.Distinct(StringComparer.Ordinal).Count()!=wanted.Length||
+     wanted.Any(x=>!listed.Contains(x,StringComparer.Ordinal)))
+   throw new IOException("RC1_MANIFEST_NOT_EXACT_UNIQUE_SET");
+  return wanted;
+ }
+ internal static void AssertNewPayloadNoRetiredUpdater(string root){
+  string path=Path.Combine(root,"Source","update.ps1");Safe(path);
+  if(File.Exists(path)||Directory.Exists(path))throw new IOException("V16_RETIRED_UPDATER_IN_CANDIDATE");
+ }
  static string BeforeVersion(Plan p){
   var row=Get(p.Before,"DisplayVersion");
   if(row==null||row.Kind!="String"||!IsFullVersion(row.Data))throw new IOException("V16_METADATA_VERSION_LEDGER");
@@ -113,6 +131,9 @@ internal static class RdcV16MetadataTransaction {
   };
  }
  internal static Plan Prepare(RegistryKey parent,string desktop,string programs,string release,string maintenance,string journal,byte[] desktopLink,byte[] menuLink){
+  return PrepareActivation(parent,desktop,programs,release,maintenance,journal,desktopLink,menuLink,false);
+ }
+ internal static Plan PrepareActivation(RegistryKey parent,string desktop,string programs,string release,string maintenance,string journal,byte[] desktopLink,byte[] menuLink,bool requireFresh){
   // No production registry write is performed by Prepare.
   if(parent==null||desktopLink==null||menuLink==null||desktopLink.Length==0||menuLink.Length==0||
     desktopLink.Length>65536||menuLink.Length>65536)throw new IOException("V16_METADATA_INPUT");
@@ -121,12 +142,15 @@ internal static class RdcV16MetadataTransaction {
   if(!File.Exists(maintenance))throw new IOException("V16_METADATA_MAINTENANCE_MISSING");
   bool had;
   var prior=Capture(parent,out had);
+  if(requireFresh&&had)throw new IOException("V16_LEGACY_OR_UNKNOWN_INSTALL_REFUSED");
   var plan=new Plan{Schema=Schema,RegistryParent=parent.Name,HadKey=had,AfterKey=true,Before=prior,After=Desired(ReleaseVersion(release),release,maintenance),Links=new List<Link>()};
   foreach(var item in new[]{new {Dir=desktop,Bytes=desktopLink},new {Dir=programs,Bytes=menuLink}}){
    string path=Path.Combine(Path.GetFullPath(item.Dir),Product+".lnk");
    if(!Directory.Exists(item.Dir))throw new IOException("V16_METADATA_LINK_FOLDER");
    if(plan.Links.Any(x=>String.Equals(x.Path,path,StringComparison.OrdinalIgnoreCase)))throw new IOException("V16_METADATA_DUPLICATE_LINK");
-   plan.Links.Add(new Link{Path=path,Before=FileState(path),After=Convert.ToBase64String(item.Bytes)});
+   string before=FileState(path);
+   if(requireFresh&&before!=null)throw new IOException("V16_LEGACY_OR_UNKNOWN_INSTALL_REFUSED");
+   plan.Links.Add(new Link{Path=path,Before=before,After=Convert.ToBase64String(item.Bytes)});
   }
   SavePlan(journal,plan);
   return plan;

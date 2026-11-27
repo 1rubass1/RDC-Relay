@@ -436,7 +436,7 @@ function Get-RdcAvailableVersionFromManifest([string]$Raw) {
             Version=[string]$manifest.version
             Digest=([string]$manifest.sha256).ToUpperInvariant()
             Bytes=[long]$manifest.bytes
-            Uri=[Uri]('https://github.com/1rubass1/RDC-Relay/releases/download/'+$manifest.tag+'/'+$manifest.asset)
+            Uri=[Uri]('https://github.com/Rubo-Facility/RDC-Relay/releases/download/'+$manifest.tag+'/'+$manifest.asset)
         }
         return $script:rdcFullHostOffer.Version
     }catch{return $null}
@@ -469,7 +469,7 @@ function Update-RdcUpdateNoticePolling {
                 $sha = $ref.object.sha
                 if ($ref.ref -cne 'refs/heads/stable' -or $ref.object.type -cne 'commit' -or
                     $sha -isnot [string] -or $sha -cnotmatch '\A[0-9a-f]{40}\z') { throw 'Invalid stable ref' }
-                $url = 'https://raw.githubusercontent.com/1rubass1/RDC-Relay/' +
+                $url = 'https://raw.githubusercontent.com/Rubo-Facility/RDC-Relay/' +
                     $sha + '/Source/full-host-update-manifest.json'
                 $script:rdcNoticeCheckTask = $script:rdcNoticeHttp.GetStringAsync($url)
                 $script:rdcNoticeCheckPhase = 'manifest'
@@ -506,7 +506,7 @@ function Update-RdcUpdateNoticePolling {
             $script:rdcNoticeHttp.DefaultRequestHeaders.UserAgent.ParseAdd('RDCRelayUpdateNotice/1.0')
             $script:rdcNoticeHttp.DefaultRequestHeaders.Accept.ParseAdd('application/vnd.github+json')
         }
-        $url = 'https://api.github.com/repos/1rubass1/RDC-Relay/git/ref/heads/stable'
+        $url = 'https://api.github.com/repos/Rubo-Facility/RDC-Relay/git/ref/heads/stable'
         $script:rdcNoticeCheckTask = $script:rdcNoticeHttp.GetStringAsync($url)
         $script:rdcNoticeCheckPhase = 'commit'
     } catch {

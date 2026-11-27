@@ -65,6 +65,7 @@ function Validate-OfficialEndpoint([string]$url) {
  }catch{throw 'RC1_QUOTA_OFFICIAL_ENDPOINT_ONLY'}
 }
 function Read-OAuthMetadata {
+ if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){throw 'RC1_QUOTA_DISABLED'}
  $m=Invoke-RestMethod -Uri ($service+'/.well-known/oauth-authorization-server') -TimeoutSec 12 -MaximumRedirection 0
  foreach($key in @('issuer','authorization_endpoint','token_endpoint','registration_endpoint')) {
   [void](Validate-OfficialEndpoint ([string]$m.$key))
@@ -117,6 +118,7 @@ function Read-Credentials {
  }finally{[Array]::Clear($bytes,0,$bytes.Length)}
 }
 function Post-Token([string]$uri,[hashtable]$body){
+ if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){throw 'RC1_QUOTA_DISABLED'}
  [void](Validate-OfficialEndpoint $uri)
  return Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/x-www-form-urlencoded' -TimeoutSec 15 -MaximumRedirection 0
 }
@@ -173,6 +175,7 @@ function Invoke-QuotaAuthorize {
   token_endpoint_auth_method='none'
  }|ConvertTo-Json -Compress
  $script:quotaStage='registration'
+ if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){throw 'RC1_QUOTA_DISABLED'}
  $client=Invoke-RestMethod -Method Post -Uri (Validate-OfficialEndpoint $metadata.registration_endpoint) -Body $registration -ContentType 'application/json' -TimeoutSec 15 -MaximumRedirection 0
  if([string]$client.client_id -notmatch '^[A-Za-z0-9._-]{1,220}$'){throw 'RC1_QUOTA_DCR_INVALID'}
  $clientAuth=Get-ClientAuth $client
@@ -225,7 +228,7 @@ function Invoke-QuotaAuthorize {
   if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){throw 'RC1_QUOTA_DISABLED'}
   [void](Store-Session ([string]$client.client_id) $token $clientAuth.Method $clientAuth.Secret)
   $script:quotaStage='vault'
-  [void](Invoke-QuotaPoll)
+  if(-not (Invoke-QuotaPoll)){throw 'RC1_QUOTA_NOT_PUBLISHED'}
  }finally{if($listener.IsListening){$listener.Stop()};$listener.Close()}
 }
 function Parse-McpResponse([string]$body){
@@ -241,6 +244,7 @@ function Parse-McpResponse([string]$body){
  throw 'RC1_QUOTA_MCP_REPLY_MISSING'
 }
 function Send-Mcp([string]$token,[string]$body,[string]$session=''){
+ if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){throw 'RC1_QUOTA_DISABLED'}
  $headers=@{Authorization=('Bearer '+$token);Accept='application/json, text/event-stream';'MCP-Protocol-Version'='2025-06-18'}
  if($session){$headers['Mcp-Session-Id']=$session}
  $res=Invoke-WebRequest -UseBasicParsing -Method Post -Uri $endpoint -Headers $headers -Body $body -ContentType 'application/json' -TimeoutSec 20 -MaximumRedirection 0
@@ -279,6 +283,7 @@ function Invoke-QuotaPoll {
   }
   $refresh=Add-ClientAuth $refresh ([string]$item.tokenAuthMethod) ([string]$item.clientSecret)
   $token=Post-Token ([string]$metadata.token_endpoint) $refresh
+  if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){return $false}
   $item=Store-Session ([string]$item.clientId) $token ([string]$item.tokenAuthMethod) ([string]$item.clientSecret)
  }
  $script:quotaStage='mcp'
@@ -313,5 +318,6 @@ try{
 }catch{
  # No private exception text; diagnostic only distinguishes the stage.
  # Never turn an unrelated network error into red 0%.
+ if(-not (Test-Rc1QuotaDisplayEnabled $quotaDisplayPath)){Stop-Quota 'DISABLED'}
  Stop-Quota 'UNAVAILABLE'
 }

@@ -55,6 +55,9 @@ internal static class RdcRc1CandidateLauncher {
  // Extracted Portable is a user-facing executable: Windows Explorer invokes
  // its Main with zero arguments. Setup's existing --full route remains valid.
  // Neither mode is allowed to bypass the private candidate or package checks.
+ internal static bool RequiresPortablePreflight(string[] args,bool installed){
+  return args!=null&&args.Length==0&&!installed;
+ }
  static bool FullLaunchRequested(string[] args){
   return args!=null && (args.Length==0 ||
     (args.Length==1 && String.Equals(args[0],"--full",StringComparison.Ordinal)));
@@ -115,7 +118,7 @@ internal static class RdcRc1CandidateLauncher {
   "Source/RDCRelay.ico","Source/RdcTrayV04.bin",
   "Source/divider-caustic.ps","Source/divider-caustic-detail.ps",
   "Source/divider-particles.ps","Source/divider-particles-core.ps",
-  "Source/update-notice.ps1","Source/update.ps1","Source/version.txt","Source/THIRD_PARTY_NOTICES.txt",
+  "Source/update-notice.ps1","Source/version.txt","Source/THIRD_PARTY_NOTICES.txt",
   "RdcOwnerRuntime.dll","RDC Relay.exe"
  };
  static string HashFile(string path){
@@ -237,6 +240,25 @@ internal static class RdcRc1CandidateLauncher {
     Console.WriteLine("RC1_EXISTING_HOST_GUI_READY");
     return 0;
    }
+   // Explicit Explorer double-click only, after package validation and existing
+   // Host activation. Installed --full and background routes never install.
+   bool portablePreflight=RequiresPortablePreflight(args,RdcOwnerStartup.IsActiveSource(source));
+   if(portablePreflight){
+    bool en=RdcNodePrerequisite.NodeEnglish(false);
+    try{
+     if(!RdcNodePrerequisite.EnsureNodePrerequisite(false,true))return 1;
+    }catch(Exception problem){
+     string code=SafeFailureCode(problem);
+     System.Windows.Forms.MessageBox.Show(
+      (en?"Could not prepare Node.js for Portable.":"Не удалось подготовить Node.js для Portable.")+
+      Environment.NewLine+code+Environment.NewLine+
+      (code=="RC1_NODE_RESTART_REQUIRED"?
+       (en?"Restart Windows, then reopen RDC Relay.":"Перезагрузите Windows, затем снова откройте RDC Relay."):
+       (en?"Check the runtime and reopen RDC Relay.":"Проверьте среду и снова откройте RDC Relay.")),
+      "RDC Relay",System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Warning);
+     return 42;
+    }
+   }
    string ps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
      @"WindowsPowerShell\v1.0\powershell.exe");
    var psi=new ProcessStartInfo(ps,
@@ -246,6 +268,8 @@ internal static class RdcRc1CandidateLauncher {
    psi.CreateNoWindow=true;
    psi.RedirectStandardError=true;
    psi.WorkingDirectory=source;
+   // Diagnostic hint only. Never grants ownership or installation privileges.
+   psi.EnvironmentVariables["RDC_RELAY_DIAGNOSTIC_MODE"]=portablePreflight?"portable":"unknown";
    using(var child=Process.Start(psi)){
     if(child==null)throw new InvalidOperationException("RC1_HOST_START_FAILED");
     // Observe bounded host diagnostics without exposing a raw PowerShell

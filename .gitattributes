@@ -1,0 +1,2 @@
+# Preserve manifest-hashed source bytes across Git checkouts.
+FullHost/** -text

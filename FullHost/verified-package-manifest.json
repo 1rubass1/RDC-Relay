@@ -7,15 +7,15 @@
     "files":  [
                   {
                       "name":  "Source/remote-window.ps1",
-                      "sha256":  "DC421F604BBB89F73B93BB59FD1611E5A7A04592C771D4B4FF8FBF3A2858CFFA"
+                      "sha256":  "CEFB5D7A2F4E9AD0CD2BD38C64EE652A799C82717D1C9E3DC4256CD7A0B33E5F"
                   },
                   {
                       "name":  "Source/rc1-tray-host.ps1",
-                      "sha256":  "6F72D54A30588FB9D82818E87854CCFAF9E6281DC05FBD498F1FB1CD1CBB94F7"
+                      "sha256":  "B702A2CFA2A2E1277B56722D24BA4A4588A5DF8351D18DA87BB5F4B4A3072523"
                   },
                   {
                       "name":  "Source/rc1-owner-gui.ps1",
-                      "sha256":  "7D089E14ED692C66D971704AE44E0F8EC816A664D772EF056DA5485B05A8FF22"
+                      "sha256":  "BB7AABCDEA707959D8F156DAA8E361D4A0D30EEB35CD1D65321E38D50F311DDF"
                   },
                   {
                       "name":  "Source/rc1-remote-observer.ps1",
@@ -23,7 +23,7 @@
                   },
                   {
                       "name":  "Source/rc1-quota-client.ps1",
-                      "sha256":  "338AF843A8A02A64A6DB2C349A0805C2BAEA4A582F0804BEDABE31633E8A6E25"
+                      "sha256":  "DE0F0EFB80689A936666876D5EBCC7E2E0799A62BA61FCDBE5D2C88027D8B629"
                   },
                   {
                       "name":  "Source/RdcOwnerWire.cs",
@@ -31,7 +31,7 @@
                   },
                   {
                       "name":  "Source/RdcOwnerRuntime.cs",
-                      "sha256":  "C425BE17ADD62253EF9F7A8A1C75FA6AFBF4C40F342A27F2295362B553BA83D5"
+                      "sha256":  "DBD8246E138E60382A732AF485F75FA15EB9E13B9C4924501EA11A3036FEBACA"
                   },
                   {
                       "name":  "Source/RdcOwnerProcess.cs",
@@ -47,27 +47,27 @@
                   },
                   {
                       "name":  "Source/RdcOwnerManagedProcess.cs",
-                      "sha256":  "D9353A8C5A0ACF00EA83E9C63F8BC82341F4C60079387385AA51CC4EBEE237D1"
+                      "sha256":  "F7A3094C6F153186FA618C2019F1A9EA717035C0FD7FD59E86A5625DC74EEB1B"
                   },
                   {
                       "name":  "Source/RdcOwnerLogParts.cs",
-                      "sha256":  "22D4F486982C4A392FEDB27FF0FB922AE3E72B48511277F7C6A8E3323C1BEA3E"
+                      "sha256":  "7E69DF778F09FAA17FFB25B6B7C9983ABDFA06A177F4C77A031AE7C22F490248"
                   },
                   {
                       "name":  "Source/RdcOwnerStartup.cs",
-                      "sha256":  "514D8587DF2552F3B2DE92ADA011DFE128D7938C0AAA316D06F8B265D73A7524"
+                      "sha256":  "541638E7BC8027CD81E60F887108D5B95E0C5A3FC156CE5913F6D41E4A703B3B"
                   },
                   {
                       "name":  "Source/RdcUiLanguage.cs",
-                      "sha256":  "E37678C06ABB76AE9FA4B954EACF4CD5E52CAFB5722473A87FA16B6C6BDE6751"
+                      "sha256":  "14E01D0ED56386EE889BA509ACC7E787F2EEFC747E6C9C8EEBCE1AAF34D7713C"
                   },
                   {
                       "name":  "Source/lang/ru-RU.json",
-                      "sha256":  "2F6C3F04152DE421270C9C55ADCFDE081607FD089960AC73C0740E52C71C06A6"
+                      "sha256":  "54422CE94422094C62B668D84757A4113B3D4A037DC842C70A4E5CB9FE3DC2EA"
                   },
                   {
                       "name":  "Source/lang/en-US.json",
-                      "sha256":  "9EB7360FFAD99CEE74D0ED0097F417DB5101919ECAC33B00EA767B7FDEBE974D"
+                      "sha256":  "5C8C0DC7342A0926E7348CCE5BD2892118A538334771F765882075B04EBF56FD"
                   },
                   {
                       "name":  "Source/rc1-candidate.json",
@@ -99,11 +99,7 @@
                   },
                   {
                       "name":  "Source/update-notice.ps1",
-                      "sha256":  "308762D890A687ABA984164AFF1AA1685C0D4DE1F4B0A593EA73F3FDADC99AD8"
-                  },
-                  {
-                      "name":  "Source/update.ps1",
-                      "sha256":  "F977FDFF2C1E876491EC5BD669973F30E4E4A131570C0BE04E2D57FB1061776E"
+                      "sha256":  "5DE742BC1F4F43713449F8662E39A94EB6F4D3370D5C869CA0A7F0A842668FCD"
                   },
                   {
                       "name":  "Source/version.txt",
@@ -111,15 +107,15 @@
                   },
                   {
                       "name":  "Source/THIRD_PARTY_NOTICES.txt",
-                      "sha256":  "B596AB0491C93A1DF334451B0A801CF897FCA02AC8464038D2B69785B9CC70EA"
+                      "sha256":  "4B8F94FD0459FC7D667B50669B424E3C62204F38FA8C01AE78F634814AAF79E3"
                   },
                   {
                       "name":  "RdcOwnerRuntime.dll",
-                      "sha256":  "B3835534039F50E4D8BD0CF90CBAF1CA3677251E9572D144C9ED9B24102BA404"
+                      "sha256":  "1182E8838F76BE7EA56A564E1C1381374FFCA0986A9114EDF237C4E8DF2D27D1"
                   },
                   {
                       "name":  "RDC Relay.exe",
-                      "sha256":  "F8947779954B8753809C95855A572E4B34FEB6BDA367E696DC5AAC37163A56D5"
+                      "sha256":  "37CE3B4ECD807937F163124BF21165F07C38229D8E605388001A9B2894AAFAD6"
                   }
               ]
 }

@@ -11,7 +11,7 @@ $identity=[IO.File]::ReadAllText((Join-Path $full 'verified-package-manifest.jso
 $v=[IO.File]::ReadAllText((Join-Path $src 'version.txt')).Trim()
 if($v -cnotmatch '^\d+\.\d+\.\d+$' -or [Version]$v -lt [Version]'1.6.0' -or $identity.candidate -cne $v -or $identity.kind -cne 'FULL_HOST_GUI_V16_PUBLIC' -or !$identity.publishable){throw 'PUBLIC_BUILD_IDENTITY'}
 $runtime=@('RdcOwnerWire.cs','RdcOwnerProcess.cs','RdcOwnerTicketStore.cs','RdcOwnerRemoteState.cs','RdcOwnerManagedProcess.cs','RdcOwnerLogParts.cs','RdcOwnerStartup.cs','RdcUiLanguage.cs','RdcOwnerRuntime.cs')
-$sourceNames=@('remote-window.ps1','rc1-tray-host.ps1','rc1-owner-gui.ps1','rc1-remote-observer.ps1','rc1-quota-client.ps1')+$runtime+@('lang/ru-RU.json','lang/en-US.json','rc1-candidate.json','RDCRelay.ico','RdcTrayV04.bin','divider-caustic.ps','divider-caustic-detail.ps','divider-particles.ps','divider-particles-core.ps','update-notice.ps1','update.ps1','version.txt','THIRD_PARTY_NOTICES.txt')
+$sourceNames=@('remote-window.ps1','rc1-tray-host.ps1','rc1-owner-gui.ps1','rc1-remote-observer.ps1','rc1-quota-client.ps1')+$runtime+@('lang/ru-RU.json','lang/en-US.json','rc1-candidate.json','RDCRelay.ico','RdcTrayV04.bin','divider-caustic.ps','divider-caustic-detail.ps','divider-particles.ps','divider-particles-core.ps','update-notice.ps1','version.txt','THIRD_PARTY_NOTICES.txt')
 $members=@($sourceNames|ForEach-Object{'Source/'+$_})+@('RdcOwnerRuntime.dll','RDC Relay.exe')
 if($identity.files.Count -ne $members.Count -or @($identity.files.name|Select-Object -Unique).Count -ne $members.Count -or @($identity.files.name|Where-Object{$members -cnotcontains $_}).Count){throw 'PUBLIC_BUILD_ALLOWLIST'}
 function Safe($path){
@@ -38,7 +38,7 @@ $runtimeDll=Join-Path $package 'RdcOwnerRuntime.dll'
 & $compiler /nologo /target:library ('/out:'+$runtimeDll) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Management.dll @($runtime|ForEach-Object{Join-Path $src $_})
 if($LASTEXITCODE -ne 0){throw 'PUBLIC_BUILD_RUNTIME'}
 $launcher=Join-Path $package 'RDC Relay.exe'
-& $compiler /nologo /target:winexe /optimize+ ('/win32icon:'+$icon) /reference:System.Core.dll /reference:System.Web.Extensions.dll ('/out:'+$launcher) (Join-Path $inst 'Rc1CandidateLauncher.cs') (Join-Path $src 'RdcOwnerStartup.cs') (Join-Path $inst 'AssemblyInfo.cs')
+& $compiler /nologo /target:winexe /optimize+ ('/win32icon:'+$icon) /reference:System.Core.dll /reference:System.Web.Extensions.dll ('/out:'+$launcher) /reference:System.Windows.Forms.dll (Join-Path $inst 'Rc1CandidateLauncher.cs') (Join-Path $inst 'RdcNodePrerequisite.cs') (Join-Path $src 'RdcOwnerStartup.cs') (Join-Path $inst 'AssemblyInfo.cs')
 if($LASTEXITCODE -ne 0){throw 'PUBLIC_BUILD_LAUNCHER'}
 $rows=@(foreach($n in $members){[ordered]@{name=$n;sha256=(Get-FileHash -LiteralPath (Join-Path $package $n)).Hash}})
 $m=[ordered]@{candidate=$v;kind='FULL_HOST_GUI_V16_PUBLIC';installable=$true;publishable=$true;ownerMode='FULL_HOST_GUI_RC1';files=$rows}
@@ -46,8 +46,8 @@ $mp=Join-Path $package 'owner-source-manifest.json'
 [IO.File]::WriteAllText($mp,($m|ConvertTo-Json -Depth 10),(New-Object Text.UTF8Encoding($false)))
 $setup=Join-Path $package ('RDC.Relay.Setup.v'+$v+'.exe')
 $resourceArgs=@(@($members)+@('owner-source-manifest.json')|ForEach-Object{('/resource:'+(Join-Path $package $_)+',RdcPayload.'+$_.Replace('/','.'))})
-$setupSrc=@('Rc1CandidateSetup.cs','Rc1ManualUpgrade.cs','AssemblyInfo.cs','RdcReleaseLegacyMigrationLease.cs','RdcV16MetadataTransaction.cs','RdcV16IntegratedMaintenance.cs')|ForEach-Object{Join-Path $inst $_}
-& $compiler /nologo /target:winexe /optimize+ /define:RDC_RC1_FULL_SETUP ('/win32icon:'+$icon) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Management.dll ('/out:'+$setup) @resourceArgs @setupSrc (Join-Path $src 'RdcOwnerStartup.cs') (Join-Path $src 'RdcUiLanguage.cs')
+$setupSrc=@('Rc1CandidateSetup.cs','Rc1ManualUpgrade.cs','RdcNodePrerequisite.cs','AssemblyInfo.cs','RdcReleaseLegacyMigrationLease.cs','RdcV16MetadataTransaction.cs','RdcV16IntegratedMaintenance.cs')|ForEach-Object{Join-Path $inst $_}
+& $compiler /nologo /target:winexe /optimize+ /define:RDC_RC1_FULL_SETUP ('/win32icon:'+$icon) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Management.dll ('/out:'+$setup) /reference:System.Windows.Forms.dll @resourceArgs @setupSrc (Join-Path $src 'RdcOwnerStartup.cs') (Join-Path $src 'RdcUiLanguage.cs')
 if($LASTEXITCODE -ne 0){throw 'PUBLIC_BUILD_SETUP'}
 Add-Type -AssemblyName System.IO.Compression,System.IO.Compression.FileSystem
 $zipPath=Join-Path $stage ('RDC.Relay.v'+$v+'.Portable.zip')

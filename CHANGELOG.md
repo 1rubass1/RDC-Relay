@@ -4,27 +4,29 @@
 
 A concise history of RDC Relay releases, newest first.
 
-## 1.6.0 — 2026-11-25
+## 1.6.0 — 2026-11-28 (замена сборки / replacement build)
 
 ### Русский
 
-- **Архитектура:** фоновый Host поддерживает Remote независимо от основного окна; управление через системный трей.
-- **Стабильность:** переработаны управление процессами Remote, контроль готовности и восстановление связи.
-- **Интерфейс:** обновлены значки, индикация состояния, визуальные эффекты, меню и диалоги.
-- **Журнал:** просмотр и сохранение логов, автоматическая ротация и ограничение занимаемого пространства.
-- **Установка и обновления:** установка Node.js 24 LTS при отсутствии необходимых зависимостей с согласия пользователя; переход со старой архитектуры через 1.6.0, отдельный канал последующих обновлений.
-- **Локализация:** русский и английский языки с переключением в программе.
+- **Архитектура:** фоновый Host управляет Remote независимо от главного окна; управление через системный трей.
+- **Подключение:** официальный канал Desktop Commander `@latest`, исправленная передача PATH, поддержка отметок времени в журнале и восстановление визуального состояния при повторной доставке вызова после сбоя.
+- **Remaining Calls:** единый источник официальных данных для окна и трея, обновление каждые 30 минут, ограниченное ускорение при открытии окна, проверка аккаунта и срока актуальности.
+- **Интерфейс:** масштабируемый баннер, общая прокрутка заголовка, компактное сворачивание, круглые минимальные ползунки, коррекция геометрии эффекта индикатора.
+- **Журнал:** автоматическая ротация, ограничения хранения и диагностика неудачных запусков.
+- **Установка и обновления:** Node.js 24 LTS при необходимости и с согласия пользователя; поддерживаемая базовая архитектура 1.6.0, без автоматической миграции с 1.5.x. Перед установкой заменяющей сборки завершите RDC Relay.
+- **Локализация:** русский и английский интерфейс.
 
 ### English
 
-- **Architecture:** the background Host maintains Remote independently of the main window, with system tray controls.
-- **Reliability:** reworked Remote process management, readiness tracking and connection recovery.
-- **Interface:** updated icons, status indicators, visual effects, menus and dialogs.
-- **Activity journal:** log viewing and export, automatic rotation and storage limits.
-- **Installation and updates:** optional Node.js 24 LTS installation when required dependencies are missing; migration from the legacy architecture through 1.6.0, with a separate feed for subsequent updates.
-- **Localization:** Russian and English, switchable in the application.
+- **Architecture:** background Host manages Remote independently of the window, with system tray controls.
+- **Connection:** official Desktop Commander `@latest` channel, corrected PATH handling, timestamped log support and visual recovery when targeted calls resume after a channel error.
+- **Remaining Calls:** shared official data source for window and tray, 30-minute refresh, bounded refresh hint on window open, account and freshness checks.
+- **Interface:** scalable wordmark, shared header scrolling, compact collapse, circular minimum scrollbar thumbs and corrected indicator effect geometry.
+- **Journal:** automatic rotation, storage limits and failed-start diagnostics.
+- **Installation and updates:** optional consent-based Node.js 24 LTS installation; supported 1.6.0 baseline without automatic migration from 1.5.x. Exit RDC Relay before installing the replacement build.
+- **Localization:** Russian and English UI.
 
-[Release / Релиз 1.6.0](https://github.com/1rubass1/RDC-Relay/releases/tag/v1.6.0)
+[Release / Релиз 1.6.0](https://github.com/Rubo-Facility/RDC-Relay/releases/tag/v1.6.0)
 
 ## 1.5.18 — 2026-10-20
 
@@ -32,7 +34,6 @@ A concise history of RDC Relay releases, newest first.
 
 **EN:** Fixed the update button when launched with `-SkipUpdate`; the version notice refreshes without restarting the window or replaying the animation. Expanded update tests.
 
-[Release / Релиз 1.5.18](https://github.com/1rubass1/RDC-Relay/releases/tag/v1.5.18)
 
 ## 1.5.17 — 2026-10-20
 

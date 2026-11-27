@@ -6,6 +6,8 @@ using System.IO;
 using System.Text;
 using System.Diagnostics;
 using System.ComponentModel;
+using System.Collections;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
@@ -135,7 +137,7 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
  }
  // The parent keeps only the non-inheritable read end. Both output streams
  // share one kernel pipe, preserving the observed merged byte sequence.
- bool CreateCapturedChild(string application,StringBuilder command,string cwd,out PROCESS_INFORMATION pi){
+ bool CreateCapturedChild(string application,StringBuilder command,string cwd,IntPtr environment,out PROCESS_INFORMATION pi){
   pi=new PROCESS_INFORMATION();
   IntPtr read=IntPtr.Zero,write=IntPtr.Zero,input=IntPtr.Zero,list=IntPtr.Zero,values=IntPtr.Zero;
   bool initialized=false;
@@ -162,7 +164,7 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
    sx.info.cb=(uint)Marshal.SizeOf(typeof(STARTUPINFOEX));sx.info.dwFlags=0x100;
    sx.info.hStdInput=input;sx.info.hStdOutput=write;sx.info.hStdError=write;sx.attributes=list;
    if(!CreateProcessCaptured(application,command,IntPtr.Zero,IntPtr.Zero,true,
-      0x00000004u|0x08000000u|0x00080000u,IntPtr.Zero,cwd,ref sx,out pi))
+      0x00000004u|0x08000000u|0x00080000u|0x00000400u,environment,cwd,ref sx,out pi))
     throw new Win32Exception(Marshal.GetLastWin32Error(),"RC1_CAPTURE_CREATE_PROCESS");
    captureRead=read;read=IntPtr.Zero;
    return true;
@@ -222,6 +224,23 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
  public void StartCaptured(string executable,string arguments,string cwd){
   StartCore(executable,arguments,cwd,null,true);
  }
+ // Use the same already validated runtime for npm's lifecycle subprocesses.
+ // The installing process may have inherited PATH before the Node MSI ran.
+ // Never modify the Host, user or machine PATH, or log inherited variables.
+ static string ChildEnvironment(string executable){
+  string dir=Path.GetDirectoryName(executable);
+  if(String.IsNullOrEmpty(dir)||dir.IndexOfAny(new[]{';','"','\0'})>=0)
+   throw new InvalidOperationException("RC1_OWNED_RUNTIME_PATH_INVALID");
+  var variables=new SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+  foreach(DictionaryEntry entry in Environment.GetEnvironmentVariables())
+   variables[(string)entry.Key]=(string)entry.Value;
+  string oldPath;variables.TryGetValue("PATH",out oldPath);
+  variables["PATH"]=dir+(String.IsNullOrEmpty(oldPath)?"":";"+oldPath);
+  var block=new StringBuilder();
+  foreach(var entry in variables)block.Append(entry.Key).Append('=').Append(entry.Value).Append('\0');
+  block.Append('\0');
+  return block.ToString();
+ }
  void StartCore(string executable,string arguments,string cwd,string logPath,bool capture) {
   if(started||disposed)throw new InvalidOperationException("RC1_OWNED_ALREADY_USED");
   executable=Path.GetFullPath(executable);cwd=Path.GetFullPath(cwd);
@@ -235,10 +254,10 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
   // Only the verified Node npx.cmd shim may be used to start pinned Remote.
   // No arbitrary shell command or user string enters this launcher.
   if(!String.Equals(Path.GetFileName(executable),"npx.cmd",StringComparison.OrdinalIgnoreCase)||
-     (arguments!="--yes @wonderwhy-er/desktop-commander@0.2.52 remote" &&
-      arguments!="--yes @wonderwhy-er/desktop-commander@0.2.52 remote --logout"))
+     (arguments!="--yes @wonderwhy-er/desktop-commander@latest remote" &&
+      arguments!="--yes @wonderwhy-er/desktop-commander@latest remote --logout"))
    throw new InvalidOperationException("RC1_OWNED_PIN_REFUSED");
-  if(capture&&arguments!="--yes @wonderwhy-er/desktop-commander@0.2.52 remote")
+  if(capture&&arguments!="--yes @wonderwhy-er/desktop-commander@latest remote")
    throw new InvalidOperationException("RC1_CAPTURE_REMOTE_ONLY");
   string cmdExe=Path.Combine(Environment.SystemDirectory,"cmd.exe");
   SafePath(cmdExe);
@@ -249,12 +268,14 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
   var si=new STARTUPINFO();si.cb=(uint)Marshal.SizeOf(typeof(STARTUPINFO));
   var pi=new PROCESS_INFORMATION();
   bool created=false,assigned=false;
+  IntPtr environment=IntPtr.Zero;
   try{
+   environment=Marshal.StringToHGlobalUni(ChildEnvironment(executable));
    // CREATE_SUSPENDED | CREATE_NO_WINDOW: assignment precedes first instruction,
    // so all descendants inherit the exact private kernel Job membership.
-   if(capture){CreateCapturedChild(cmdExe,command,cwd,out pi);}
+   if(capture){CreateCapturedChild(cmdExe,command,cwd,environment,out pi);}
    else if(!CreateProcessW(cmdExe,command,IntPtr.Zero,IntPtr.Zero,false,
-      0x00000004u|0x08000000u,IntPtr.Zero,cwd,ref si,out pi))
+      0x00000004u|0x08000000u|0x00000400u,environment,cwd,ref si,out pi))
     throw new Win32Exception(Marshal.GetLastWin32Error(),"RC1_OWNED_CREATE_PROCESS");
    created=true;
    if(!AssignProcessToJobObject(handle,pi.process))
@@ -272,6 +293,7 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
    pid=checked((int)pi.pid);process=pi.process;pi.process=IntPtr.Zero;
    job=handle;handle=IntPtr.Zero;started=true;
   }finally{
+   if(environment!=IntPtr.Zero)Marshal.FreeHGlobal(environment);
    if(pi.thread!=IntPtr.Zero)CloseHandle(pi.thread);
    if(pi.process!=IntPtr.Zero){
     // This handle is ONLY our freshly created process, suspended before its
@@ -315,7 +337,8 @@ public sealed class RdcOwnerManagedProcess : IDisposable {
    throw new InvalidOperationException("RC1_OWNED_STOP_BOUNDARY");
   JOB_ACCOUNTING a;
   if(!Accounting(out a))throw new InvalidOperationException("RC1_OWNED_JOB_QUERY_FAILED");
-  if(a.active==0){stopRequested=true;return true;}
+  // A late Stop on an already empty Job is not a termination request.
+  if(a.active==0)return true;
   bool member;
   if(process==IntPtr.Zero||!IsProcessInJob(process,job,out member)||!member)
    throw new InvalidOperationException("RC1_OWNED_ROOT_MEMBERSHIP_UNVERIFIED");

@@ -101,6 +101,73 @@ internal static class RdcRc1ManualUpgrade {
   shortcut.GetType().InvokeMember("Save",BindingFlags.InvokeMethod,
    null,shortcut,new object[0]);
  }
+ // Public Setup creates the shell link in memory: no intermediate .lnk on
+ // Desktop or on disk, including when Setup is interrupted before publication.
+ // MS-SHLLINK 1.3: ShellLink supports IShellLink + IPersistStream.
+ [ComImport,Guid("000214F9-0000-0000-C000-000000000046"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ interface IShellLinkW {
+  void GetPath([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder path,int count,IntPtr findData,uint flags);
+  void GetIDList(out IntPtr list);
+  void SetIDList(IntPtr list);
+  void GetDescription([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder text,int count);
+  void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string text);
+  void GetWorkingDirectory([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder dir,int count);
+  void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string dir);
+  void GetArguments([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder args,int count);
+  void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string args);
+  void GetHotkey(out short hotkey);
+  void SetHotkey(short hotkey);
+  void GetShowCmd(out int show);
+  void SetShowCmd(int show);
+  void GetIconLocation([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder path,int count,out int index);
+  void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string path,int index);
+  void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string path,uint reserved);
+  void Resolve(IntPtr hwnd,uint flags);
+  void SetPath([MarshalAs(UnmanagedType.LPWStr)] string path);
+ }
+ [ComImport,Guid("00000109-0000-0000-C000-000000000046"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ interface IPersistStream {
+  void GetClassID(out Guid id);
+  [PreserveSig] int IsDirty();
+  void Load(System.Runtime.InteropServices.ComTypes.IStream stream);
+  void Save(System.Runtime.InteropServices.ComTypes.IStream stream,[MarshalAs(UnmanagedType.Bool)] bool clearDirty);
+  void GetSizeMax(out long size);
+ }
+ [DllImport("ole32.dll")]
+ static extern int CreateStreamOnHGlobal(IntPtr memory,[MarshalAs(UnmanagedType.Bool)] bool deleteOnRelease,
+  out System.Runtime.InteropServices.ComTypes.IStream stream);
+ internal static byte[] BuildShortcutBytes(string release,string launcher) {
+  CheckPath(release);CheckPath(launcher);
+  if(!File.Exists(launcher))throw new IOException("RC1_MANUAL_LAUNCHER_ABSENT");
+  object instance=null;
+  System.Runtime.InteropServices.ComTypes.IStream stream=null;
+  IntPtr read=IntPtr.Zero;
+  try {
+   instance=Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046"),true));
+   var link=(IShellLinkW)instance;
+   link.SetPath(launcher);
+   link.SetArguments("--full");
+   link.SetWorkingDirectory(release);
+   link.SetIconLocation(Path.Combine(release,"Source","RDCRelay.ico"),0);
+   link.SetDescription("RDC Relay 1.6.0 (full Host/GUI candidate)");
+   Marshal.ThrowExceptionForHR(CreateStreamOnHGlobal(IntPtr.Zero,true,out stream));
+   ((IPersistStream)instance).Save(stream,true);
+   System.Runtime.InteropServices.ComTypes.STATSTG stat;
+   stream.Stat(out stat,1);
+   if(stat.cbSize<=0||stat.cbSize>65536)throw new IOException("RC1_MANUAL_NEW_SHORTCUT_SIZE");
+   byte[] bytes=new byte[(int)stat.cbSize];
+   stream.Seek(0,0,IntPtr.Zero);
+   read=Marshal.AllocCoTaskMem(sizeof(int));
+   Marshal.WriteInt32(read,0);
+   stream.Read(bytes,bytes.Length,read);
+   if(Marshal.ReadInt32(read)!=bytes.Length)throw new IOException("RC1_MANUAL_NEW_SHORTCUT_READ");
+   return bytes;
+  }finally{
+   if(read!=IntPtr.Zero)Marshal.FreeCoTaskMem(read);
+   if(stream!=null)Marshal.FinalReleaseComObject(stream);
+   if(instance!=null)Marshal.FinalReleaseComObject(instance);
+  }
+ }
  // Copies only the verified candidate's exact manifest-listed payload.
  // Old installed app directories are never moved, removed or overwritten.
  internal static string Prepare(string source,string localRoot,string[] required) {
@@ -206,9 +273,6 @@ internal static class RdcRc1ManualUpgrade {
   CheckPath(release);CheckPath(desktop);
   string launcher=Path.Combine(release,"RDC Relay.exe");
   if(!File.Exists(launcher))throw new InvalidOperationException("RC1_MANUAL_LAUNCHER_ABSENT");
-  string legacy=Path.Combine(localRoot,"RemoteDesktopCommanderLauncher","remote-window.ps1");
-  string legacyVersion=Path.Combine(localRoot,"RemoteDesktopCommanderLauncher","version.txt");
-  CheckPath(legacy);CheckPath(legacyVersion);
   string desktopLink=Path.Combine(desktop,"RDC Relay.lnk");
   CheckPath(desktopLink);
   bool firstInstall=!HasPrimaryDesktopShortcut(desktop);
@@ -225,14 +289,6 @@ internal static class RdcRc1ManualUpgrade {
     old=OpenShortcut(shell,desktopLink);
     string oldTarget=ReadShortcut(old,"TargetPath");
     string oldArgs=ReadShortcut(old,"Arguments");
-    string powershell=Path.Combine(Environment.SystemDirectory,"WindowsPowerShell","v1.0","powershell.exe");
-    string stableArgs="-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File \""+legacy+"\"";
-    string earlierStableArgs="-NoProfile -STA -ExecutionPolicy Bypass -File \""+legacy+"\"";
-    bool isStable=File.Exists(legacy)&&File.Exists(legacyVersion)&&
-      String.Equals(File.ReadAllText(legacyVersion).Trim(),"1.5.18",StringComparison.Ordinal)&&
-      String.Equals(Path.GetFullPath(oldTarget),Path.GetFullPath(powershell),StringComparison.OrdinalIgnoreCase)&&
-      (String.Equals(oldArgs.Trim(),stableArgs,StringComparison.OrdinalIgnoreCase)||
-       String.Equals(oldArgs.Trim(),earlierStableArgs,StringComparison.OrdinalIgnoreCase));
     string oldFull=Path.GetFullPath(oldTarget);
     string oldDir=Path.GetDirectoryName(oldFull);
     string pilotRoot=Path.GetFullPath(Path.Combine(localRoot,"RDCRelayOwnerPilot","1.6.0-RC1"));
@@ -246,9 +302,9 @@ internal static class RdcRc1ManualUpgrade {
       knownPilotDirectory&&File.Exists(oldFull)&&
       (String.Equals(oldArgs.Trim(),"--observe-existing",StringComparison.Ordinal)||
        String.Equals(oldArgs.Trim(),"--full",StringComparison.Ordinal));
-    if(!isStable&&!isOldRc1)
+    if(!isOldRc1)
      throw new InvalidOperationException("RC1_MANUAL_UNKNOWN_OLD_SHORTCUT_REFUSED");
-    switchedFromStable=isStable;
+    switchedFromStable=false;
     if(String.Equals(Path.GetFullPath(oldTarget),Path.GetFullPath(launcher),StringComparison.OrdinalIgnoreCase)&&
         String.Equals(oldArgs.Trim(),"--full",StringComparison.Ordinal))
      if(RdcV16IntegratedMaintenance.IsRegistered(localRoot))return "ALREADY_ACTIVE";
@@ -273,22 +329,7 @@ internal static class RdcRc1ManualUpgrade {
      }else oldHostLocked=true;
     }
    }
-   string temporary=Path.Combine(desktop,".rdc-rc1-"+Guid.NewGuid().ToString("N")+".lnk");
-   string backup=Path.Combine(Path.GetDirectoryName(release),
-    "primary-shortcut-backup-"+Guid.NewGuid().ToString("N")+".lnk");
-   CheckPath(temporary);CheckPath(backup);
-   if(File.Exists(temporary)||File.Exists(backup))throw new IOException("RC1_MANUAL_SHORTCUT_COLLISION");
-   newLink=OpenShortcut(shell,temporary);
-   SetShortcut(newLink,"TargetPath",launcher);
-   SetShortcut(newLink,"Arguments","--full");
-   SetShortcut(newLink,"WorkingDirectory",release);
-   SetShortcut(newLink,"IconLocation",Path.Combine(release,"Source","RDCRelay.ico")+",0");
-   SetShortcut(newLink,"Description","RDC Relay 1.6.0 (full Host/GUI candidate)");
-   SaveShortcut(newLink);
-   Marshal.FinalReleaseComObject(newLink);newLink=null;
-   if(!File.Exists(temporary))throw new IOException("RC1_MANUAL_NEW_SHORTCUT_MISSING");
-   string candidateLinkHash=Sha(temporary);
-   RdcV16IntegratedMaintenance.Publish(release,localRoot,desktop,temporary,previousRc1HostIdle);
+   RdcV16IntegratedMaintenance.Publish(release,localRoot,desktop,BuildShortcutBytes(release,launcher),previousRc1HostIdle);
    return firstInstall?"CREATED":switchedFromStable?"SWITCHED_STABLE":"SWITCHED_RC1";
   }finally{
    if(newLink!=null)Marshal.FinalReleaseComObject(newLink);
