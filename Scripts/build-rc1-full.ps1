@@ -1,4 +1,4 @@
-﻿# Build a separately identified full owner-Host/GUI 1.6.0 RC1 Setup + Portable.
+# Build a separately identified full owner-Host/GUI 1.6.0 RC1 Setup + Portable.
 # This command NEVER executes Setup, Launcher, GUI or Desktop Commander Remote.
 param([switch]$Build,[switch]$ReleaseQualification,[string]$QualificationVersion="1.6.0",[switch]$PublicPreflight)
 $ErrorActionPreference='Stop'
@@ -24,7 +24,8 @@ if($branch -cne 'feature/v1.6-host-gui-owner-pilot' -and
    $branch -cne 'fix/rc1-r2-readiness-proof' -and
    $branch -cne 'fix/rc1-r3-observer-partial-stream' -and
    $branch -cne 'fix/rc1-r3-buffered-observer-lines' -and
-   $branch -cne 'fix/rc1-tray-exit-prompt'){
+   $branch -cne 'fix/rc1-tray-exit-prompt' -and
+   !($branch -ceq 'integration/v1.6.0-replacement' -and $ReleaseQualification -and $QualificationVersion -ceq '1.6.0')){
  throw 'RC1_WRONG_FEATURE_BRANCH'
 }
 $src=Join-Path $repo 'Source'
