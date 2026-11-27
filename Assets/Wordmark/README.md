@@ -7,7 +7,7 @@ remove the reference's RGB subpixel fringes. PNG variants are produced
 from the same reconstructed geometry at 96/120/144/168/192 DPI.
 The Owner GUI embeds all five variants in its existing manifest-hashed
 remote-window.ps1, selects the smallest source that covers the target
-pixel width, and paints a single fixed graphic above the scrollable text.
+pixel width, and paints a graphic within the shared header scroll viewport.
 No runtime image decoder package or SVG dependency is downloaded.
 Regenerate with Scripts/Generate-RdcWordmark.ps1 -Reference <reference.png>
 -Output <Assets/Wordmark>. Synchronize the five embedded PNG strings in

@@ -74,7 +74,16 @@ The full Host feed must remain inactive until the corresponding exact
 public release asset is verified. Do not treat a source snapshot with
 an inactive feed as an available automatic update.
 '@
-[IO.File]::WriteAllText((Join-Path $tree 'README.md'),$readme,(New-Object Text.UTF8Encoding($false)))
+$warning=[IO.File]::ReadAllText((Join-Path $repo 'docs/release/SAC-CAUTION.md'))
+[IO.File]::WriteAllText((Join-Path $tree 'README.md'),$readme+[Environment]::NewLine+[Environment]::NewLine+$warning,(New-Object Text.UTF8Encoding($false)))
+[IO.File]::Copy((Join-Path $repo 'CHANGELOG.md'),(Join-Path $tree 'CHANGELOG.md'),$false)
+[IO.File]::Copy((Join-Path $repo 'docs/release/v1.6.0.md'),(Join-Path $tree 'RELEASE_NOTES.md'),$false)
+$wordmark=Join-Path $tree 'Assets/Wordmark'
+[void][IO.Directory]::CreateDirectory($wordmark)
+foreach($name in @('README.md','reference.png','rdc-wordmark.svg','rdc-wordmark-96.png','rdc-wordmark-120.png','rdc-wordmark-144.png','rdc-wordmark-168.png','rdc-wordmark-192.png')){
+ [IO.File]::Copy((Join-Path $repo ('Assets/Wordmark/'+$name)),(Join-Path $wordmark $name),$false)
+}
+[IO.File]::Copy((Join-Path $PSScriptRoot 'Generate-RdcWordmark.ps1'),(Join-Path $tree 'Scripts/Generate-RdcWordmark.ps1'),$false)
 [IO.File]::Copy((Join-Path $PSScriptRoot 'build-v16-public-source.ps1'),(Join-Path $tree 'Scripts\build-release.ps1'),$true)
 # Verify complete package resources and ZIP contents separately.
 $z=[IO.Compression.ZipFile]::OpenRead($portable)

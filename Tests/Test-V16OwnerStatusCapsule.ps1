@@ -19,10 +19,10 @@ $tokens=$null;$errors=$null
 [void][Management.Automation.Language.Parser]::ParseInput($src,[ref]$tokens,[ref]$errors)
 Check ($errors.Count -eq 0) 'product GUI still parses under WinPS 5.1'
 $start='public class RdcStatusIndicator : Control {'
-$end='public class RdcBufferedPanel : Panel {'
+$endPattern='(?m)^public (?:sealed )?class '
 function Extract([string]$inputText){
  $a=$inputText.IndexOf($start,[StringComparison]::Ordinal)
- $b=$inputText.IndexOf($end,$a,[StringComparison]::Ordinal)
+ $b=if($a -ge 0){$m=[regex]::Match($inputText.Substring($a+$start.Length),$endPattern);if($m.Success){$a+$start.Length+$m.Index}else{-1}}else{-1}
  if($a -lt 0 -or $b -le $a){throw 'INDICATOR_SOURCE_EXTRACTION_MISSING'}
  return $inputText.Substring($a,$b-$a)
 }
