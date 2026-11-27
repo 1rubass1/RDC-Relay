@@ -25,6 +25,23 @@ foreach($file in @('remote-window.ps1','rc1-owner-gui.ps1','update-notice.ps1','
  [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $source $file),[ref]$tokens,[ref]$err)
  Check ($err.Count -eq 0) ('actual staged script parses '+$file)
 }
+if($PublicPreflight){
+ $t=$null;$e=$null
+ $publicGui=[Management.Automation.Language.Parser]::ParseFile((Join-Path $source 'remote-window.ps1'),[ref]$t,[ref]$e)
+ Check ($e.Count -eq 0 -and $publicGui.EndBlock.Statements[3].Extent.Text -ceq 'if(-not $OwnerGui){throw ''RDC_PUBLIC_HOST_GUI_REQUIRED''}') 'public GUI requires OwnerGui before legacy code or side effects'
+ $buildSource=Join-Path (Split-Path -Parent $Package) 'build-source/Rc1CandidateSetup.cs'
+ if([IO.File]::Exists($buildSource)){
+  $publicSetup=[IO.File]::ReadAllText($buildSource)
+  Check ($publicSetup.Contains('bool privateSideBySide=false;') -and !$publicSetup.Contains('args[0]=="--owner-approved-side-by-side"')) 'public setup private staging selector disabled'
+ }
+}
+$diagAsm=[Reflection.Assembly]::Load([IO.File]::ReadAllBytes((Join-Path $Package 'RdcOwnerRuntime.dll')))
+$diagType=$diagAsm.GetType('RdcOwnerEnvironmentDiagnostics',$true)
+Check ($diagType.GetField('RelayBuild').GetRawConstantValue() -ceq $ExpectedVersion) 'compiled diagnostic identity agrees with numeric release'
+foreach($row in @(@('portable',$false,'portable'),@('portable',$true,'installed'),@('invalid',$false,'unknown'))){
+ $line=$diagType.GetMethod('RelayObservation').Invoke($null,@([string]$row[0],[bool]$row[1]))
+ Check ($line -ceq ('relay_version='+$ExpectedVersion+' relay_mode='+$row[2])) ('compiled diagnostic mode '+$row[2])
+}
 $gui=[IO.File]::ReadAllText((Join-Path $source 'remote-window.ps1'))
 $owner=[IO.File]::ReadAllText((Join-Path $source 'rc1-owner-gui.ps1'))
 $runtime=[IO.File]::ReadAllText((Join-Path $source 'RdcOwnerRuntime.cs'))
