@@ -1707,7 +1707,7 @@ void RefreshTrayMenu(){
     }
     string notice=missingNode?
       RdcUiLanguage.Text(labels,"owner.connection.detail.fault.nodeMissing",
-       "Node.js с npm/npx отсутствует или не готов к работе. Повторно запустите установщик RDC Relay."):
+       "Node.js с npm/npx отсутствует или не готов к работе. Запустите Setup либо завершите RDC Relay через трей и снова откройте Portable."):
       RdcUiLanguage.Text(labels,"tray.notice.actionFailed",
        "Действие не выполнено: {error}. Проверьте состояние Remote в окне RDC Relay.");
     MessageBox.Show(notice.Replace("{error}",failure.GetType().Name),

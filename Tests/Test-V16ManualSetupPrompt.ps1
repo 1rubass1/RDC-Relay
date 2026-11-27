@@ -88,6 +88,7 @@ try {
   '/reference:System.Core.dll','/reference:System.Web.Extensions.dll',
   '/reference:System.Management.dll','/reference:System.Windows.Forms.dll',
   (Join-Path $installer 'Rc1CandidateSetup.cs'),
+  (Join-Path $installer 'RdcNodePrerequisite.cs'),
   (Join-Path $installer 'Rc1ManualUpgrade.cs'))
  $buildOutput=@(& $compiler @args 2>&1)
  Check ($LASTEXITCODE -eq 0 -and [IO.File]::Exists($exeDll)) 'real production Setup and shortcut-switch code compile in disposable library'

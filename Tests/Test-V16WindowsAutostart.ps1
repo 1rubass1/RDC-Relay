@@ -2,7 +2,7 @@
 # No actual Run key, installed launcher, Explorer, Host or Remote is changed.
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
-Add-Type -Path @((Join-Path $repo 'Source\RdcOwnerStartup.cs'),(Join-Path $repo 'Installer\Rc1CandidateLauncher.cs')) -ReferencedAssemblies @('System.Core.dll','System.Web.Extensions.dll','System.dll') -PassThru | Out-Null
+Add-Type -Path @((Join-Path $repo 'Source\RdcOwnerStartup.cs'),(Join-Path $repo 'Installer\Rc1CandidateLauncher.cs'),(Join-Path $repo 'Installer\RdcNodePrerequisite.cs')) -ReferencedAssemblies @('System.Core.dll','System.Web.Extensions.dll','System.dll','System.Windows.Forms.dll','System.Drawing.dll') -PassThru | Out-Null
 $id=[Guid]::NewGuid().ToString('N')
 $root=Join-Path ([IO.Path]::GetTempPath()) ('RDC-STARTUP-TEST-'+$id)
 $keyName='Software\RDC-Startup-Test-'+$id

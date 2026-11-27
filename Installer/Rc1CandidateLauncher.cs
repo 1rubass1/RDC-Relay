@@ -55,6 +55,9 @@ internal static class RdcRc1CandidateLauncher {
  // Extracted Portable is a user-facing executable: Windows Explorer invokes
  // its Main with zero arguments. Setup's existing --full route remains valid.
  // Neither mode is allowed to bypass the private candidate or package checks.
+ internal static bool RequiresPortablePreflight(string[] args,bool installed){
+  return args!=null&&args.Length==0&&!installed;
+ }
  static bool FullLaunchRequested(string[] args){
   return args!=null && (args.Length==0 ||
     (args.Length==1 && String.Equals(args[0],"--full",StringComparison.Ordinal)));
@@ -234,6 +237,24 @@ internal static class RdcRc1CandidateLauncher {
      throw new InvalidOperationException("RC1_EXISTING_HOST_GUI_NOT_READY");
     Console.WriteLine("RC1_EXISTING_HOST_GUI_READY");
     return 0;
+   }
+   // Explicit Explorer double-click only, after package validation and existing
+   // Host activation. Installed --full and background routes never install.
+   if(RequiresPortablePreflight(args,RdcOwnerStartup.IsActiveSource(source))){
+    bool en=RdcNodePrerequisite.NodeEnglish(false);
+    try{
+     if(!RdcNodePrerequisite.EnsureNodePrerequisite(false,true))return 1;
+    }catch(Exception problem){
+     string code=SafeFailureCode(problem);
+     System.Windows.Forms.MessageBox.Show(
+      (en?"Could not prepare Node.js for Portable.":"Не удалось подготовить Node.js для Portable.")+
+      Environment.NewLine+code+Environment.NewLine+
+      (code=="RC1_NODE_RESTART_REQUIRED"?
+       (en?"Restart Windows, then reopen RDC Relay.":"Перезагрузите Windows, затем снова откройте RDC Relay."):
+       (en?"Check the runtime and reopen RDC Relay.":"Проверьте среду и снова откройте RDC Relay.")),
+      "RDC Relay",System.Windows.Forms.MessageBoxButtons.OK,System.Windows.Forms.MessageBoxIcon.Warning);
+     return 42;
+    }
    }
    string ps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
      @"WindowsPowerShell\v1.0\powershell.exe");

@@ -102,7 +102,7 @@ $packageKind='PRIVATE_FULL_RC1'
 if($ReleaseQualification){
  $installerBuild=Join-Path $stage 'build-source'
  [void][IO.Directory]::CreateDirectory($installerBuild)
- foreach($file in @('Rc1CandidateSetup.cs','Rc1CandidateLauncher.cs','Rc1ManualUpgrade.cs')){
+ foreach($file in @('Rc1CandidateSetup.cs','Rc1CandidateLauncher.cs','Rc1ManualUpgrade.cs','RdcNodePrerequisite.cs')){
   [IO.File]::Copy((Join-Path $repo ('Installer/'+$file)),(Join-Path $installerBuild $file),$false)
  }
  [IO.File]::Copy((Join-Path $src 'THIRD_PARTY_NOTICES.txt'),(Join-Path $payload 'THIRD_PARTY_NOTICES.txt'),$false)
@@ -141,7 +141,7 @@ $dll=Join-Path $package 'RdcOwnerRuntime.dll'
 if($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists($dll)){throw 'RC1_FULL_RUNTIME_COMPILE_FAILED'}
 $launcherName=if($PublicPreflight){'RDC Relay.exe'}else{'RC1 Pilot Launcher.exe'}
 $launcher=Join-Path $package $launcherName
-& $compiler /nologo /target:winexe /optimize+ ('/win32icon:'+(Join-Path $payload 'RDCRelay.ico')) /reference:System.Core.dll /reference:System.Web.Extensions.dll ('/out:'+$launcher) (Join-Path $installerBuild 'Rc1CandidateLauncher.cs') (Join-Path $payload 'RdcOwnerStartup.cs') @identityAssembly
+& $compiler /nologo /target:winexe /optimize+ ('/win32icon:'+(Join-Path $payload 'RDCRelay.ico')) /reference:System.Core.dll /reference:System.Web.Extensions.dll ('/out:'+$launcher) /reference:System.Windows.Forms.dll (Join-Path $installerBuild 'Rc1CandidateLauncher.cs') (Join-Path $installerBuild 'RdcNodePrerequisite.cs') (Join-Path $payload 'RdcOwnerStartup.cs') @identityAssembly
 if($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists($launcher)){throw 'RC1_FULL_LAUNCHER_COMPILE_FAILED'}
 $required=@($names|ForEach-Object{'Source/'+$_})+@('RdcOwnerRuntime.dll',$launcherName)
 $rows=@()
@@ -163,7 +163,7 @@ $setup=Join-Path $package $setupName
 # runtime files and the exact source manifest live inside its PE resources.
 $resourceArgs=@(@($required)+@('owner-source-manifest.json')|
  ForEach-Object{('/resource:'+(Join-Path $package $_)+',RdcPayload.'+$_.Replace('/','.'))})
-& $compiler /nologo /target:winexe /optimize+ /define:RDC_RC1_FULL_SETUP ('/win32icon:'+(Join-Path $payload 'RDCRelay.ico')) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Management.dll ('/out:'+$setup) $resourceArgs (Join-Path $installerBuild 'Rc1CandidateSetup.cs') (Join-Path $installerBuild 'Rc1ManualUpgrade.cs') (Join-Path $payload 'RdcOwnerStartup.cs') (Join-Path $payload 'RdcUiLanguage.cs') @identityAssembly @setupOnlySources
+& $compiler /nologo /target:winexe /optimize+ /define:RDC_RC1_FULL_SETUP ('/win32icon:'+(Join-Path $payload 'RDCRelay.ico')) /reference:System.Core.dll /reference:System.Web.Extensions.dll /reference:System.Management.dll ('/out:'+$setup) $resourceArgs /reference:System.Windows.Forms.dll (Join-Path $installerBuild 'Rc1CandidateSetup.cs') (Join-Path $installerBuild 'RdcNodePrerequisite.cs') (Join-Path $installerBuild 'Rc1ManualUpgrade.cs') (Join-Path $payload 'RdcOwnerStartup.cs') (Join-Path $payload 'RdcUiLanguage.cs') @identityAssembly @setupOnlySources
 if($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists($setup)){throw 'RC1_FULL_SETUP_COMPILE_FAILED'}
 # Source manifest is exact. Setup itself remains a separate distributable.
 $actual=@(Get-ChildItem -LiteralPath $package -Recurse -File -Force|

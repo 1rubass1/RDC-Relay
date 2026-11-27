@@ -6,7 +6,7 @@ $src=Join-Path $r 'Source'
 $files=@('RdcOwnerWire.cs','RdcOwnerProcess.cs','RdcOwnerTicketStore.cs',
  'RdcOwnerRemoteState.cs','RdcOwnerManagedProcess.cs','RdcOwnerLogParts.cs','RdcOwnerStartup.cs','RdcUiLanguage.cs','RdcOwnerRuntime.cs') |
  ForEach-Object {Join-Path $src $_}
-$files=@($files)+@(Join-Path $r 'Installer\Rc1CandidateLauncher.cs')
+$files=@($files)+@((Join-Path $r 'Installer\Rc1CandidateLauncher.cs'),(Join-Path $r 'Installer\RdcNodePrerequisite.cs'))
 Add-Type -Path $files -ReferencedAssemblies @(
  'System.Core.dll','System.Web.Extensions.dll','System.Security.dll',
  'System.Windows.Forms.dll','System.Drawing.dll','System.Management.dll','System.dll')
